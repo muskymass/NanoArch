@@ -76,6 +76,8 @@ pub struct ProjectMeta {
     pub revision_history: Vec<crate::compliance::RevisionEntry>,
     /// Inputs of the advanced structural pack: column grid, slab systems, punching, merging, tanks, rebar cutting.
     pub structural: crate::structx::StructuralInputs,
+    /// Inputs of the advanced MEP pack: solar, smart home, Wi-Fi, CCTV, EV chargers, balancing, greywater, head loss.
+    pub mep_ext: crate::mepx::MepExtInputs,
 }
 
 /// Limits set by the municipality for this plot. Each carries the source the user took it from. A limit without a
@@ -206,6 +208,7 @@ impl NanoArchProject {
         }
         self.meta.compliance.check()?;
         self.meta.structural.check()?;
+        self.meta.mep_ext.check()?;
         if let Some(f) = &self.meta.furniture
             && f.min_clear_mm.is_some_and(|m| !m.is_finite() || m <= 0.0)
         {

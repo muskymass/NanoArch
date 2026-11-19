@@ -185,7 +185,7 @@ ul.clean li{margin:3px 0}
   <section class="col">
     <div class="tabs">
       <button class="tab on" data-tab="notes" data-i="t_notes"></button><button class="tab" data-tab="qto" data-i="t_qto"></button>
-      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="an" id="tab-an"></button><button class="tab" data-tab="cp" id="tab-cp"></button>
+      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="an" id="tab-an"></button><button class="tab" data-tab="cp" id="tab-cp"></button><button class="tab" data-tab="mx" id="tab-mx"></button>
     </div>
     <div class="scroll">
       <div class="pane" id="p-sketch">
@@ -279,6 +279,7 @@ ul.clean li{margin:3px 0}
       </div>
       <div class="pane" id="p-an"></div>
       <div class="pane" id="p-cp"></div>
+      <div class="pane" id="p-mx"></div>
       <div class="pane" id="p-rules">
         <div class="note" data-i="rules_note"></div>
         <textarea id="pack" spellcheck="false" dir="ltr" style="text-align:left"></textarea>
@@ -410,6 +411,7 @@ function applyLang() {
   renderRooms(); renderWorkdays(); renderRates(); try { renderTemplates(); polyRender(); anBuild(); } catch (e) { /* not loaded yet */ }
   try { $("tab-cp").textContent = L("الامتثال والكود", "Compliance"); cpBuild(); } catch (e) { /* not loaded yet */ }
   try { sxBuild(); } catch (e) { /* not loaded yet */ }
+  try { $("tab-mx").textContent = L("MEP متقدم", "Advanced MEP"); mxBuild(); } catch (e) { /* not loaded yet */ }
   if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
 }
 
@@ -893,6 +895,7 @@ function colorOf(b) {
     case "Site": return ({ wall: [0.74, 0.68, 0.6, 1], guard: [0.79, 0.72, 0.61, 1], carport: [0.69, 0.75, 0.78, 1], pool: [0.35, 0.78, 0.86, 0.6], courtyard: [0.7, 0.84, 0.55, 0.6] })[b.class] || [0.7, 0.7, 0.7, 1];
     case "Vertical": return ({ elevator: [0.56, 0.64, 0.7, 0.7], machine: [0.45, 0.5, 0.55, 1], basement: [0.55, 0.52, 0.48, 0.3], ramp: [0.6, 0.6, 0.6, 1], annex: [0.85, 0.8, 0.7, 1] })[b.class] || [0.6, 0.6, 0.6, 1];
     case "Furniture": return [0.62, 0.45, 0.34, 1];
+    case "Coverage": return ({ cctv: [0.9, 0.22, 0.22, 0.28], camera: [0.55, 0.1, 0.1, 1], ap: [0.08, 0.4, 0.75, 1] })[b.class] || [0.5, 0.5, 0.5, 1];
     case "Facade": { const m = (b.class || "").split(":")[0]; return m === "facade-curtain" ? [0.55, 0.78, 0.9, 0.4] : [...(FACADE_COL[m] || [0.8, 0.76, 0.68]), 1]; }
     default: return [...(MEP_COL[b.class] || [0.3, 0.3, 0.3]), 1];
   }
@@ -1687,6 +1690,119 @@ function sxWire() {
 }
 document.querySelector('[data-tab="str"]').addEventListener("click", () => busy(sxLoad));
 
+// ---------------------------------------------------------------- advanced MEP pack (M4)
+// Every tariff, rating, radio parameter, cable and pump coefficient is an input stored in the project (mepx_set). The page offers no
+// starting value; the verdicts and the missing inputs come from the backend. Smart-home buses and greywater drains become model runs
+// when the MEP tab's "apply" is used (it applies them with the other generated runs).
+const MX = { rep: null, inputs: {}, floor: 1 };
+const mxN = (path, label, ph = "") => `<div><label>${label}</label><input type="number" step="any" dir="ltr" data-mx="${path}" value="${sxGet(MX.inputs, path) ?? ""}" placeholder="${ph}"></div>`;
+const mxIn = (path, label) => `<div><label>${label}</label><input type="text" data-mx="${path}" value="${esc(sxGet(MX.inputs, path) ?? "")}"></div>`;
+const mxRoomOpts = (sel, empty = true) => (empty ? `<option value=""></option>` : "") + (((MX.rep && MX.rep.rooms) || []).map(r => `<option value="${esc(r.key)}" ${r.key === sel ? "selected" : ""}>${esc(r.key)}</option>`).join(""));
+const mxCsvObj = o => Object.entries(o || {}).map(([k, v]) => `${k}:${v}`).join(", ");
+const mxRects = a => (a || []).map(r => r.join(",")).join("; ");
+
+async function mxLoad() { MX.rep = await call("mepx"); MX.inputs = JSON.parse(JSON.stringify(MX.rep.inputs || {})); mxBuild(); }
+function mxCollect() {
+  document.querySelectorAll("[data-mx]").forEach(e => { const v = e.type === "checkbox" ? e.checked : e.tagName === "SELECT" || e.type === "text" ? e.value : (e.value === "" ? null : Number(e.value)); sxSet(MX.inputs, e.dataset.mx, v); });
+  const csv = id => { const e = $(id); return e ? e.value : ""; };
+  sxSet(MX.inputs, "grey.fixtures", csv("mx-gfx").split(",").map(s => s.trim()).filter(Boolean));
+  sxSet(MX.inputs, "grey.fixtureLDay", Object.fromEntries(csv("mx-gl").split(",").map(s => s.split(":").map(x => x.trim())).filter(p => p[0] && p[1] !== undefined && p[1] !== "").map(p => [p[0], Number(p[1])])));
+  sxSet(MX.inputs, "solar.obstructions", csv("mx-obs").split(";").map(s => s.split(",").map(Number)).filter(a => a.length === 4 && a.every(Number.isFinite)));
+}
+async function mxSave() { mxCollect(); MX.rep = await call("mepx_set", { mepExt: MX.inputs }); MX.inputs = JSON.parse(JSON.stringify(MX.rep.inputs)); mxBuild(); toast(t("proj_saved")); }
+function mxBuild() {
+  const box = $("p-mx"); if (!box || !MX.rep) return;
+  $("tab-mx").textContent = L("MEP متقدم", "Advanced MEP");
+  const r = MX.rep, I = MX.inputs, s = r.solar, sm = r.smart, wf = r.wifi, cc = r.cctv, ev = r.ev, bl = r.balance, gr = r.grey, hy = r.hydra;
+  const list = (path, rows, head, add) => `${sxT(rows, head)}<div class="bar" style="padding:2px 0;border:0"><button data-add="${path}">${add}</button></div>`;
+  box.innerHTML = `
+    <div class="note">${L("كل التعرفة والقدرات والمعاملات اللاسلكية والكابلات ومعاملات المضخات مدخلات منك (لا قيم مدمجة). الناقص يُسمّى ولا يُحسب. النتائج أولية. خطوط ناقل البيانات والصرف الرمادي تتحول إلى عناصر في النموذج عند «تطبيق» تبويب MEP.", "Every tariff, rating, radio parameter, cable and pump coefficient is your input (none is built in). A missing one is named and not computed. Results are preliminary. The smart bus and the greywater drains become model runs when the MEP tab's apply is used.")}</div>
+
+    <h2>${L("الطاقة الشمسية على السطح", "Rooftop solar PV")}</h2>
+    <div class="row3">${mxN("solar.panelW", L("قدرة اللوح (واط)", "Panel W"))}${mxN("solar.panelAreaM2", L("مساحة اللوح م²", "Panel m²"))}${mxN("solar.edgeClearanceMm", L("تراجع الحافة (مم)", "Edge clearance mm"))}</div>
+    <div class="row3">${mxN("solar.coverageRatio", L("نسبة التغطية 0-1", "Coverage 0-1"))}${mxN("solar.dcAcRatio", "DC/AC")}${mxN("solar.specificYieldKwhKw", L("إنتاج kWh/kW/سنة", "kWh/kW/year"))}</div>
+    <div class="row3">${mxN("solar.tariffPerKwh", L("التعرفة/kWh", "Tariff/kWh"))}${mxN("solar.selfConsumption", L("استهلاك ذاتي 0-1", "Self-use 0-1"))}${mxN("solar.annualConsumptionKwh", L("استهلاك المبنى kWh/سنة", "Building kWh/yr"))}</div>
+    <label>${L("عوائق على السطح (مم): x0,y0,x1,y1; ...", "Roof obstructions (mm): x0,y0,x1,y1; ...")}</label><input id="mx-obs" dir="ltr" value="${esc(mxRects(I.solar && I.solar.obstructions))}">
+    ${sxMiss(s.missing)}
+    <div class="hint">${L("السطح", "Roof")} ${s.roof_m2} m² → ${L("بعد الحافة", "after edge")} ${s.after_edge_m2} → ${L("مستبعد (ملحق/بئر مصعد/عوائق)", "excluded (annex, shaft, obstructions)")} ${s.excluded_m2} → <b>${L("صالح", "usable")} ${s.usable_m2} m²</b></div>
+    ${s.panels != null ? `<div class="ok">${s.panels} ${L("لوحاً", "panels")} · <b dir="ltr">${s.kwp} kWp</b> · ${L("العاكس", "inverter")} ${s.inverter_kw ?? "-"} kW · ${L("الطاقة", "energy")} ${s.annual_kwh ?? "-"} kWh · ${L("التوفير السنوي", "annual saving")} <b>${s.annual_saving ?? "-"}</b> · ${L("تغطية الاستهلاك", "offset")} ${s.offset_pct ?? "-"}%</div>` : ""}
+
+    <h2>${L("المنزل الذكي", "Smart home")}</h2>
+    <div class="row3"><div><label>${L("البروتوكول", "Protocol")}</label><select data-mx="smart.protocol">${["", "knx", "matter", "zigbee"].map(p => `<option ${p === (I.smart || {}).protocol ? "selected" : ""}>${p}</option>`).join("")}</select></div><div><label>${L("غرفة اللوحة", "Panel room")}</label><select data-mx="smart.panelRoom">${mxRoomOpts((I.smart || {}).panelRoom)}</select></div>${mxN("smart.maxDevicesPerLine", L("أجهزة/خط", "Devices/line"))}</div>
+    <div class="row3">${mxN("smart.maxLineM", L("أقصى طول خط (م)", "Max line m"))}${mxN("smart.routeFactor", L("معامل المسار", "Route factor"))}${mxN("smart.busZMm", L("ارتفاع الناقل (مم)", "Bus z mm"))}</div>
+    <div class="row">${mxN("smart.busMm", L("مقطع الناقل (مم)", "Bus section mm"))}<div style="align-self:end"><button id="mx-suggest">${L("اقترح الأجهزة من الغرف", "Suggest devices from the rooms")}</button></div></div>
+    ${sxMiss(sm.missing)}
+    ${sxT(((I.smart || {}).devices || []).map((d, i) => [`<input data-mx="smart.devices.${i}.name" type="text" value="${esc(d.name)}" style="width:110px">`, `<select data-mx="smart.devices.${i}.kind">${["lighting", "hvac", "shading", "lock", "sensor", "switch"].map(k => `<option ${k === d.kind ? "selected" : ""}>${k}</option>`).join("")}</select>`, `<select data-mx="smart.devices.${i}.room">${mxRoomOpts(d.room)}</select>`, `<button data-deldev="${i}">×</button>`]), [L("الجهاز", "Device"), L("النوع", "Kind"), L("الغرفة", "Room"), ""])}
+    <div class="hint">${sm.devices} ${L("جهازاً", "devices")} · ${sm.lines.length} ${L("خط ناقل", "bus line(s)")} · ${L("طول الناقل", "bus")} ${sm.total_bus_m} m ${sm.unplaced.length ? "· " + L("غير موضوع", "unplaced") + ": " + esc(sm.unplaced.join(", ")) : ""}</div>
+    ${sm.lines.map(l => `<div class="hint">${L("الخط", "Line")} ${l.n}: ${l.devices.length} ${L("جهاز", "devices")} · ${l.length_m} m</div>`).join("")}
+    <ul class="clean">${(sm.notes || []).map(n => `<li class="hint">${esc(n)}</li>`).join("")}</ul>
+
+    <h2>Wi-Fi</h2>
+    <div class="row3">${mxN("wifi.bandGhz", L("النطاق GHz", "Band GHz"))}${mxN("wifi.txPowerDbm", L("قدرة الإرسال dBm", "Tx dBm"))}${mxN("wifi.antennaGainDbi", L("كسب الهوائي dBi", "Antenna dBi"))}</div>
+    <div class="row3">${mxN("wifi.exponent", L("أس فقد المسار", "Path-loss exponent"))}${mxN("wifi.interiorWallDb", L("فقد جدار داخلي dB", "Interior wall dB"))}${mxN("wifi.exteriorWallDb", L("فقد جدار خارجي dB", "Exterior wall dB"))}</div>
+    <div class="row3">${mxN("wifi.thresholdDbm", L("أضعف إشارة مقبولة dBm", "Threshold dBm"))}${mxN("wifi.targetCoveragePct", L("التغطية المستهدفة %", "Target %"))}${mxN("wifi.maxAps", L("أقصى نقاط وصول", "Max APs"))}</div>
+    ${sxMiss(wf.missing)}
+    ${wf.coverage_pct != null ? `<div class="${wf.target_met ? "ok" : "warn"}">${L("التغطية", "Coverage")} <b>${wf.coverage_pct}%</b> · ${wf.aps.length} AP ${wf.aps.map(a => `${esc(a.name)}${a.suggested ? "*" : ""} (${a.x_mm}, ${a.y_mm})`).join(" · ")} (* ${L("مقترحة", "suggested")})</div>${sxT(wf.rooms.slice(0, 8).map(x => [x.room, x.covered_pct + "%", x.weakest_dbm]), [L("أضعف الغرف", "Weakest rooms"), L("مغطّاة", "covered"), "dBm"])}` : ""}
+    <ul class="clean">${(wf.notes || []).map(n => `<li class="hint">${esc(n)}</li>`).join("")}</ul>
+
+    <h2>${L("كاميرات المراقبة الخارجية", "Exterior CCTV")}</h2>
+    ${mxN("cctv.perimeterOffsetMm", L("بُعد خط المحيط عن المبنى (مم)", "Perimeter offset (mm)"))}
+    ${sxT(((I.cctv || {}).cameras || []).map((c, i) => [`<input data-mx="cctv.cameras.${i}.name" type="text" value="${esc(c.name)}" style="width:60px">`, ...["xMm", "yMm", "mountHeightMm", "azimuthDeg", "fovDeg", "rangeM"].map(k => `<input type="number" step="any" dir="ltr" data-mx="cctv.cameras.${i}.${k}" value="${c[k] ?? ""}" style="width:60px">`), `<button data-delcam="${i}">×</button>`]), [L("الكاميرا", "Camera"), "x", "y", L("ارتفاع", "z"), L("الاتجاه °", "az °"), "FOV °", L("المدى م", "range m"), ""])}
+    <div class="bar" style="padding:2px 0;border:0"><button id="mx-addcam">${L("+ كاميرا", "+ Camera")}</button></div>
+    ${sxMiss(cc.missing)}
+    <div class="hint">${L("المساحة المرئية", "Seen ground")} ${cc.covered_m2} m² · ${L("تغطية المحيط", "perimeter")} ${cc.perimeter_pct ?? "-"}% · ${L("نقاط عمياء", "blind points")} ${(cc.blind_spots || []).length}</div>
+    <div class="bar" style="padding:4px 0;border:0;flex-wrap:wrap;gap:6px"><input id="mx-floor" type="number" min="1" step="1" value="${MX.floor}" style="width:60px"><button id="mx-svg">${L("ارسم خريطة الشبكة (Wi-Fi/CCTV/ذكي)", "Draw the network plan (Wi-Fi / CCTV / smart)")}</button></div>
+    <div id="mx-svgbox" class="gantt" style="display:none"></div>
+
+    <h2>${L("شاحن السيارة الكهربائية", "EV charger")}</h2>
+    <div class="row3">${mxN("ev.continuousFactor", L("معامل الحمل المستمر", "Continuous factor"))}${mxN("ev.demandFactor", L("معامل الطلب 0-1", "Demand factor"))}<div><label>${L("غرفة اللوحة", "Board room")}</label><select data-mx="ev.boardRoom">${mxRoomOpts((I.ev || {}).boardRoom)}</select></div></div>
+    ${sxT(((I.ev || {}).chargers || []).map((c, i) => [`<input data-mx="ev.chargers.${i}.name" type="text" value="${esc(c.name)}" style="width:60px">`, ...["currentA", "phases", "xMm", "yMm", "lengthM"].map(k => `<input type="number" step="any" dir="ltr" data-mx="ev.chargers.${i}.${k}" value="${c[k] ?? ""}" style="width:64px">`), `<button data-delev="${i}">×</button>`]), [L("الشاحن", "Charger"), "A", L("أطوار", "phases"), "x", "y", L("طول م", "length m"), ""])}
+    <div class="bar" style="padding:2px 0;border:0"><button id="mx-addev">${L("+ شاحن", "+ Charger")}</button></div>
+    ${sxMiss(ev.missing)}
+    ${ev.chargers.length ? sxT(ev.chargers.map(c => [c.name, c.load_kw, c.design_a, c.breaker_a, c.cable_mm2, c.length_m, c.vdrop_pct, sxSt(c.status)]), [L("الشاحن", "Charger"), "kW", L("تصميم A", "design A"), L("قاطع", "breaker"), "mm²", "m", "ΔV %", ""]) : ""}
+    ${ev.main_after_kva != null ? `<div class="hint">${L("اللوحة الرئيسية", "Main board")}: ${ev.main_before_kva} → <b>${ev.main_after_kva} kVA</b> · ${ev.main_before_a} → <b>${ev.main_after_a} A</b> · ${L("قاطع", "breaker")} ${ev.breaker_before_a ?? "-"} → <b>${ev.breaker_after_a ?? "-"}</b></div>` : ""}
+
+    <h2>${L("توزيع الأطوار وهبوط الجهد", "Phase balancing and voltage drop")}</h2>
+    <div class="row3">${mxN("balance.maxImbalancePct", L("أقصى عدم اتزان %", "Max imbalance %"))}${mxN("balance.feederLengthM", L("طول المغذي م", "Feeder m"))}${mxN("balance.feederMm2", L("مقطع المغذي mm²", "Feeder mm²"))}</div>
+    ${mxN("balance.totalVdropMaxPct", L("أقصى هبوط جهد كلي %", "Total ΔV max %"))}
+    ${sxMiss(bl.missing)}
+    ${bl.boards.map(b => `<div class="${b.ok === false ? "bad" : "ok"}">${L("اللوحة", "Board")} ${esc(b.board)}: L1 ${b.phase_a[0]} A · L2 ${b.phase_a[1]} A · L3 ${b.phase_a[2]} A · ${L("عدم الاتزان", "imbalance")} <b>${b.imbalance_pct}%</b></div>`).join("")}
+    ${bl.drops.length ? sxT(bl.drops.map(d => [d.circuit, d.board, d.branch_pct, d.feeder_pct, d.total_pct, sxSt(d.status)]), [L("الدائرة", "Circuit"), L("اللوحة", "board"), L("فرعي %", "branch %"), L("مغذي %", "feeder %"), L("كلي %", "total %"), ""]) : ""}
+    <ul class="clean">${(bl.notes || []).map(n => `<li class="hint">${esc(n)}</li>`).join("")}</ul>
+
+    <h2>${L("المياه الرمادية", "Greywater")}</h2>
+    <div class="row"><div><label>${L("تجهيزات رمادية (أسماء الكتالوج)", "Grey fixtures (catalog names)")}</label><input id="mx-gfx" dir="ltr" value="${esc(((I.grey || {}).fixtures || []).join(", "))}"></div><div><label>${L("لتر/يوم لكل تجهيز name:value", "Litres/day name:value")}</label><input id="mx-gl" dir="ltr" value="${esc(mxCsvObj((I.grey || {}).fixtureLDay))}"></div></div>
+    <div class="row3">${mxN("grey.unitXMm", L("موقع المعالجة x (مم)", "Unit x mm"))}${mxN("grey.unitYMm", "y")}${mxN("grey.reuseDemandLDay", L("طلب إعادة الاستخدام ل/يوم", "Reuse L/day"))}</div>
+    <div class="row3">${mxN("grey.storageDays", L("أيام التخزين", "Storage days"))}${mxN("grey.condensateLDayPerUnit", L("تكثيف ل/يوم/وحدة", "Condensate L/day/unit"))}<label style="display:flex;gap:6px;align-items:center;color:var(--ink)"><input type="checkbox" data-mx="grey.condensate" ${(I.grey || {}).condensate ? "checked" : ""}>${L("احسب تكثيف التكييف", "Count condensate")}</label></div>
+    ${sxMiss(gr.missing)}
+    ${gr.rooms.length ? sxT(gr.rooms.map(x => [x.room, x.grey_dfu, x.grey_drain_mm, x.soil_dfu, x.soil_drain_mm, x.grey_l_day]), [L("الغرفة", "Room"), L("رمادي DFU", "grey DFU"), "mm", L("صرف صحي DFU", "soil DFU"), "mm", L("ل/يوم", "L/day")]) : ""}
+    <div class="hint">${L("الإمداد", "Supply")} ${gr.supply_l_day} L/day · ${L("الفائض", "surplus")} ${gr.surplus_l_day ?? "-"} · ${L("التخزين", "storage")} ${gr.storage_m3 ?? "-"} m³</div>
+
+    <h2>${L("فقد الضغط ومضخة التقوية", "Head loss and booster pump")}</h2>
+    <div class="row3">${mxN("hydra.hazenC", L("معامل هازن-ويليامز C", "Hazen-Williams C"))}${mxN("hydra.fittingsPct", L("وصلات %", "Fittings %"))}${mxN("hydra.residualHeadM", L("ضغط متبقٍ م", "Residual head m"))}</div>
+    <div class="row3">${mxN("hydra.inletHeadM", L("ضغط المدخل م", "Inlet head m"))}${mxN("hydra.pumpEfficiency", L("كفاءة المضخة 0-1", "Pump efficiency"))}${mxN("hydra.motorMargin", L("هامش المحرك 0-1", "Motor margin"))}</div>
+    <div class="row3">${mxN("hydra.sourceZMm", L("منسوب المصدر (مم)", "Source z mm"))}${mxN("hydra.outletZMm", L("منسوب أعلى مخرج (مم)", "Outlet z mm"))}<label style="display:flex;gap:6px;align-items:center;color:var(--ink)"><input type="checkbox" data-mx="hydra.standby" ${(I.hydra || {}).standby ? "checked" : ""}>${L("مضخة احتياطية", "Standby pump")}</label></div>
+    ${sxMiss(hy.missing)}
+    ${hy.segments.length ? sxT(hy.segments.map(g => [g.what, g.pipe, g.inner_mm, g.length_m, g.flow_lps, g.velocity_mps, g.head_loss_m]), [L("المقطع", "Segment"), L("الأنبوب", "pipe"), "mm", "m", "L/s", "m/s", L("فقد م", "loss m")]) : ""}
+    ${hy.tdh_m != null ? `<div class="${hy.needs_pump ? "warn" : "ok"}">${L("الرأس الكلي", "TDH")} <b dir="ltr">${hy.tdh_m} m</b> (${L("ساكن", "static")} ${hy.static_m} + ${L("احتكاك", "friction")} ${hy.friction_m} + ${L("وصلات", "fittings")} ${hy.fittings_m} + ${L("متبقٍ", "residual")} ${hy.residual_m} − ${L("مدخل", "inlet")} ${hy.inlet_m}) · ${hy.needs_pump ? `${hy.pumps} ${L("مضخة", "pump(s)")} · ${hy.hydraulic_kw} kW ${L("هيدروليكي", "hydraulic")} · <b>${hy.motor_kw} kW</b> ${L("محرك", "motor")}` : L("لا حاجة لمضخة", "no pump needed")}</div>` : ""}
+
+    <div class="bar" style="padding:8px 0;border:0"><button id="mx-save" class="primary">${L("احفظ المدخلات وأعد الحساب", "Save inputs and recompute")}</button></div>`;
+  mxWire();
+}
+function mxWire() {
+  const act = (id, fn) => { const e = $(id); if (e) e.onclick = () => busy(fn); };
+  act("mx-save", mxSave);
+  act("mx-suggest", async () => { mxCollect(); const r = await call("smart_suggest"); sxSet(MX.inputs, "smart.devices", r.devices); await mxSave(); });
+  act("mx-svg", async () => { mxCollect(); MX.floor = Number($("mx-floor").value) || 1; await call("mepx_set", { mepExt: MX.inputs }); const r = await call("mepx_svg", { floor: MX.floor }); const b = $("mx-svgbox"); b.style.display = ""; b.innerHTML = r.svg; });
+  const push = (path, item) => () => { mxCollect(); const a = sxGet(MX.inputs, path) || []; sxSet(MX.inputs, path, [...a, item]); mxBuild(); };
+  $("mx-addcam").onclick = push("cctv.cameras", { name: "C1", xMm: 0, yMm: 0, mountHeightMm: 3000, azimuthDeg: 180, fovDeg: 90, rangeM: 10 });
+  $("mx-addev").onclick = push("ev.chargers", { name: "EV1", currentA: 32, phases: 1 });
+  const del = (attr, path) => document.querySelectorAll(`[${attr}]`).forEach(b => b.onclick = () => { mxCollect(); const a = sxGet(MX.inputs, path); a.splice(Number(b.getAttribute(attr)), 1); mxBuild(); });
+  del("data-deldev", "smart.devices"); del("data-delcam", "cctv.cameras"); del("data-delev", "ev.chargers");
+}
+document.querySelector('[data-tab="mx"]').addEventListener("click", () => busy(mxLoad));
+
+$("tab-mx").textContent = L("MEP متقدم", "Advanced MEP");
 // ---------------------------------------------------------------- project details and code check
 function projectPayload() {
   const src = $("lim-src").value.trim();

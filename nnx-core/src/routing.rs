@@ -89,6 +89,40 @@ fn push_run(rep: &mut MepReport, run: RunSpec) {
     rep.runs.push(run);
 }
 
+/// What the duct router needs to go around the structure: the obstacles of the level, the heights a duct may take, the clearance.
+struct Avoid {
+    obstacles: Vec<crate::ductpath::Obstacle>,
+    zs: Vec<i64>,
+    cl: i64,
+    bounds: [i64; 4],
+    half_h: i64,
+    rerouted: usize,
+    unavoidable: Vec<String>,
+}
+
+/// A duct leg: straight, or around the structure when `av` is given.
+#[allow(clippy::too_many_arguments)]
+fn emit_duct(rep: &mut MepReport, av: &mut Option<Avoid>, level: Option<Id>, role: &str, room: Option<&str>, label: String, a: [i64; 2], b: [i64; 2], z: i64, width: i64, height: i64) {
+    let Some(av) = av.as_mut() else {
+        push_run(rep, leg(level, "duct", role, room, label, a, b, z, width, height));
+        return;
+    };
+    let path = crate::ductpath::find(a, b, &av.zs, width / 2, av.half_h, av.cl, &av.obstacles, av.bounds);
+    if path.rerouted {
+        av.rerouted += 1;
+    }
+    for id in path.unavoidable {
+        if !av.unavoidable.contains(&id) {
+            av.unavoidable.push(id);
+        }
+    }
+    for w in path.points.windows(2) {
+        if w[0] != w[1] {
+            push_run(rep, RunSpec { level, system: "duct".into(), role: role.into(), room: room.map(str::to_string), label: Some(label.clone()), p1: w[0], p2: w[1], width, height });
+        }
+    }
+}
+
 /// A leg between two plan points at height `z` as a run.
 #[allow(clippy::too_many_arguments)]
 fn leg(level: Option<Id>, system: &str, role: &str, room: Option<&str>, label: String, a: [i64; 2], b: [i64; 2], z: i64, width: i64, height: i64) -> RunSpec {
@@ -172,14 +206,43 @@ fn hvac_routes(model: &Model, rooms: &[RoomG], r: &Routing, rep: &mut MepReport)
     let total: f64 = targets.iter().map(|t| t.1).sum();
     let centres: Vec<(i64, i64)> = targets.iter().map(|(room, _)| centre(&room.rect)).collect();
     let dh_i = dh.round() as i64;
+    // Obstacle-aware routing: the beams and columns of the handler's level, and the heights a duct may take.
+    let mut av: Option<Avoid> = None;
+    if r.avoid_structure == Some(true) {
+        let Some(cl) = r.structure_clearance_mm.filter(|c| *c >= 0.0) else {
+            rep.missing.insert("routing.structure".into(), vec!["routing.structure_clearance_mm (the gap kept between a duct and the structure)".into()]);
+            return;
+        };
+        let scene = crate::model3d::build(model);
+        let idx = crate::building::levels(model).iter().find(|(_, id)| Some(*id) == ahu.level).map(|(i, _)| *i);
+        let base = idx.and_then(|i| scene.levels.iter().find(|l| l.index == i)).map_or(0.0, |l| l.z0 * 1000.0);
+        let obstacles: Vec<crate::ductpath::Obstacle> = scene
+            .boxes
+            .iter()
+            .filter(|b| matches!(b.kind, "Beam" | "Column") && b.level == idx)
+            .map(|b| crate::ductpath::Obstacle { id: b.id.clone(), rect: [(b.min[0] * 1000.0).round() as i64, (b.min[1] * 1000.0).round() as i64, (b.max[0] * 1000.0).round() as i64, (b.max[1] * 1000.0).round() as i64], z0: (b.min[2] * 1000.0 - base).round() as i64, z1: (b.max[2] * 1000.0 - base).round() as i64 })
+            .collect();
+        let cl = cl.round() as i64;
+        let half_h = dh_i / 2;
+        let mut zs = vec![z];
+        // Under the lowest beam: the duct centre this far below its soffit, if the duct still clears the false ceiling.
+        if let Some(low) = obstacles.iter().filter(|o| o.id.is_empty() || scene.boxes.iter().any(|b| b.id == o.id && b.kind == "Beam")).map(|o| o.z0).min() {
+            let z_low = low - cl - half_h;
+            if z_low < z && (z_low - half_h) as f64 >= ceil {
+                zs.push(z_low);
+            }
+        }
+        let bounds = outline(rooms, ahu.level).unwrap_or([0, 0, 0, 0]);
+        av = Some(Avoid { obstacles, zs, cl, bounds, half_h, rerouted: 0, unavoidable: Vec::new() });
+    }
     for (role, shift) in [("supply", 0), ("return", off)] {
         let t = tee((ax, ay + shift), &centres.iter().map(|c| (c.0 + shift, c.1 + shift)).collect::<Vec<_>>());
         if let Some((a, b)) = t.trunk {
-            push_run(rep, leg(ahu.level, "duct", role, None, format!("{role} trunk {total:.0} L/s"), a, b, z, width_for(total), dh_i));
+            emit_duct(rep, &mut av, ahu.level, role, None, format!("{role} trunk {total:.0} L/s"), a, b, z, width_for(total), dh_i);
         }
         for (((room, lps), c), br) in targets.iter().zip(&centres).zip(&t.branches) {
             if let Some((a, b)) = br {
-                push_run(rep, leg(ahu.level, "duct", role, Some(&room.key), format!("{role} branch {lps:.0} L/s"), *a, *b, z, width_for(*lps), dh_i));
+                emit_duct(rep, &mut av, ahu.level, role, Some(&room.key), format!("{role} branch {lps:.0} L/s"), *a, *b, z, width_for(*lps), dh_i);
             }
             // The diffuser at the room's centre, the return grille beside it (kept inside the room).
             let (px, py) = if shift == 0 { *c } else { clamp_into(room, c.0 + shift, c.1 + shift) };
@@ -194,6 +257,15 @@ fn hvac_routes(model: &Model, rooms: &[RoomG], r: &Routing, rep: &mut MepReport)
                 circuit: None,
                 label: Some(format!("{role} {lps:.0} L/s")),
             });
+        }
+    }
+
+    if let Some(av) = av {
+        if av.rerouted > 0 {
+            rep.warnings.push(format!("{} duct leg(s) were routed around the structure (under a beam or around a column)", av.rerouted));
+        }
+        if !av.unavoidable.is_empty() {
+            rep.warnings.push(format!("duct(s) cross {} structural element(s) that cannot be avoided at this ceiling height (no room under the beam or no way around): {}; the clash check lists each one", av.unavoidable.len(), av.unavoidable.join(", ")));
         }
     }
 }

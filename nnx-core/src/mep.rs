@@ -86,6 +86,10 @@ pub struct Routing {
     pub tray_z_mm: Option<f64>,
     pub tray_width_mm: Option<f64>,
     pub tray_height_mm: Option<f64>,
+    /// Route the HVAC ducts around beams and columns (under a beam where the ceiling void is deep enough). Off when absent.
+    pub avoid_structure: Option<bool>,
+    /// Gap kept between a duct and the structure it passes, mm. Required when `avoid_structure` is on.
+    pub structure_clearance_mm: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

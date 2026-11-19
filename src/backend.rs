@@ -303,6 +303,10 @@ impl App {
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
             "analysis" => self.analysis(args),
             "materials" => Ok(nnx_core::materials::catalog_json()),
+            "mepx" => self.mepx_report(),
+            "mepx_set" => self.mepx_set(args),
+            "smart_suggest" => Ok(json!({ "devices": nnx_core::smarthome::suggest(&self.doc()?.model) })),
+            "mepx_svg" => self.mepx_svg(args),
             "structural" => self.structural_report(),
             "structural_set" => self.structural_set(args),
             "grid_apply" => self.grid_apply(),
@@ -442,10 +446,19 @@ impl App {
             self.show_mep = show;
         }
         let apply = args.get("apply").and_then(Value::as_bool).unwrap_or(false);
+        let ext = self.project().map(|p| p.meta.mep_ext).unwrap_or_default();
         let (report, applied) = {
             let doc = self.doc.as_mut().ok_or("choose a layout first")?;
             let report = nnx_core::mep::compute(&doc.model, &inputs);
-            let applied = if apply { Some(nnx_core::mep::apply_with_runs(doc, &report.points, &report.runs)?) } else { None };
+            // The smart-home bus and the greywater drains of the advanced pack are generated runs too: they are applied with the rest.
+            let applied = if apply {
+                let mut runs = report.runs.clone();
+                runs.extend(nnx_core::smarthome::topology(&doc.model, &ext.smart).runs);
+                runs.extend(nnx_core::greywater::design(&doc.model, &inputs, &report, &ext.grey).runs);
+                Some(nnx_core::mep::apply_with_runs(doc, &report.points, &runs)?)
+            } else {
+                None
+            };
             (report, applied)
         };
         Ok(json!({
@@ -1018,6 +1031,55 @@ impl App {
         let changes = p.meta.baseline.as_ref().map(|b| nnx_core::revisions::changes(model, b)).unwrap_or_default();
         let d = nnx_core::certificate::CertData { model, project: &p, changes: &changes, date: utc_now().chars().take(10).collect() };
         Ok(json!({ "html": nnx_core::certificate::certificate_html(&d, arabic), "name": "balady_certificate.pdf" }))
+    }
+
+    /// Every advanced MEP analysis (solar, smart home, Wi-Fi, CCTV, EV, balancing, greywater, head loss) of the open project.
+    fn mepx_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let model = &self.doc()?.model;
+        let ext = &p.meta.mep_ext;
+        let mi = p.mep.clone().unwrap_or_default();
+        let rep = nnx_core::mep::compute(model, &mi);
+        Ok(json!({
+            "inputs": ext,
+            "solar": nnx_core::solarpv::size(model, &p),
+            "smart": nnx_core::smarthome::topology(model, &ext.smart),
+            "wifi": nnx_core::wireless::wifi(model, &ext.wifi),
+            "cctv": nnx_core::wireless::cctv(model, &ext.cctv),
+            "ev": nnx_core::evload::ev(model, &mi, &rep, &ext.ev),
+            "balance": nnx_core::evload::balance(&mi, &rep, &ext.ev, &ext.balance),
+            "grey": nnx_core::greywater::design(model, &mi, &rep, &ext.grey),
+            "hydra": nnx_core::hydraulics::size(model, &mi, &rep, &ext.hydra),
+            "rooms": nnx_core::audits::room_keys(model),
+        }))
+    }
+
+    /// Replaces the advanced MEP inputs (one undoable project edit).
+    fn mepx_set(&mut self, args: &Value) -> Result<Value, String> {
+        let e: nnx_core::mepx::MepExtInputs = serde_json::from_value(args.get("mepExt").cloned().ok_or("mepExt is required")?).map_err(|e| format!("MEP pack inputs: {e}"))?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "MEP pack inputs", |p| {
+            p.meta.mep_ext = e.clone();
+            Ok(())
+        })?;
+        let mut v = self.mepx_report()?;
+        v["changed"] = json!(out.changed);
+        Ok(v)
+    }
+
+    /// The network plan of one floor: Wi-Fi signal, access points, CCTV coverage, smart devices and bus.
+    fn mepx_svg(&self, args: &Value) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let model = &self.doc()?.model;
+        let ext = &p.meta.mep_ext;
+        let floor = args.get("floor").and_then(Value::as_u64).unwrap_or(1) as u32;
+        let mut w = ext.wifi.clone();
+        w.floor = Some(floor);
+        let wifi = nnx_core::wireless::wifi(model, &w);
+        let cctv = nnx_core::wireless::cctv(model, &ext.cctv);
+        let smart = nnx_core::smarthome::topology(model, &ext.smart);
+        let svg = nnx_core::wireless::network_svg(model, floor, (!wifi.cells.is_empty()).then_some(&wifi), (!ext.cctv.cameras.is_empty()).then_some((&ext.cctv, &cctv)), (smart.panel.is_some()).then_some((&ext.smart, &smart)), ext.wifi.threshold_dbm)?;
+        Ok(json!({ "svg": svg, "name": "network-plan.svg" }))
     }
 
     /// A starter template with the Ministry-rule setbacks of its plot (each carries its clause).
@@ -2513,6 +2575,75 @@ mod tests {
         app.handle("structural_set", &json!({ "structural": { "loadFactor": 1.4 } })).unwrap();
         assert!(app.handle("export_analytical", &json!({})).unwrap()["data"].as_str().unwrap().contains(" Pu="));
         assert!(App::default().handle("export_analytical", &json!({})).is_err() && App::default().handle("structural", &json!({})).is_err());
+    }
+    #[test]
+    fn the_advanced_mep_inputs_live_in_the_project_and_every_analysis_names_what_it_misses() {
+        let mut app = started();
+        let r = app.handle("mepx", &json!({})).unwrap();
+        for k in ["solar", "smart", "wifi", "cctv", "ev", "balance", "grey", "hydra"] {
+            assert!(r.get(k).is_some(), "{k}");
+        }
+        assert!(r["solar"]["missing"].as_array().unwrap().iter().any(|m| m.as_str().unwrap().contains("edge clearance")));
+        assert!(r["wifi"]["missing"].as_array().unwrap().len() == 8 && !r["smart"]["missing"].as_array().unwrap().is_empty());
+        // Impossible numbers are refused and change nothing.
+        let hash = app.doc().unwrap().model.state_hash();
+        assert!(app.handle("mepx_set", &json!({ "mepExt": { "solar": { "coverageRatio": 2.0 } } })).is_err());
+        assert!(app.handle("mepx_set", &json!({ "mepExt": { "smart": { "protocol": "x10" } } })).is_err());
+        assert_eq!(app.doc().unwrap().model.state_hash(), hash);
+        let ext = json!({
+            "solar": { "panelW": 550.0, "panelAreaM2": 2.6, "edgeClearanceMm": 500.0, "coverageRatio": 0.6, "specificYieldKwhKw": 1700.0, "tariffPerKwh": 0.18, "selfConsumption": 0.7, "dcAcRatio": 1.2 },
+            "wifi": { "bandGhz": 5.0, "txPowerDbm": 20.0, "exponent": 3.0, "interiorWallDb": 5.0, "exteriorWallDb": 10.0, "thresholdDbm": -65.0, "targetCoveragePct": 90.0, "maxAps": 4.0 },
+            "cctv": { "cameras": [{ "name": "C1", "xMm": 9000.0, "yMm": 0.0, "mountHeightMm": 3000.0, "azimuthDeg": 180.0, "fovDeg": 90.0, "rangeM": 8.0 }], "perimeterOffsetMm": 1000.0 },
+            "smart": { "protocol": "knx", "panelRoom": "living", "maxDevicesPerLine": 8.0, "maxLineM": 150.0, "routeFactor": 1.3, "busZMm": 2800.0, "busMm": 20.0 },
+            "grey": { "fixtures": ["basin"], "fixtureLDay": { "basin": 60.0 }, "unitXMm": -2000.0, "unitYMm": -2000.0, "reuseDemandLDay": 100.0, "storageDays": 2.0 }
+        });
+        let r = app.handle("mepx_set", &json!({ "mepExt": ext })).unwrap();
+        assert_eq!(r["changed"], true);
+        assert!(r["solar"]["panels"].as_u64().unwrap() > 0 && r["solar"]["annual_saving"].as_f64().unwrap() > 0.0);
+        assert!(r["wifi"]["coverage_pct"].as_f64().unwrap() > 0.0 && r["wifi"]["aps"].as_array().unwrap().iter().all(|a| a["suggested"] == true));
+        assert!(r["cctv"]["covered_m2"].as_f64().unwrap() > 0.0);
+        // The suggested smart devices become the project's devices (one undoable edit), and the bus is routed.
+        let devices = app.handle("smart_suggest", &json!({})).unwrap()["devices"].clone();
+        assert!(devices.as_array().unwrap().len() > 20);
+        let mut with = ext.clone();
+        with["smart"]["devices"] = devices;
+        let r = app.handle("mepx_set", &json!({ "mepExt": with })).unwrap();
+        assert!(!r["smart"]["lines"].as_array().unwrap().is_empty() && r["smart"]["total_bus_m"].as_f64().unwrap() > 0.0);
+        // The network drawing and the 3D scene carry the coverage.
+        let svg = app.handle("mepx_svg", &json!({ "floor": 1 })).unwrap();
+        assert!(svg["svg"].as_str().unwrap().contains("cctv-cone") && svg["svg"].as_str().unwrap().contains("class=\"ap\"") || svg["svg"].as_str().unwrap().contains("class=\"wifi\""));
+        let scene = app.handle("model3d", &json!({})).unwrap();
+        assert!(scene["boxes"].as_array().unwrap().iter().any(|b| b["kind"] == "Coverage" && b["class"] == "camera"));
+        // The bus and the greywater drains are generated with the MEP points when the MEP inputs are applied.
+        let mut mi = mep_inputs();
+        mi["routing"] = json!({ "drain_slope_pct": 1.5, "drain_invert_mm": 400, "stack_offset_mm": 1500 });
+        let m = app.handle("mep", &json!({ "inputs": mi, "apply": true })).unwrap();
+        assert!(m["applied"]["created"].as_u64().unwrap() > 0);
+        let roles: std::collections::BTreeSet<String> = app.doc().unwrap().model.elements.values().filter(|e| e.kind == "MepRun").filter_map(|e| e.props.get("role").and_then(|v| v.as_str()).map(str::to_string)).collect();
+        assert!(roles.contains("smart-bus") && roles.contains("grey"), "{roles:?}");
+        // The inputs are one undoable project edit.
+        let before = app.project().unwrap().meta.mep_ext.clone();
+        app.handle("mepx_set", &json!({ "mepExt": { "solar": { "panelW": 400.0 } } })).unwrap();
+        assert_ne!(app.project().unwrap().meta.mep_ext, before);
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.project().unwrap().meta.mep_ext, before);
+        assert!(App::default().handle("mepx", &json!({})).is_err());
+    }
+
+    #[test]
+    fn the_hvac_router_can_be_told_to_avoid_the_structure_through_the_mep_inputs() {
+        let mut app = started_with_structure();
+        let mut mi = mep_inputs();
+        mi["routing"] = json!({ "ahu_room": "living", "supply_delta_t_c": 10, "duct_velocity_mps": 5, "duct_height_mm": 250, "ceiling_height_mm": 2300, "return_offset_mm": 400, "avoid_structure": true, "structure_clearance_mm": 50 });
+        let r = app.handle("mep", &json!({ "inputs": mi, "apply": true })).unwrap();
+        assert!(r["report"]["routes"].as_array().unwrap().iter().any(|x| x["system"] == "duct"), "{}", r["report"]["missing"]);
+        let clashes = app.handle("clashes", &json!({})).unwrap();
+        // Whatever remains is reported by the clash check, never hidden.
+        assert!(clashes["runs"].as_u64().unwrap() > 0);
+        let mut bad = mep_inputs();
+        bad["routing"] = json!({ "ahu_room": "living", "supply_delta_t_c": 10, "duct_velocity_mps": 5, "duct_height_mm": 250, "ceiling_height_mm": 2300, "return_offset_mm": 400, "avoid_structure": true });
+        let m = app.handle("mep", &json!({ "inputs": bad })).unwrap();
+        assert!(m["report"]["missing"]["routing.structure"][0].as_str().unwrap().contains("structure_clearance_mm"));
     }
     #[test]
     fn every_starter_template_applies_and_generates_a_plan_with_no_empty_room_area() {

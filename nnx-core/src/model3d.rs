@@ -144,6 +144,12 @@ pub fn build_styled(model: &Model, style: Option<crate::style::Style>) -> Scene 
         if let Some(v) = &p.meta.vertical {
             extra.extend(crate::vertical::boxes(&scene, v));
         }
+        if !p.meta.mep_ext.cctv.cameras.is_empty() {
+            extra.extend(crate::wireless::cctv_boxes(model, &p.meta.mep_ext.cctv));
+        }
+        if !p.meta.mep_ext.wifi.aps.is_empty() {
+            extra.extend(crate::wireless::ap_boxes(model, &p.meta.mep_ext.wifi));
+        }
         if let Some(f) = &p.meta.furniture
             && let Ok(rep) = crate::furniture::plan(&scene, f)
         {
