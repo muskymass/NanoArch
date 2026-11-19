@@ -128,15 +128,35 @@ fn along(w: &Wall, s0: f64, s1: f64, z0: f64, z1: f64) -> ([f64; 3], [f64; 3]) {
 /// The scene with the facade solids of `style` added (`style::facade_boxes`); the model and the plain scene are unchanged.
 pub fn build_styled(model: &Model, style: Option<crate::style::Style>) -> Scene {
     let mut scene = build(model);
+    let mut extra: Vec<Box3> = Vec::new();
     if let Some(s) = style {
-        scene.boxes.extend(crate::style::facade_boxes(&scene, s));
-        for b in scene.boxes.iter().filter(|b| b.kind == "Facade") {
-            for i in 0..3 {
-                scene.min[i] = scene.min[i].min(b.min[i]);
-                scene.max[i] = scene.max[i].max(b.max[i]);
+        extra.extend(crate::style::facade_boxes(&scene, s));
+    }
+    // What the project stores as inputs and the scene only draws: site layout, vertical elements, furniture.
+    if let Some(p) = crate::project::find(model).and_then(|e| e.typed::<crate::project::NanoArchProject>().ok()) {
+        if let (Some(input), Some(Ok(r))) = (&p.meta.site_layout, p.site_result())
+            && let Ok(l) = crate::site_layout::layout(&r, input)
+        {
+            for (n, (kind, rc, z0, z1)) in crate::site_layout::solids(&r, &l).into_iter().enumerate() {
+                extra.push(Box3 { id: format!("site:{}", n + 1), kind: "Site", class: kind.to_string(), min: [rc[0], rc[1], z0], max: [rc[2], rc[3], z1], visual: true, level: None, discipline: "architectural" });
             }
         }
+        if let Some(v) = &p.meta.vertical {
+            extra.extend(crate::vertical::boxes(&scene, v));
+        }
+        if let Some(f) = &p.meta.furniture
+            && let Ok(rep) = crate::furniture::plan(&scene, f)
+        {
+            extra.extend(crate::furniture::boxes(&rep));
+        }
     }
+    for b in &extra {
+        for i in 0..3 {
+            scene.min[i] = scene.min[i].min(b.min[i]);
+            scene.max[i] = scene.max[i].max(b.max[i]);
+        }
+    }
+    scene.boxes.extend(extra);
     scene
 }
 

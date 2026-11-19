@@ -151,7 +151,7 @@ ul.clean li{margin:3px 0}
       <label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="showstruct"><span data-i="show_struct"></span></label>
       <button id="sync" disabled data-i="sync"></button>
       <button id="to3d" disabled></button>
-      <select id="viewsel" disabled style="width:auto"><option value="plan" data-i="v_plan"></option><option value="north" data-i="v_north"></option><option value="south" data-i="v_south"></option><option value="east" data-i="v_east"></option><option value="west" data-i="v_west"></option><option value="A-A" data-i="v_aa"></option><option value="B-B" data-i="v_bb"></option><option value="site" data-i="v_site"></option></select>
+      <select id="viewsel" disabled style="width:auto"><option value="plan" data-i="v_plan"></option><option value="north" data-i="v_north"></option><option value="south" data-i="v_south"></option><option value="east" data-i="v_east"></option><option value="west" data-i="v_west"></option><option value="A-A" data-i="v_aa"></option><option value="B-B" data-i="v_bb"></option><option value="site" data-i="v_site"></option><option value="furn" data-i="v_furn"></option></select>
       <input id="sec-at" type="number" step="0.1" style="width:90px" data-title="sec_at" placeholder="m">
       <span style="flex:1"></span>
       <span id="savestate" class="badge"></span>
@@ -185,7 +185,7 @@ ul.clean li{margin:3px 0}
   <section class="col">
     <div class="tabs">
       <button class="tab on" data-tab="notes" data-i="t_notes"></button><button class="tab" data-tab="qto" data-i="t_qto"></button>
-      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button>
+      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="an" id="tab-an"></button>
     </div>
     <div class="scroll">
       <div class="pane" id="p-sketch">
@@ -276,6 +276,7 @@ ul.clean li{margin:3px 0}
         <h2 data-i="clash_h"></h2>
         <div id="clash-out"></div>
       </div>
+      <div class="pane" id="p-an"></div>
       <div class="pane" id="p-rules">
         <div class="note" data-i="rules_note"></div>
         <textarea id="pack" spellcheck="false" dir="ltr" style="text-align:left"></textarea>
@@ -301,6 +302,7 @@ const call = (cmd, args = {}) => new Promise((resolve, reject) => {
 // ---------------------------------------------------------------- text
 const T = {
 ar: {
+  v_furn:"الأثاث والممرات", lock_wall:"قفل الجدار", locked:"قُفل", unlocked:"فُتح",
   h_tpl:"مشاريع جاهزة بنقرة", tpl_note:"تملأ الأرض والطراز والأدوار والغرف؛ الارتدادات تُحسب بقاعدة الوزارة. الأرقام نقطة بداية قابلة للتعديل (الغرف المظلّلة مساحاتها مقترحة).", tpl_sb:"مصدر الارتدادات", tpl_applied:"طُبّق القالب: راجع الأرقام ثم ولّد", sugg_tip:"مساحة مقترحة من التطبيق (أعلى من الحد الأدنى في الكود): راجعها",
   h_ai:"مساعد الوصف (Ollama محلي، اختياري)", ai_note:"اكتب وصف المشروع بالعربية أو الإنجليزية، فيملأ الحقول لتراجعها. لا يُرسل النص إلا إلى خادم على جهازك؛ وإن لم يعمل Ollama تُستخرج الحقول من الكلمات المفتاحية.", ai_ph:"مثال: فيلا دورين وملحق في الجبيل على أرض 600م طراز نجدي حديث", ai_endpoint:"عنوان Ollama", ai_model:"النموذج", ai_check:"فحص الاتصال", ai_run:"املأ الموجز", ai_online:"متصل", ai_offline:"غير متصل", ai_src_kw:"من الكلمات المفتاحية", ai_src_model:"من النموذج", ai_review:"اقتراح — راجعه قبل التوليد", ai_applied:"طُبّقت الحقول", ai_rooms:"غرف مقترحة", ai_assumed:"مفترضة", ai_empty:"اكتب وصفاً أولاً",
   plot_shape:"شكل الأرض", shape_rect:"مستطيل", shape_poly:"مضلع (شبه منحرف، شطفة، حرف L...)", poly_note:"أدخل رؤوس حد الأرض بالأمتار مرتبة حول الحد. الضلع i يمتد من الرأس i إلى التالي. حدّد نوع كل ضلع وعرض شارعه، ثم حلّل: يُحسب الارتداد لكل ضلع ويُوضع أكبر مستطيل بناء.", tpl_trap:"شبه منحرف", tpl_chamfer:"شطفة ركنية", tpl_l:"حرف L", edge_kind:"نوع الضلع", street_w:"عرض الشارع (م)", edge_sb:"ارتداد يدوي (م)", poly_add:"+ رأس", poly_analyze:"حلّل الأرض", rule_villa:"فلل (الوزارة 4-1)", rule_apt:"عمارات (الوزارة 4-2)", rule_manual:"يدوي (أدخل ارتداد كل ضلع)", ek_front_street:"شارع أمامي", ek_side_street:"شارع جانبي", ek_neighbour:"جار", ek_plaza:"ساحة", site_area:"مساحة الأرض", site_bld:"مستطيل البناء", site_cov:"نسبة التغطية", site_unused:"مساحة قابلة للبناء غير مستغلة", site_src:"مصدر قواعد الارتداد", site_first:"حلّل الأرض أولاً (وأعد التحليل بعد أي تعديل)", v_site:"موقع عام",
@@ -347,6 +349,7 @@ ar: {
   b_boq:"جدول الكميات والأسعار", b_no:"رقم", b_desc:"الوصف", b_rate:"السعر", b_amount:"المبلغ", b_materials:"قائمة المواد", b_material:"المادة", b_spec:"المواصفة", b_specs:"جدول المواصفات والكميات", b_no_materials:"لا معاملات استهلاك مُدخلة، فلا قائمة مواد.", m_cleared:"عُدّل المخطط وأُزيلت {n} نقطة كهروميكانيكية: أعد الحساب لوضعها من جديد (التراجع يعيدها)",
 },
 en: {
+  v_furn:"Furniture and walkways", lock_wall:"Lock wall", locked:"Locked", unlocked:"Unlocked",
   h_tpl:"One-click starter projects", tpl_note:"Fills the plot, style, floors and rooms; the setbacks are computed by the Ministry rule. The figures are editable starting points (shaded room areas are suggestions).", tpl_sb:"Setbacks from", tpl_applied:"Template applied: review the figures, then generate", sugg_tip:"Suggested by the application (above the code minimum): review it",
   h_ai:"Brief assistant (local Ollama, optional)", ai_note:"Describe the project in Arabic or English and the fields are filled for you to review. The text goes only to a server on this computer; if Ollama is not running the fields are read from keywords.", ai_ph:"e.g. A two-floor villa with an annex in Jubail on a 600 m2 plot, modern Najdi style", ai_endpoint:"Ollama address", ai_model:"Model", ai_check:"Check connection", ai_run:"Fill the brief", ai_online:"online", ai_offline:"offline", ai_src_kw:"from keywords", ai_src_model:"from the model", ai_review:"Suggestion - review it before generating", ai_applied:"Fields applied", ai_rooms:"Proposed rooms", ai_assumed:"assumed", ai_empty:"Write a description first",
   plot_shape:"Plot shape", shape_rect:"Rectangle", shape_poly:"Polygon (trapezoid, chamfer, L...)", poly_note:"Enter the plot boundary vertices in metres, in order around the boundary. Edge i runs from vertex i to the next. Set each edge's kind and street width, then analyse: every edge gets its own setback and the largest buildable rectangle is placed.", tpl_trap:"Trapezoid", tpl_chamfer:"Corner chamfer", tpl_l:"L shape", edge_kind:"Edge kind", street_w:"Street width (m)", edge_sb:"Manual setback (m)", poly_add:"+ Vertex", poly_analyze:"Analyse plot", rule_villa:"Villa (Ministry 4-1)", rule_apt:"Apartment (Ministry 4-2)", rule_manual:"Manual (enter every edge's setback)", ek_front_street:"Front street", ek_side_street:"Side street", ek_neighbour:"Neighbour", ek_plaza:"Plaza", site_area:"Plot area", site_bld:"Building rectangle", site_cov:"Coverage", site_unused:"Buildable area left unused", site_src:"Setback rule source", site_first:"Analyse the plot first (and again after any change)", v_site:"Site plan",
@@ -402,7 +405,7 @@ function applyLang() {
   $("lang").textContent = lang === "ar" ? "English" : "العربية";
   if (state.levels) setLevels(state.levels);
   $("to3d").textContent = (typeof V3 !== "undefined" && V3.on) ? t("to2d") : t("to3d");
-  renderRooms(); renderWorkdays(); renderRates(); try { renderTemplates(); polyRender(); } catch (e) { /* not loaded yet */ }
+  renderRooms(); renderWorkdays(); renderRates(); try { renderTemplates(); polyRender(); anBuild(); } catch (e) { /* not loaded yet */ }
   if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
 }
 
@@ -575,7 +578,7 @@ async function choose(i) {
   const res = await call("select", { index: i, struct: structInputs() });
   state.sel = i; showPlan(res.svg); state.notes = res.warnings; state.rooms_out = res.rooms; state.qto = null; state.sched = null; renderSbc(res.sbc); refreshBim();
   renderAlts(); renderNotes(); setPlanButtons(true); $("p-qto").innerHTML = `<div class="empty">${t("working")}</div>`; $("schedout").innerHTML = "";
-  loadQto(); refreshStatus();
+  loadQto(); refreshStatus(); try { anBuild(); } catch (e) { /* panel not built yet */ }
 }
 function setPlanButtons(on) { ["exportrep", "exportrepx", "viewsel", "undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportpdf", "saveproj", "to3d"].forEach(id => $(id).disabled = !on); }
 
@@ -883,6 +886,9 @@ function colorOf(b) {
     case "Window": return [0.31, 0.59, 0.78, 0.38];
     case "Space": return [...(FLOOR_COL[b.class] || [0.87, 0.87, 0.87]), 1];
     case "MepRun": return [...(RUN_COL[b.class] || [0.3, 0.3, 0.3]), 1];
+    case "Site": return ({ wall: [0.74, 0.68, 0.6, 1], guard: [0.79, 0.72, 0.61, 1], carport: [0.69, 0.75, 0.78, 1], pool: [0.35, 0.78, 0.86, 0.6], courtyard: [0.7, 0.84, 0.55, 0.6] })[b.class] || [0.7, 0.7, 0.7, 1];
+    case "Vertical": return ({ elevator: [0.56, 0.64, 0.7, 0.7], machine: [0.45, 0.5, 0.55, 1], basement: [0.55, 0.52, 0.48, 0.3], ramp: [0.6, 0.6, 0.6, 1], annex: [0.85, 0.8, 0.7, 1] })[b.class] || [0.6, 0.6, 0.6, 1];
+    case "Furniture": return [0.62, 0.45, 0.34, 1];
     case "Facade": { const m = (b.class || "").split(":")[0]; return m === "facade-curtain" ? [0.55, 0.78, 0.9, 0.4] : [...(FACADE_COL[m] || [0.8, 0.76, 0.68]), 1]; }
     default: return [...(MEP_COL[b.class] || [0.3, 0.3, 0.3]), 1];
   }
@@ -1098,6 +1104,8 @@ async function selectElement(el) {
          <label style="margin:0">${t("i_move")}</label><input id="i-delta" type="number" step="50" value="100">
          <button id="i-minus">−</button><button id="i-plus">+</button> ${clear}<span class="hint">${t("i_hint")}</span>`
       : `<b>${t("i_ext")}</b> ${clear}`;
+    box.insertAdjacentHTML("beforeend", ` <label style="margin:0;display:flex;gap:4px;align-items:center"><input type="checkbox" id="i-lock" ${info.locked ? "checked" : ""}>🔒 ${t("lock_wall")}</label>`);
+    $("i-lock").onchange = () => busy(async () => { await call("lock", { kind: "wall", id: info.id, locked: $("i-lock").checked }); toast(t($("i-lock").checked ? "locked" : "unlocked")); });
     if (info.movable) { const d = () => Number($("i-delta").value) || 0; $("i-minus").onclick = () => busy(async () => afterEdit(await call("move_partition", { wall: info.id, delta_mm: -d() }))); $("i-plus").onclick = () => busy(async () => afterEdit(await call("move_partition", { wall: info.id, delta_mm: d() }))); }
   } else if (info.kind === "Door" || info.kind === "Window") {
     box.innerHTML = `<b>${t(info.kind === "Door" ? "i_door" : "i_window")}</b> <label style="margin:0">${t("i_width")}</label><input id="i-w" type="number" step="50" value="${info.width}">
@@ -1272,18 +1280,183 @@ $("ai-run").onclick = () => busy(async () => {
 });
 aiCheck().catch(() => {});
 
+// ---------------------------------------------------------------- analysis, efficiency and comparison; locks, site, furniture, vertical
+// The page collects inputs and shows what the backend returns. Every limit below is an input; the page offers a starting value only
+// where the brief of the feature names one (900 mm walkway, 15 % circulation, 620 mm for 2R + T), and the backend names a missing one.
+const AN = { meta: {} };
+const L = (a, e) => (lang === "ar" ? a : e);
+const anNum = (id, label, val = "", ph = "") => `<div><label>${label}</label><input id="${id}" type="number" step="any" value="${val}" placeholder="${ph}" dir="ltr"></div>`;
+const anVal = id => (document.getElementById(id) ? num(id) : null);
+function anFp(p, withH) {
+  const w = anVal(p + "w"), l = anVal(p + "l"), h = withH ? anVal(p + "h") : null;
+  return w == null && l == null && h == null ? null : { widthM: w ?? 0, lengthM: l ?? 0, heightM: h };
+}
+const anMetaKeep = () => ({ siteLayout: AN.meta.siteLayout ?? null, furniture: AN.meta.furniture ?? null, vertical: AN.meta.vertical ?? null });
+function anBuild() {
+  const box = $("p-an"); if (!box) return;
+  const keep = {}; box.querySelectorAll("input,select").forEach(e => { keep[e.id] = e.type === "checkbox" ? e.checked : e.value; });
+  $("tab-an").textContent = L("التحليل والكفاءة والمقارنة", "Analysis, efficiency & comparison");
+  const b = (id, label, cls = "") => `<button id="${id}" class="${cls}">${label}</button>`;
+  const rooms = (state.rooms_out || []).filter(r => r.key);
+  box.innerHTML = `
+    <h2>${L("الشمس والواجهات", "Sun and facades")}</h2>
+    <div class="note">${L("ساعات الشمس المباشرة على كل واجهة صيفاً وشتاءً، وعمق البروز الذي يظلّل النافذة وقت الظهر الصيفي. صيغ فلكية تقريبية؛ الرياح السائدة غير محسوبة (لا بيانات موثّقة).", "Direct-sun hours per facade in summer and winter, and the overhang that shades a window at summer noon. Approximate astronomical formulas; prevailing wind is not computed (no verified data).")}</div>
+    <div class="row">${anNum("an-lat", L("خط العرض (°)", "Latitude (°)"), "", "27.0")}${anNum("an-win", L("ارتفاع النافذة (م)", "Window height (m)"), "", "1.5")}</div>
+    <div class="bar" style="padding:6px 0;border:0">${b("an-solar", L("حلّل الشمس", "Analyse sun"), "primary")}</div><div id="an-solar-out"></div>
+
+    <h2>${L("الخصوصية: ارتفاع الستارة / السور", "Privacy: screen / parapet height")}</h2>
+    <div class="note">${L("ارتفاع حاجز عند الحد يحجب خط النظر من عين المشاهد إلى نقطة في الفناء. كل المدخلات منك.", "Height of a screen at the boundary that blocks the line of sight from a viewer's eye to a point in the courtyard. Every input is yours.")}</div>
+    <div class="row">${anNum("an-eye", L("ارتفاع العين (م)", "Eye height (m)"))}${anNum("an-vd", L("المشاهد ← الحاجز (م)", "Viewer to screen (m)"))}</div>
+    <div class="row">${anNum("an-td", L("الحاجز ← الهدف (م)", "Screen to target (m)"))}${anNum("an-th", L("ارتفاع الهدف (م)", "Target height (m)"))}</div>
+    <div class="bar" style="padding:6px 0;border:0">${b("an-screen", L("احسب الارتفاع", "Compute height"), "primary")}</div><div id="an-screen-out"></div>
+
+    <h2>${L("الكفاءة ومصفوفة المقارنة", "Efficiency and comparison matrix")}</h2>
+    <div class="note">${L("نسبة الصافي إلى الإجمالي وحصة الممرات لكل بديل مولَّد (حتى 3). حدّ الممرات مدخل منك (15% مقترح).", "Net-to-gross and circulation share for each generated alternative (up to 3). The circulation limit is your input (15% suggested).")}</div>
+    <div class="row">${anNum("an-circ", L("حدّ الممرات (%)", "Circulation limit (%)"), keep["an-circ"] ?? 15)}<div></div></div>
+    <div class="bar" style="padding:6px 0;border:0">${b("an-compare", L("قارن البدائل", "Compare alternatives"), "primary")}</div><div id="an-compare-out"></div>
+
+    <h2>${L("الدرج والمنحدر", "Stair and ramp")}</h2>
+    <div class="note">${L("راحة الدرج 2R + T قاعدة تصميمية وليست بنداً في الكود؛ حدود الارتفاع والنوسة تُفحص على حدة. ميل المنحدر يُحكم عليه بالحد الذي تدخله مع مصدره.", "2R + T is a comfort rule, not a code clause; riser and tread limits are checked separately. The ramp slope is judged against the limit you enter, with its source.")}</div>
+    <div class="row3">${anNum("an-fh", L("ارتفاع الدور (مم)", "Floor height (mm)"))}${anNum("an-rs", L("عدد القوائم", "Risers"))}${anNum("an-tr", L("العمق (مم)", "Tread (mm)"))}</div>
+    <div class="row">${anNum("an-tg", L("هدف 2R+T (مم)", "2R+T target (mm)"), keep["an-tg"] ?? 620)}${anNum("an-tl", L("السماحية (مم)", "Tolerance (mm)"), keep["an-tl"] ?? 20)}</div>
+    <div class="bar" style="padding:6px 0;border:0">${b("an-stair", L("افحص الدرج", "Check stair"))}</div><div id="an-stair-out"></div>
+    <div class="row3">${anNum("an-rr", L("ارتفاع المنحدر (مم)", "Ramp rise (mm)"))}${anNum("an-rn", L("الطول الأفقي (مم)", "Ramp run (mm)"))}${anNum("an-rm", L("حد الميل (%)", "Slope limit (%)"))}</div>
+    <div class="bar" style="padding:6px 0;border:0">${b("an-ramp", L("افحص المنحدر", "Check ramp"))}</div><div id="an-ramp-out"></div>
+
+    <h2>${L("قفل الغرف والجدران", "Lock rooms and walls")}</h2>
+    <div class="note">${L("الغرف المقفلة تبقى في إحداثياتها وأبعادها عند إعادة التوليد؛ وتُملأ بقية المساحة الحرّة بالغرف الأخرى. الجدران تُقفل من لوحة العنصر عند تحديدها. القفل خطوة تراجع واحدة.", "Locked rooms keep their exact coordinates and size when the layout is generated again; the other rooms fill the free space. Walls are locked from the inspector when selected. A lock is one undo step.")}</div>
+    <div class="chk">${rooms.map(r => `<label><input type="checkbox" data-lockroom="${esc(r.key)}" ${r.locked ? "checked" : ""}>🔒 ${esc(r.name)}</label>`).join("") || `<span class="hint">${L("ولّد مخططاً واختر بديلاً أولاً", "Generate a plan and choose an alternative first")}</span>`}</div>
+    <div class="bar" style="padding:6px 0;border:0">${b("an-regen", L("أعد التوليد مع إبقاء المقفل", "Regenerate keeping locked"), "primary")}</div>
+
+    <h2>${L("الموقع والمناظر الطبيعية", "Site and landscape")}</h2>
+    <div class="note">${L("الأحجام كلها منك. المواضع اجتهاد تصميمي داخل الأرض خارج المبنى (يشمل الارتدادات)؛ لا يُتحقق من سماح البلدية بمنشآت داخل الارتداد.", "All sizes are yours. Positions are a design heuristic inside the plot, outside the building (including the setbacks); the municipality's rules for structures in a setback are not checked.")}</div>
+    <div class="row3">${anNum("sl-wh", L("ارتفاع السور (م)", "Wall height (m)"))}${anNum("sl-wt", L("سماكة السور (م)", "Wall thickness (m)"))}${anNum("sl-gate", L("عرض البوابة (م)", "Gate width (m)"))}</div>
+    <div class="row3">${anNum("sl-gw", L("غرفة الحارس: عرض", "Guard: width"))}${anNum("sl-gl", L("طول", "length"))}${anNum("sl-gh", L("ارتفاع", "height"))}</div>
+    <div class="row3">${anNum("sl-cw", L("المظلة: عرض", "Carport: width"))}${anNum("sl-cl", L("طول", "length"))}${anNum("sl-ch", L("ارتفاع", "height"))}</div>
+    <div class="row">${anNum("sl-pw", L("المسبح: عرض (م)", "Pool: width (m)"))}${anNum("sl-pl", L("طول (م)", "length (m)"))}</div>
+    <div class="row">${anNum("sl-xw", L("الفناء: عرض (م)", "Courtyard: width (m)"))}${anNum("sl-xl", L("طول (م)", "length (m)"))}</div>
+    <div class="bar" style="padding:6px 0;border:0">${b("an-site", L("احفظ واعرض الموقع", "Save and show site"), "primary")}</div>
+
+    <h2>${L("الأثاث وعرض الممر", "Furniture and walkway")}</h2>
+    <div class="note">${L("أحجام الأثاث تصميمية من التطبيق. أي ممر مفتوح أضيق من الحدّ يُعلَّم بالأحمر في عرض «الأثاث والممرات».", "Furniture sizes are the application's design sizes. Any open passage narrower than the limit is marked red in the Furniture view.")}</div>
+    <div class="row">${anNum("fu-min", L("أقل عرض ممر (مم)", "Minimum walkway (mm)"), keep["fu-min"] ?? 900)}<div></div></div>
+    <div class="bar" style="padding:6px 0;border:0">${b("an-furn", L("احفظ واعرض الأثاث", "Save and show furniture"), "primary")}</div><div id="an-furn-out"></div>
+
+    <h2>${L("المصعد والقبو والملحق العلوي", "Elevator, basement and roof annex")}</h2>
+    <div class="note">${L("كل الأبعاد مدخلات منك (لا قيم افتراضية). البئر = المقصورة + الخلوصات + الجدران. القبو والملحق كتل بحجمها ومساحتها وليسا طوابق إنشائية كاملة؛ المنحدر يُرسم درجات.", "Every dimension is your input (no defaults). Shaft = car + clearances + walls. Basement and annex are massing volumes with area and volume, not full structural levels; the ramp is drawn as steps.")}</div>
+    <div class="row3">${anNum("ev-cw", L("عرض المقصورة (مم)", "Car width (mm)"))}${anNum("ev-cd", L("عمق المقصورة (مم)", "Car depth (mm)"))}${anNum("ev-wall", L("سماكة الجدار (مم)", "Wall (mm)"))}</div>
+    <div class="row3">${anNum("ev-cs", L("خلوص جانبي (مم)", "Side clear (mm)"))}${anNum("ev-cb", L("خلوص خلفي (مم)", "Back clear (mm)"))}${anNum("ev-cf", L("خلوص أمامي (مم)", "Front clear (mm)"))}</div>
+    <div class="row3">${anNum("ev-pit", L("الحفرة (مم)", "Pit (mm)"))}${anNum("ev-oh", L("الارتفاع العلوي (مم)", "Overhead (mm)"))}${anNum("ev-mrh", L("ارتفاع غرفة الماكينة (مم)", "Machine room (mm)"))}</div>
+    <div class="row">${anNum("ev-x", L("موضع x (مم)", "x (mm)"))}${anNum("ev-y", L("موضع y (مم)", "y (mm)"))}</div>
+    <label style="display:flex;gap:6px;align-items:center;color:var(--ink)"><input type="checkbox" id="ev-mr">${L("بغرفة ماكينة (وإلا فبلا غرفة)", "With a machine room (otherwise machine-room-less)")}</label>
+    <div class="row">${anNum("bs-n", L("عدد أدوار القبو", "Basement levels"))}${anNum("bs-h", L("ارتفاع دور القبو (مم)", "Basement height (mm)"))}</div>
+    <div class="row3">${anNum("rp-w", L("عرض المنحدر (مم)", "Ramp width (mm)"))}${anNum("rp-run", L("طول المنحدر (مم)", "Ramp run (mm)"))}${anNum("rp-max", L("حد الميل (%)", "Slope limit (%)"))}</div>
+    <div class="row3">${anNum("rp-x", L("منحدر x (مم)", "Ramp x (mm)"))}${anNum("rp-y", L("منحدر y (مم)", "Ramp y (mm)"))}<div><label>${L("مصدر الحد", "Limit source")}</label><input id="rp-src"></div></div>
+    <div class="row3">${anNum("ax-x", L("الملحق x (مم)", "Annex x (mm)"))}${anNum("ax-y", L("الملحق y (مم)", "Annex y (mm)"))}${anNum("ax-h", L("ارتفاع الملحق (مم)", "Annex height (mm)"))}</div>
+    <div class="row">${anNum("ax-w", L("عرض الملحق (مم)", "Annex width (mm)"))}${anNum("ax-l", L("طول الملحق (مم)", "Annex length (mm)"))}</div>
+    <div class="bar" style="padding:6px 0;border:0">${b("an-vert", L("احفظ واعرض التقرير", "Save and report"), "primary")}</div><div id="an-vert-out"></div>`;
+  for (const [id, v] of Object.entries(keep)) { const e = document.getElementById(id); if (e && v !== undefined) { if (e.type === "checkbox") e.checked = v; else e.value = v; } }
+  anWire();
+  if (AN.meta && Object.keys(AN.meta).length && Object.keys(keep).length === 0) anLoad(AN.meta);
+}
+const anTable = (head, rows) => `<table class="rooms"><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td dir="ltr">${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+function anWire() {
+  const out = (id, html) => { $(id).innerHTML = html; };
+  $("an-solar").onclick = () => busy(async () => {
+    const r = await call("analysis", { kind: "solar", latitude_deg: num("an-lat") ?? undefined, window_height_m: num("an-win") ?? undefined });
+    out("an-solar-out", anTable([L("اليوم", "Day"), L("الميل", "Decl."), L("ارتفاع الظهر", "Noon alt."), L("شروق", "Sunrise az."), L("غروب", "Sunset az."), L("ساعات النهار", "Daylight h")], r.table.map(x => [x.day, x.declination_deg, x.noon_altitude_deg, x.sunrise_azimuth_deg, x.sunset_azimuth_deg, x.daylight_hours]))
+      + anTable([L("الواجهة", "Facade"), L("شمس صيفاً (س)", "Summer sun h"), L("شمس شتاءً (س)", "Winter sun h"), L("صيف/شتاء", "Summer/winter")], r.facades.map(f => [f.facade, f.summer_sun_hours, f.winter_sun_hours, f.summer_to_winter ?? "-"]))
+      + `<div class="hint">${L("الأقل تعرضاً للشمس صيفاً إلى الأكثر", "Least summer sun to most")}: ${r.best_for_glazing.join(" › ")}</div>`
+      + (r.overhang_m != null ? `<div class="ok">${L("عمق البروز الظليل لنافذة جنوبية", "Shading overhang for a south window")}: <b dir="ltr">${r.overhang_m} m</b></div>` : "")
+      + `<ul class="clean">${r.notes.map(n => `<li class="warn">${esc(n)}</li>`).join("")}</ul>`);
+  });
+  $("an-screen").onclick = () => busy(async () => {
+    const r = await call("analysis", { kind: "screen", eye_m: num("an-eye") ?? undefined, viewer_to_screen_m: num("an-vd") ?? undefined, screen_to_target_m: num("an-td") ?? undefined, target_m: num("an-th") ?? undefined });
+    out("an-screen-out", `<div class="ok">${L("الارتفاع المطلوب", "Required height")}: <b dir="ltr">${r.required_height_m} m</b></div><ul class="clean">${r.notes.map(n => `<li class="hint">${esc(n)}</li>`).join("")}</ul>`);
+  });
+  $("an-compare").onclick = () => busy(async () => {
+    const r = await call("analysis", { kind: "compare", max_circulation_pct: num("an-circ") ?? undefined });
+    out("an-compare-out", anTable([L("البديل", "Alt."), L("التكلفة", "Cost"), L("إجمالي م²", "Gross m²"), L("صافي م²", "Net m²"), L("صافي/إجمالي", "Net/gross"), L("ممرات %", "Circulation %"), ""],
+      r.rows.map(x => [`#${x.index + 1}${x.index === r.lowest_cost ? " ★$" : ""}${x.index === r.least_circulation ? " ★⇄" : ""}`, x.cost, x.efficiency.gross_m2, x.efficiency.net_m2, x.efficiency.net_to_gross, `<span class="${x.efficiency.flagged ? "bad" : "ok"}">${x.efficiency.circulation_pct}</span>`, x.efficiency.flagged ? "⚠" : ""]))
+      + `<ul class="clean">${r.rows.flatMap(x => x.efficiency.hints.map(h => `<li class="warn">#${x.index + 1}: ${esc(h)}</li>`)).join("")}</ul>`
+      + `<div class="hint">${L("★$ الأقل تكلفة · ★⇄ الأقل ممرات · غير متوفر هنا", "★$ lowest cost · ★⇄ least circulation · not available here")}: ${r.not_available.join("، ")}</div>`);
+  });
+  $("an-stair").onclick = () => busy(async () => {
+    const r = await call("analysis", { kind: "stair", floor_height_mm: num("an-fh") ?? undefined, risers: num("an-rs") ?? undefined, tread_mm: num("an-tr") ?? undefined, target_mm: num("an-tg") ?? undefined, tolerance_mm: num("an-tl") ?? undefined });
+    out("an-stair-out", `<ul class="clean"><li>R = <b dir="ltr">${r.riser_mm} mm</b> · T = <b dir="ltr">${r.tread_mm} mm</b> · 2R+T = <b dir="ltr">${r.two_r_plus_t_mm}</b> (${L("الهدف", "target")} ${r.target_mm}, ${L("الانحراف", "deviation")} ${r.deviation_mm})</li>
+      <li class="${r.comfortable ? "ok" : "bad"}">${r.comfortable ? L("مريح", "Comfortable") : L("خارج السماحية", "Outside the tolerance")}</li><li class="hint">${L("الطول الأفقي", "Run")}: ${r.run_mm} mm · ${esc(r.note)}</li></ul>`);
+  });
+  $("an-ramp").onclick = () => busy(async () => {
+    const r = await call("analysis", { kind: "ramp", rise_mm: num("an-rr") ?? undefined, run_mm: num("an-rn") ?? undefined, max_slope_pct: num("an-rm") ?? undefined });
+    out("an-ramp-out", `<ul class="clean"><li>${L("الميل", "Slope")} <b dir="ltr">${r.slope_pct}%</b> / ${L("الحد", "limit")} ${r.max_slope_pct}%</li><li class="${r.ok ? "ok" : "bad"}">${r.ok ? L("ضمن الحد", "Within the limit") : L("يتجاوز الحد", "Exceeds the limit")}</li><li class="hint">${L("أقصر طول أفقي", "Shortest run")}: ${r.min_run_mm} mm</li></ul>`);
+  });
+  document.querySelectorAll("[data-lockroom]").forEach(c => c.onchange = () => busy(async () => {
+    const r = await call("lock", { kind: "room", key: c.dataset.lockroom, locked: c.checked });
+    (state.rooms_out || []).forEach(x => { x.locked = r.locked_rooms.includes(x.key); }); toast(t(c.checked ? "locked" : "unlocked"));
+  }).then(() => { c.checked = (state.rooms_out || []).find(x => x.key === c.dataset.lockroom)?.locked ?? c.checked; }));
+  $("an-regen").onclick = () => busy(async () => {
+    const res = await call("regenerate");
+    state.alts = res.alternatives; state.sel = -1; state.qto = null; state.sched = null; state.rooms_out = null; state.notes = null;
+    renderAlts(); $("viewer").innerHTML = `<div class="empty">${t("alts_empty")}</div>`; setPlanButtons(false); await choose(0); anBuild();
+  });
+  const save = async (meta, view) => {
+    const r = await call("project_set", { meta }); applyProject(r.settings); toast(t("proj_saved"));
+    if (view) { $("viewsel").value = view; await showView(); }
+    if (V3.on) { await setView3(false); await setView3(true); }
+    return r;
+  };
+  $("an-site").onclick = () => busy(() => save({ siteLayout: { wallHeightM: anVal("sl-wh"), wallThicknessM: anVal("sl-wt"), gateWidthM: anVal("sl-gate"), guard: anFp("sl-g", true), carport: anFp("sl-c", true), pool: anFp("sl-p", false), courtyard: anFp("sl-x", false) } }, "site"));
+  $("an-furn").onclick = () => busy(async () => {
+    await save({ furniture: { minClearMm: anVal("fu-min") } }, "furn");
+    const r = await call("furniture");
+    out("an-furn-out", `<ul class="clean">${r.report.flags.length ? r.report.flags.map(f => `<li class="bad">${esc(f.func)}: ${esc(f.what)} (${f.gap_mm} &lt; ${f.min_mm} mm)</li>`).join("") : `<li class="ok">${L("لا ممرات أضيق من الحد", "No passage narrower than the limit")}</li>`}</ul>`);
+  });
+  $("an-vert").onclick = () => busy(async () => {
+    const ev = ["ev-cw", "ev-cd", "ev-cs", "ev-cb", "ev-cf", "ev-wall", "ev-pit", "ev-oh", "ev-x", "ev-y", "ev-mrh"].some(i => anVal(i) != null);
+    const bs = (anVal("bs-n") || 0) > 0, ax = ["ax-x", "ax-y", "ax-w", "ax-l", "ax-h"].some(i => anVal(i) != null);
+    const rampAny = ["rp-w", "rp-run", "rp-max", "rp-x", "rp-y"].some(i => anVal(i) != null);
+    const vertical = {
+      elevator: ev ? { carWidthMm: anVal("ev-cw"), carDepthMm: anVal("ev-cd"), clearSideMm: anVal("ev-cs"), clearBackMm: anVal("ev-cb"), clearFrontMm: anVal("ev-cf"), wallMm: anVal("ev-wall"), pitMm: anVal("ev-pit"), overheadMm: anVal("ev-oh"), xMm: anVal("ev-x"), yMm: anVal("ev-y"), machineRoom: $("ev-mr").checked, machineRoomHeightMm: anVal("ev-mrh") } : null,
+      basement: bs ? { levels: anVal("bs-n"), heightMm: anVal("bs-h"), ramp: rampAny ? { widthMm: anVal("rp-w"), runMm: anVal("rp-run"), xMm: anVal("rp-x"), yMm: anVal("rp-y"), maxSlopePct: anVal("rp-max"), source: $("rp-src").value.trim() || null } : null } : null,
+      roofAnnex: ax ? { xMm: anVal("ax-x"), yMm: anVal("ax-y"), widthMm: anVal("ax-w"), lengthMm: anVal("ax-l"), heightMm: anVal("ax-h") } : null,
+    };
+    await save({ vertical });
+    const r = await call("vertical");
+    out("an-vert-out", `<ul class="clean">${r.shaft ? `<li>${L("البئر", "Shaft")}: <b dir="ltr">${r.shaft.inner_mm[0]} × ${r.shaft.inner_mm[1]} mm</b> (${L("خارجي", "outer")} ${r.shaft.outer_mm[0]} × ${r.shaft.outer_mm[1]}, ${r.shaft.outer_area_m2} m²) · ${L("الارتفاع الكلي", "total height")} ${r.shaft.total_height_m.toFixed(2)} m · ${r.shaft.stops} ${L("محطة", "stop(s)")}</li>` : ""}
+      ${r.basement_levels.length ? `<li>${r.basement_levels.join(", ")} · ${r.basement_area_m2} m² · ${r.basement_volume_m3} m³</li>` : ""}
+      ${r.ramp ? `<li class="${r.ramp.ok === false ? "bad" : "ok"}">${L("المنحدر", "Ramp")}: ${r.ramp.slope_pct}%${r.ramp.max_slope_pct != null ? ` / ${r.ramp.max_slope_pct}%` : ""} · ${L("أقصر طول", "shortest run")} ${r.ramp.min_run_mm ?? "-"} mm</li>` : ""}
+      ${r.annex_area_m2 ? `<li>${L("الملحق العلوي", "Roof annex")}: ${r.annex_area_m2} m² · ${r.annex_volume_m3} m³</li>` : ""}
+      ${r.problems.map(p => `<li class="warn">${esc(p)}</li>`).join("")}</ul>`);
+  });
+}
+// Fills the panel's inputs from the stored project (what undo, redo and opening a file bring back).
+function anLoad(m) {
+  AN.meta = m || {};
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v ?? ""; };
+  const s = AN.meta.siteLayout || {};
+  set("sl-wh", s.wallHeightM); set("sl-wt", s.wallThicknessM); set("sl-gate", s.gateWidthM);
+  for (const [p, f] of [["sl-g", s.guard], ["sl-c", s.carport], ["sl-p", s.pool], ["sl-x", s.courtyard]]) { set(p + "w", f && f.widthM); set(p + "l", f && f.lengthM); set(p + "h", f && f.heightM); }
+  if (AN.meta.furniture) set("fu-min", AN.meta.furniture.minClearMm);
+  const v = AN.meta.vertical || {}, e = v.elevator || {}, b = v.basement || {}, r = b.ramp || {}, a = v.roofAnnex || {};
+  set("ev-cw", e.carWidthMm); set("ev-cd", e.carDepthMm); set("ev-cs", e.clearSideMm); set("ev-cb", e.clearBackMm); set("ev-cf", e.clearFrontMm); set("ev-wall", e.wallMm); set("ev-pit", e.pitMm); set("ev-oh", e.overheadMm); set("ev-x", e.xMm); set("ev-y", e.yMm); set("ev-mrh", e.machineRoomHeightMm);
+  if ($("ev-mr")) $("ev-mr").checked = !!e.machineRoom;
+  set("bs-n", b.levels); set("bs-h", b.heightMm); set("rp-w", r.widthMm); set("rp-run", r.runMm); set("rp-x", r.xMm); set("rp-y", r.yMm); set("rp-max", r.maxSlopePct); set("rp-src", r.source);
+  set("ax-x", a.xMm); set("ax-y", a.yMm); set("ax-w", a.widthMm); set("ax-l", a.lengthMm); set("ax-h", a.heightMm);
+}
+anBuild();
+
 // ---------------------------------------------------------------- project details and code check
 function projectPayload() {
   const src = $("lim-src").value.trim();
   const lim = (id, k = 1) => { const v = num(id); return v === null ? null : { value: v * k, source: src }; };
   return {
-    meta: { title: $("title").value, buildingType: $("p-btype").value || null, style: $("p-style").value.trim() || null, smartTech: $("p-smart").value.split(",").map(s => s.trim()).filter(Boolean), climateZone: $("p-climate").value.trim() || null, parapetHeightM: num("p-parapet"), ...polyMeta() },
+    meta: { title: $("title").value, buildingType: $("p-btype").value || null, style: $("p-style").value.trim() || null, smartTech: $("p-smart").value.split(",").map(s => s.trim()).filter(Boolean), climateZone: $("p-climate").value.trim() || null, parapetHeightM: num("p-parapet"), ...polyMeta(), ...anMetaKeep() },
     limits: { minSetbackFrontM: lim("lim-f"), minSetbackBackM: lim("lim-b"), minSetbackSideM: lim("lim-s"), maxCoverageRatio: lim("lim-c", 0.01), enforce: $("lim-enforce").checked },
   };
 }
 function applyProject(s) {
   const m = s.meta || {}, l = s.limits || {}, v = p => (p && p.value != null ? p.value : "");
-  $("p-btype").value = m.buildingType || ""; $("p-style").value = m.style || ""; $("p-climate").value = m.climateZone || ""; $("p-smart").value = (m.smartTech || []).join(", "); $("p-parapet").value = m.parapetHeightM ?? ""; polyLoad(m);
+  $("p-btype").value = m.buildingType || ""; $("p-style").value = m.style || ""; $("p-climate").value = m.climateZone || ""; $("p-smart").value = (m.smartTech || []).join(", "); $("p-parapet").value = m.parapetHeightM ?? ""; polyLoad(m); try { anLoad(m); } catch (e) { /* panel not built yet */ }
   $("lim-f").value = v(l.minSetbackFrontM); $("lim-b").value = v(l.minSetbackBackM); $("lim-s").value = v(l.minSetbackSideM);
   $("lim-c").value = l.maxCoverageRatio && l.maxCoverageRatio.value != null ? Math.round(l.maxCoverageRatio.value * 10000) / 100 : "";
   $("lim-src").value = [l.minSetbackFrontM, l.minSetbackBackM, l.minSetbackSideM, l.maxCoverageRatio].map(p => p && p.source).find(Boolean) || "";
@@ -1309,6 +1482,7 @@ $("proj-save").onclick = () => busy(async () => {
 async function showView() {
   const v = $("viewsel").value;
   if (v === "plan") { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); return; }
+  if (v === "furn") { const r = await call("furniture"); state.svgText = r.svg; state.viewName = "furniture-plan.svg"; $("viewer").innerHTML = r.svg; clearSel(); return; }
   if (v === "site") { const r = await call("site_plan"); state.svgText = r.svg; state.viewName = r.name; $("viewer").innerHTML = r.svg; clearSel(); return; }
   const r = ["north", "south", "east", "west"].includes(v) ? await call("elevation", { side: v }) : await call("section", { name: v, at: num("sec-at") ?? undefined });
   state.svgText = r.svg; state.viewName = r.name; $("viewer").innerHTML = r.svg; clearSel();

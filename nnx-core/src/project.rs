@@ -59,6 +59,16 @@ pub struct ProjectMeta {
     pub setback_rule: Option<crate::site::RuleSet>,
     /// Height of the roof parapet in metres, drawn on elevations and sections. Unset draws none (it is not defaulted).
     pub parapet_height_m: Option<f64>,
+    /// Keys of the rooms whose place is locked: regenerating the layout keeps them where they are.
+    pub locked_rooms: Vec<String>,
+    /// Ids of the walls that cannot be moved or have their openings changed.
+    pub locked_walls: Vec<String>,
+    /// Boundary walls, gate, guard room, carport, pool and courtyard (all sizes entered by the user).
+    pub site_layout: Option<crate::site_layout::SiteLayoutInput>,
+    /// The walkway clearance for the furniture check.
+    pub furniture: Option<crate::furniture::FurnitureInput>,
+    /// Elevator shaft, basement levels with a ramp, and a roof annex.
+    pub vertical: Option<crate::vertical::VerticalInput>,
 }
 
 /// Limits set by the municipality for this plot. Each carries the source the user took it from. A limit without a
@@ -165,8 +175,33 @@ impl NanoArchProject {
         Some(crate::site::SiteInput { polygon_m: polygon, edges: self.meta.plot_edges.clone(), rule: self.meta.setback_rule.unwrap_or_default(), floors: self.structure.floors })
     }
 
+    /// The site analysis of this project: its outline and rule, or the rectangle with the setbacks entered in the brief.
+    pub fn site_result(&self) -> Option<Result<crate::site::SiteResult, Vec<String>>> {
+        let input = match self.site_input() {
+            Some(i) => i,
+            None => {
+                let b = self.brief.as_ref()?;
+                let mut i = crate::site::rectangle_with_setbacks(b.width_m, b.length_m, b.setback_front_m, b.setback_back_m, b.setback_side_m);
+                i.floors = self.structure.floors;
+                i
+            }
+        };
+        Some(crate::site::analyse(&input))
+    }
+
     /// Everything wrong with the project's own data. A project with errors is never stored.
     pub fn check(&self) -> Result<(), String> {
+        if let Some(s) = &self.meta.site_layout {
+            s.check()?;
+        }
+        if let Some(v) = &self.meta.vertical {
+            v.check()?;
+        }
+        if let Some(f) = &self.meta.furniture
+            && f.min_clear_mm.is_some_and(|m| !m.is_finite() || m <= 0.0)
+        {
+            return Err("the minimum clear walkway must be a positive number of millimetres".into());
+        }
         if let Some(b) = &self.brief {
             for (name, v) in [("plot width", b.width_m), ("plot length", b.length_m)] {
                 if !v.is_finite() || v <= 0.0 {

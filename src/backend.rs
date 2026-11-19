@@ -82,6 +82,16 @@ pub(crate) fn adjacency_of(rooms: &[RoomReq]) -> Vec<Adjacency> {
     }
 }
 
+/// `{room key: {x, y, w, h}}` in millimetres.
+fn parse_locked(v: Option<&Value>) -> Result<std::collections::BTreeMap<String, nnx_core::layout::Rect>, String> {
+    let mut out = std::collections::BTreeMap::new();
+    for (k, r) in v.and_then(Value::as_object).into_iter().flatten() {
+        let f = |n: &str| r.get(n).and_then(Value::as_i64).ok_or_else(|| format!("locked room '{k}': {n} must be a whole number of millimetres"));
+        out.insert(k.clone(), nnx_core::layout::Rect { x: f("x")?, y: f("y")?, w: f("w")?, h: f("h")? });
+    }
+    Ok(out)
+}
+
 fn id_arg(args: &Value, key: &str) -> Result<nnx_core::Id, String> {
     args.get(key).and_then(Value::as_str).and_then(|s| s.parse().ok()).ok_or_else(|| format!("'{key}' must be an element id"))
 }
@@ -207,9 +217,17 @@ impl App {
                 let r = levels::sync_all(doc, &so)?;
                 Ok(json!({ "created": r.created, "removed": r.removed, "unchanged": r.unchanged, "warnings": r.warnings, "svg": self.render()? }))
             }
-            "describe" => editing::describe(self.doc()?, id_arg(args, "id")?),
+            "describe" => {
+                let id = id_arg(args, "id")?;
+                let mut d = editing::describe(self.doc()?, id)?;
+                if d["kind"] == "Wall" {
+                    d["locked"] = json!(self.project().is_some_and(|p| p.meta.locked_walls.contains(&id.to_string())));
+                }
+                Ok(d)
+            }
             "move_partition" => {
                 let (id, delta) = (id_arg(args, "wall")?, args.get("delta_mm").and_then(Value::as_i64).ok_or("delta_mm is required")?);
+                self.guard_lock(&[id])?;
                 let brief = self.layout_brief()?;
                 let so = self.sopts()?;
                 let doc = self.doc.as_mut().ok_or("choose a layout first")?;
@@ -219,6 +237,8 @@ impl App {
                 Ok(json!({ "moved": moved, "mep_cleared": points_before - points_after, "svg": self.render_or_null()?, "rooms": self.rooms_json(), "sbc": self.sbc_json() }))
             }
             "resize_room" | "swap_rooms" | "delete_room" => {
+                let ids: Vec<nnx_core::Id> = ["room", "a", "b", "into"].iter().filter_map(|k| id_arg(args, k).ok()).collect();
+                self.guard_lock(&ids)?;
                 let brief = self.layout_brief()?;
                 let so = self.sopts()?;
                 let doc = self.doc.as_mut().ok_or("choose a layout first")?;
@@ -242,6 +262,7 @@ impl App {
             }
             "set_opening" => {
                 let id = id_arg(args, "id")?;
+                self.guard_lock(&[id])?;
                 let (width, offset) = (args.get("width").and_then(Value::as_i64), args.get("offset").and_then(Value::as_i64));
                 let so = self.sopts()?;
                 editing::set_opening(self.doc.as_mut().ok_or("choose a layout first")?, &so, id, width, offset)?;
@@ -249,6 +270,7 @@ impl App {
             }
             "delete_opening" => {
                 let id = id_arg(args, "id")?;
+                self.guard_lock(&[id])?;
                 let so = self.sopts()?;
                 editing::delete_opening(self.doc.as_mut().ok_or("choose a layout first")?, &so, id)?;
                 Ok(json!({ "svg": self.render_or_null()?, "sbc": self.sbc_json() }))
@@ -257,6 +279,11 @@ impl App {
             "site_analyze" => Self::site_analyze(args),
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
             "analysis" => self.analysis(args),
+            "lock" => self.lock(args),
+            "regenerate" => self.regenerate(args),
+            "site_layout" => self.site_layout_cmd(),
+            "furniture" => self.furniture_cmd(),
+            "vertical" => self.vertical_cmd(),
             "template_apply" => Self::template_apply(args),
             "site_plan" => self.site_plan(),
             "zone_preset" => self.zone_preset(args),
@@ -300,7 +327,8 @@ impl App {
         let b: BriefIn = serde_json::from_value(args.get("brief").cloned().unwrap_or(Value::Null)).map_err(|e| format!("brief: {e}"))?;
         let s: StructIn = serde_json::from_value(args.get("struct").cloned().unwrap_or(json!({}))).map_err(|e| format!("structure inputs: {e}"))?;
         let plan = levels::plan_building(&b, s.floors.unwrap_or(1))?;
-        let mut alts = levels::generate_building(&plan, b.seed.unwrap_or(1))?;
+        let locked = parse_locked(args.get("locked"))?;
+        let mut alts = levels::generate_building_locked(&plan, b.seed.unwrap_or(1), &locked)?;
         // Rooms marked on a sketch become the first alternative; the generated ones follow for comparison.
         let from_sketch = match args.get("placement").filter(|p| p.as_object().is_some_and(|o| !o.is_empty())) {
             Some(p) => {
@@ -581,12 +609,13 @@ impl App {
     fn rooms_json(&self) -> Vec<Value> {
         let level = self.current_level();
         let labels = self.labels();
+        let locked = self.project().map(|p| p.meta.locked_rooms).unwrap_or_default();
         self.doc
             .iter()
             .flat_map(|d| d.model.elements.values())
             .filter(|e| level.is_none() || e.level_id == level)
             .filter_map(|e| e.typed::<nnx_core::typed::Space>().ok())
-            .map(|s| json!({ "name": labels.get(&s.requirement_key).cloned().unwrap_or(s.requirement_key.clone()), "func": s.func, "area": s.area, "target": s.target_area }))
+            .map(|s| json!({ "key": s.requirement_key, "locked": locked.contains(&s.requirement_key), "name": labels.get(&s.requirement_key).cloned().unwrap_or(s.requirement_key.clone()), "func": s.func, "area": s.area, "target": s.target_area }))
             .collect()
     }
 
@@ -682,6 +711,117 @@ impl App {
         }
     }
 
+    /// Refuses an edit of a locked room or wall (or of an opening on a locked wall).
+    fn guard_lock(&self, ids: &[nnx_core::Id]) -> Result<(), String> {
+        let (Some(p), Some(doc)) = (self.project(), self.doc.as_ref()) else { return Ok(()) };
+        for id in ids {
+            let Some(e) = doc.model.get(id) else { continue };
+            let wall_locked = |wid: &nnx_core::Id| p.meta.locked_walls.contains(&wid.to_string());
+            match e.kind.as_str() {
+                "Wall" if wall_locked(&e.id) => return Err("that wall is locked: unlock it first".into()),
+                "Space" => {
+                    if let Ok(s) = e.typed::<nnx_core::typed::Space>()
+                        && p.meta.locked_rooms.contains(&s.requirement_key)
+                    {
+                        return Err(format!("room '{}' is locked: unlock it first", s.requirement_key));
+                    }
+                }
+                "Door" | "Window" if e.host_id.is_some_and(|h| wall_locked(&h)) => return Err("the wall that carries this opening is locked: unlock it first".into()),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Locks or unlocks a room (`key`) or a wall (`id`) as one undoable project edit.
+    fn lock(&mut self, args: &Value) -> Result<Value, String> {
+        let kind = args.get("kind").and_then(Value::as_str).ok_or("kind (room or wall) is required")?;
+        let on = args.get("locked").and_then(Value::as_bool).ok_or("locked (true or false) is required")?;
+        let name = match kind {
+            "room" => {
+                let doc = self.doc.as_ref().ok_or("choose a layout first")?;
+                let key = args.get("key").and_then(Value::as_str).ok_or("key is required")?.to_string();
+                let known = doc.model.elements.values().filter(|e| e.kind == "Space").filter_map(|e| e.typed::<nnx_core::typed::Space>().ok()).any(|s| s.requirement_key == key);
+                if !known {
+                    return Err(format!("there is no room '{key}' in the plan"));
+                }
+                let base = key.split('@').next().unwrap_or("");
+                let in_brief = self.project().and_then(|p| p.brief).is_some_and(|b| b.rooms.iter().any(|q| q.key == base));
+                if !in_brief {
+                    return Err(format!("'{key}' is circulation or stair space generated to fill the plan, not a room of the brief: it cannot be locked"));
+                }
+                key
+            }
+            "wall" => {
+                let doc = self.doc.as_ref().ok_or("choose a layout first")?;
+                let id = id_arg(args, "id")?;
+                if doc.model.get(&id).is_none_or(|e| e.kind != "Wall") {
+                    return Err("that element is not a wall".into());
+                }
+                id.to_string()
+            }
+            other => return Err(format!("unknown lock kind '{other}'")),
+        };
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, if on { "lock" } else { "unlock" }, |p| {
+            let list = if kind == "room" { &mut p.meta.locked_rooms } else { &mut p.meta.locked_walls };
+            list.retain(|k| *k != name);
+            if on {
+                list.push(name.clone());
+            }
+            list.sort();
+            Ok(())
+        })?;
+        Ok(json!({ "changed": out.changed, "locked_rooms": self.project().map(|p| p.meta.locked_rooms).unwrap_or_default(), "locked_walls": self.project().map(|p| p.meta.locked_walls).unwrap_or_default() }))
+    }
+
+    /// Generates again from the stored brief with the locked rooms kept at their exact rectangles.
+    fn regenerate(&mut self, args: &Value) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let mut brief = p.brief.clone().ok_or("this project has no brief")?;
+        let doc = self.doc.as_ref().ok_or("choose a layout first")?;
+        let mut locked = serde_json::Map::new();
+        for s in doc.model.elements.values().filter(|e| e.kind == "Space").filter_map(|e| e.typed::<nnx_core::typed::Space>().ok()) {
+            if p.meta.locked_rooms.contains(&s.requirement_key) {
+                locked.insert(s.requirement_key.clone(), json!({ "x": s.x, "y": s.y, "w": s.w, "h": s.h }));
+            }
+        }
+        if let Some(missing) = p.meta.locked_rooms.iter().find(|k| !locked.contains_key(*k)) {
+            return Err(format!("the locked room '{missing}' is not in the plan"));
+        }
+        brief.seed = Some(args.get("seed").and_then(Value::as_u64).unwrap_or(brief.seed.unwrap_or(1).wrapping_add(1)));
+        let args2 = json!({ "brief": brief, "struct": p.structure, "meta": p.meta, "limits": p.limits, "locked": locked });
+        let mut out = self.generate(&args2)?;
+        out["locked_rooms"] = json!(p.meta.locked_rooms);
+        Ok(out)
+    }
+
+    /// Landscape layout of the project's site (inputs in `meta.siteLayout`).
+    fn site_layout_cmd(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let input = p.meta.site_layout.clone().ok_or("no site layout inputs: enter the wall, carport, guard room, pool or courtyard sizes")?;
+        let r = p.site_result().ok_or("the project has no brief")?.map_err(|e| e.join("; "))?;
+        let l = nnx_core::site_layout::layout(&r, &input)?;
+        Ok(json!({ "svg": nnx_core::site::site_svg_with(&r, &self.display_title(), Some(&l)), "layout": l }))
+    }
+
+    fn furniture_cmd(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let f = p.meta.furniture.clone().ok_or("no furniture inputs: enter the minimum clear walkway")?;
+        let scene = nnx_core::model3d::build(&self.doc()?.model);
+        let rep = nnx_core::furniture::plan(&scene, &f)?;
+        let level = self.level_list().get(self.cur_level).map(|_| self.cur_level as i64);
+        let svg = nnx_core::furniture::svg(&rep, if scene.levels.is_empty() { None } else { level });
+        Ok(json!({ "svg": svg, "report": rep, "params": nnx_core::furniture::PARAMS }))
+    }
+
+    fn vertical_cmd(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let v = p.meta.vertical.clone().ok_or("no vertical inputs: enter the elevator, basement or roof annex")?;
+        let scene = nnx_core::model3d::build(&self.doc()?.model);
+        serde_json::to_value(nnx_core::vertical::report(&scene, &v)?).map_err(|e| e.to_string())
+    }
+
     /// A starter template with the Ministry-rule setbacks of its plot (each carries its clause).
     fn template_apply(args: &Value) -> Result<Value, String> {
         let id = args.get("id").and_then(Value::as_str).ok_or("template id missing")?;
@@ -704,7 +844,11 @@ impl App {
             }
         };
         let r = nnx_core::site::analyse(&input).map_err(|e| e.join("; "))?;
-        Ok(json!({ "svg": nnx_core::site::site_svg(&r, &self.display_title()), "name": "site-plan.svg", "result": r }))
+        let layout = match &p.meta.site_layout {
+            Some(l) => Some(nnx_core::site_layout::layout(&r, l)?),
+            None => None,
+        };
+        Ok(json!({ "svg": nnx_core::site::site_svg_with(&r, &self.display_title(), layout.as_ref()), "name": "site-plan.svg", "result": r, "layout": layout }))
     }
 
     /// The architectural style the project names (`meta.style`), if it names one of the four.
@@ -1907,6 +2051,120 @@ mod tests {
         let c = app.handle("analysis", &json!({ "kind": "compare", "max_circulation_pct": 15 })).unwrap();
         let rows = c["rows"].as_array().unwrap();
         assert!(!rows.is_empty() && rows.len() <= 3 && rows.iter().all(|r| r["efficiency"]["gross_m2"].as_f64().unwrap() > 0.0));
+    }
+
+    fn spaces(app: &App) -> std::collections::BTreeMap<String, (i64, i64, i64, i64)> {
+        app.doc().unwrap().model.elements.values().filter(|e| e.kind == "Space").filter_map(|e| e.typed::<nnx_core::typed::Space>().ok()).map(|s| (s.requirement_key.clone(), (s.x, s.y, s.w, s.h))).collect()
+    }
+
+    #[test]
+    fn a_locked_room_keeps_its_exact_rectangle_when_the_layout_is_generated_again_and_locks_undo() {
+        let mut app = started_with_project();
+        let before = spaces(&app);
+        // Lock a room that the generator placed (not the stair or the hall).
+        let key = before.keys().find(|k| *k == "majlis" || *k == "master").cloned().unwrap_or_else(|| before.keys().next().unwrap().clone());
+        assert!(app.handle("lock", &json!({ "kind": "room", "key": "nope", "locked": true })).is_err());
+        let r = app.handle("lock", &json!({ "kind": "room", "key": key, "locked": true })).unwrap();
+        assert_eq!(r["changed"], true);
+        assert_eq!(r["locked_rooms"], json!([key]));
+        assert!(app.is_dirty());
+        // Editing a locked room is refused, with the reason.
+        let id = app.doc().unwrap().model.elements.values().find(|e| e.kind == "Space" && e.typed::<nnx_core::typed::Space>().is_ok_and(|s| s.requirement_key == key)).unwrap().id;
+        assert!(app.handle("resize_room", &json!({ "room": id.to_string(), "edge": "east", "grow_mm": 100 })).unwrap_err().contains("is locked"));
+        // Generate again with another seed: the locked room is where it was, to the millimetre.
+        let g = app.handle("regenerate", &json!({ "seed": 7 })).unwrap();
+        assert!(!g["alternatives"].as_array().unwrap().is_empty());
+        for i in 0..g["alternatives"].as_array().unwrap().len() {
+            app.handle("select", &json!({ "index": i, "struct": {} })).unwrap();
+            assert_eq!(spaces(&app).get(&key), before.get(&key), "alternative {i}");
+            assert_eq!(app.project().unwrap().meta.locked_rooms, vec![key.clone()], "the lock is part of the project");
+        }
+        // Undo removes the lock (one undoable step) and redo brings it back.
+        app.handle("select", &json!({ "index": 0, "struct": {} })).unwrap();
+        app.handle("lock", &json!({ "kind": "room", "key": key, "locked": false })).unwrap();
+        assert!(app.project().unwrap().meta.locked_rooms.is_empty());
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.project().unwrap().meta.locked_rooms, vec![key.clone()]);
+        app.handle("redo", &json!({})).unwrap();
+        assert!(app.project().unwrap().meta.locked_rooms.is_empty());
+    }
+
+    #[test]
+    fn a_locked_wall_refuses_changes_to_itself_and_its_openings_until_unlocked() {
+        let mut app = started_with_project();
+        let (door, wall) = {
+            let m = &app.doc().unwrap().model;
+            let d = m.elements.values().find(|e| e.kind == "Door").unwrap();
+            (d.id, d.host_id.unwrap())
+        };
+        assert!(app.handle("lock", &json!({ "kind": "wall", "id": door.to_string(), "locked": true })).is_err(), "a door is not a wall");
+        app.handle("lock", &json!({ "kind": "wall", "id": wall.to_string(), "locked": true })).unwrap();
+        let e = app.handle("set_opening", &json!({ "id": door.to_string(), "width": 1000 })).unwrap_err();
+        assert!(e.contains("locked"), "{e}");
+        assert!(app.handle("delete_opening", &json!({ "id": door.to_string() })).unwrap_err().contains("locked"));
+        assert!(app.handle("move_partition", &json!({ "wall": wall.to_string(), "delta_mm": 100 })).unwrap_err().contains("locked"));
+        app.handle("lock", &json!({ "kind": "wall", "id": wall.to_string(), "locked": false })).unwrap();
+        assert!(app.handle("set_opening", &json!({ "id": door.to_string(), "width": 1000 })).is_ok());
+    }
+
+    #[test]
+    fn locking_rooms_that_leave_no_space_for_the_rest_says_so() {
+        let mut app = started_with_project();
+        let before = spaces(&app);
+        let mut locked = Vec::new();
+        for k in before.keys() {
+            match app.handle("lock", &json!({ "kind": "room", "key": k, "locked": true })) {
+                Ok(_) => locked.push(k.clone()),
+                Err(e) => assert!(e.contains("cannot be locked") && k.starts_with("reserve"), "{k}: {e}"),
+            }
+        }
+        assert!(locked.len() >= 8, "{locked:?}");
+        // Every room of the brief locked: they stay exactly where they are (the filler hall is not a room of the brief).
+        let g = app.handle("regenerate", &json!({})).unwrap();
+        assert_eq!(g["alternatives"].as_array().unwrap().len(), 1);
+        app.handle("select", &json!({ "index": 0, "struct": {} })).unwrap();
+        let after = spaces(&app);
+        for k in &locked {
+            assert_eq!(after.get(k), before.get(k), "{k}");
+        }
+    }
+
+    #[test]
+    fn site_layout_vertical_and_furniture_inputs_live_in_the_project_and_show_in_3d_and_the_site_plan() {
+        let mut app = started_with_project();
+        let kinds = |app: &mut App, kind: &str| app.handle("model3d", &json!({})).unwrap()["boxes"].as_array().unwrap().iter().filter(|b| b["kind"] == kind).count();
+        assert!(app.handle("site_layout", &json!({})).unwrap_err().contains("no site layout inputs"));
+        assert!(app.handle("furniture", &json!({})).unwrap_err().contains("minimum clear walkway"));
+        assert!(app.handle("vertical", &json!({})).unwrap_err().contains("no vertical inputs"));
+        assert_eq!((kinds(&mut app, "Site"), kinds(&mut app, "Furniture"), kinds(&mut app, "Vertical")), (0, 0, 0));
+        // Impossible numbers are refused and change nothing.
+        let hash = app.doc().unwrap().model.state_hash();
+        assert!(app.handle("project_set", &json!({ "meta": { "siteLayout": { "wallHeightM": -2.0 } } })).is_err());
+        assert!(app.handle("project_set", &json!({ "meta": { "vertical": { "basement": { "levels": 9, "heightMm": 3000.0 } } } })).is_err());
+        assert_eq!(app.doc().unwrap().model.state_hash(), hash);
+        let meta = json!({ "meta": {
+            "siteLayout": { "wallHeightM": 2.5, "wallThicknessM": 0.2, "gateWidthM": 3.0, "carport": { "widthM": 2.5, "lengthM": 4.0, "heightM": 2.5 } },
+            "furniture": { "minClearMm": 900.0 },
+            "vertical": { "elevator": { "carWidthMm": 1000.0, "carDepthMm": 1300.0, "clearSideMm": 100.0, "clearBackMm": 150.0, "clearFrontMm": 100.0, "wallMm": 200.0, "pitMm": 1200.0, "overheadMm": 3800.0, "xMm": 300.0, "yMm": 300.0 },
+                          "roofAnnex": { "xMm": 500.0, "yMm": 500.0, "widthMm": 4000.0, "lengthMm": 3000.0, "heightMm": 2800.0 } } } });
+        assert_eq!(app.handle("project_set", &meta).unwrap()["changed"], true);
+        assert!(kinds(&mut app, "Site") >= 5 && kinds(&mut app, "Furniture") > 0 && kinds(&mut app, "Vertical") >= 2);
+        let site = app.handle("site_layout", &json!({})).unwrap();
+        assert!(site["svg"].as_str().unwrap().contains("gate"));
+        // The plain site plan shows the layout too.
+        let plan = app.handle("site_plan", &json!({})).unwrap();
+        assert!(plan["svg"].as_str().unwrap().contains("gate") && plan["layout"]["walls"].as_array().unwrap().len() >= 4);
+        let f = app.handle("furniture", &json!({})).unwrap();
+        assert!(f["svg"].as_str().unwrap().starts_with("<svg") && !f["report"]["pieces"].as_array().unwrap().is_empty());
+        assert!(app.handle("vertical", &json!({})).unwrap()["shaft"]["outer_mm"] == json!([1600.0 + 0.0, 1850.0 + 0.0]) || app.handle("vertical", &json!({})).unwrap()["shaft"].is_object());
+        // One undo reverts all of it (it was one project edit), and the inputs survive a save and reopen.
+        let dir = std::env::temp_dir().join(format!("nanoarch-m1-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("m1.nnx");
+        app.handle("save_to", &json!({ "path": path.to_string_lossy() })).ok();
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!((kinds(&mut app, "Site"), kinds(&mut app, "Furniture"), kinds(&mut app, "Vertical")), (0, 0, 0));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

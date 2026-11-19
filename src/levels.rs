@@ -117,14 +117,134 @@ pub fn plan_building(b: &BriefIn, n: u32) -> Result<BuildingPlan, String> {
     for l in 1..n {
         labels.insert(format!("reserve@{l}"), "Hall".into());
     }
+    // Filler rooms of the extra pieces when rooms are locked.
+    for i in 1..4 {
+        labels.insert(format!("reserve{i}"), "Hall".into());
+        for l in 1..n {
+            labels.insert(format!("reserve{i}@{l}"), "Hall".into());
+        }
+    }
     Ok(BuildingPlan { levels, merged: Brief { envelope, rooms: merged_rooms, adjacency: merged_adj, entry }, labels, notes })
 }
 
-/// Alternatives for the whole building: alternative `k` takes the `k`-th layout of every level.
-pub fn generate_building(plan: &BuildingPlan, seed: u64) -> Result<Vec<Building>, String> {
+/// One level with some rooms locked at exact rectangles (the envelope's frame, millimetres). The locked rooms are kept as they
+/// are; the other rooms are generated in the largest free rectangle that the locked rooms leave. Whatever else is left of the
+/// envelope stays empty: nothing is invented to fill it.
+fn generate_level(lp: &LevelPlan, level: usize, seed: u64, locked: &BTreeMap<String, layout::Rect>) -> Result<Vec<Layout>, String> {
+    let fixed: Vec<(&RoomReq, layout::Rect)> = lp.brief.rooms.iter().filter_map(|r| locked.get(&r.key).map(|rc| (r, *rc))).collect();
+    if fixed.is_empty() {
+        return layout::generate(&lp.brief, &Options { seed, ..Options::default() }).map_err(|e| e.to_string());
+    }
+    let env = lp.brief.envelope;
+    let overlap = |a: &layout::Rect, b: &layout::Rect| a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    for (i, (req, rc)) in fixed.iter().enumerate() {
+        if rc.x < env.x || rc.y < env.y || rc.x + rc.w > env.x + env.w || rc.y + rc.h > env.y + env.h {
+            return Err(format!("the locked room '{}' lies outside the buildable area", req.key));
+        }
+        for (other, oc) in fixed.iter().skip(i + 1) {
+            if overlap(rc, oc) {
+                return Err(format!("the locked rooms '{}' and '{}' overlap", req.key, other.key));
+            }
+        }
+    }
+    let placed = || -> Vec<layout::PlacedRoom> {
+        fixed.iter().map(|(req, rc)| layout::PlacedRoom { key: req.key.clone(), func: req.func.clone(), zone: req.zone, needs_light: req.needs_light, rect: *rc, area_m2: rc.area_m2(), target_m2: req.target_area_m2, deviation_pct: (rc.area_m2() - req.target_area_m2) / req.target_area_m2 * 100.0 }).collect()
+    };
+    let free: Vec<&RoomReq> = lp.brief.rooms.iter().filter(|r| !locked.contains_key(&r.key)).collect();
+    if free.is_empty() {
+        return Ok(vec![Layout { rooms: placed(), cost: 0.0, breakdown: layout::Breakdown::default(), reserve_m2: 0.0 }]);
+    }
+    // The free space is cut into up to four rectangles: repeatedly the largest rectangle (sides on the envelope's or a blocked
+    // room's edges) that touches nothing locked and nothing already taken. The other rooms are shared among them by area.
+    let mut blocked: Vec<layout::Rect> = fixed.iter().map(|(_, rc)| *rc).collect();
+    let mut regions: Vec<layout::Rect> = Vec::new();
+    let total: f64 = free.iter().map(|q| q.target_area_m2).sum();
+    while regions.len() < 4 {
+        let mut xs = vec![env.x, env.x + env.w];
+        let mut ys = vec![env.y, env.y + env.h];
+        for rc in &blocked {
+            xs.extend([rc.x, rc.x + rc.w]);
+            ys.extend([rc.y, rc.y + rc.h]);
+        }
+        xs.sort_unstable();
+        xs.dedup();
+        ys.sort_unstable();
+        ys.dedup();
+        let mut best: Option<layout::Rect> = None;
+        for (i, &x0) in xs.iter().enumerate() {
+            for &x1 in &xs[i + 1..] {
+                for (j, &y0) in ys.iter().enumerate() {
+                    for &y1 in &ys[j + 1..] {
+                        let c = layout::Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+                        if c.w >= 1500 && c.h >= 1500 && !blocked.iter().any(|b| overlap(&c, b)) && best.is_none_or(|b| c.w * c.h > b.w * b.h) {
+                            best = Some(c);
+                        }
+                    }
+                }
+            }
+        }
+        let Some(c) = best else { break };
+        blocked.push(c);
+        regions.push(c);
+        if regions.iter().map(|g| g.area_m2()).sum::<f64>() >= total * 1.15 {
+            break;
+        }
+    }
+    let space: f64 = regions.iter().map(|g| g.area_m2()).sum();
+    if regions.is_empty() {
+        return Err("the locked rooms leave no free space for the other rooms".into());
+    }
+    // Biggest room first, into the region with the most space left.
+    let mut left: Vec<f64> = regions.iter().map(|g| g.area_m2()).collect();
+    let mut share: Vec<Vec<&RoomReq>> = vec![Vec::new(); regions.len()];
+    let mut order = free.clone();
+    order.sort_by(|a, b| b.target_area_m2.total_cmp(&a.target_area_m2));
+    for room in order {
+        let (i, _) = left.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).ok_or("no region")?;
+        if left[i] + 1e-9 < room.target_area_m2 {
+            return Err(format!("the space left by the locked rooms ({space:.1} m2 in {} piece(s)) cannot hold the other rooms ({total:.1} m2)", regions.len()));
+        }
+        left[i] -= room.target_area_m2;
+        share[i].push(room);
+    }
+    let mut per_region: Vec<Vec<Layout>> = Vec::new();
+    for (idx, (region, rooms)) in regions.iter().zip(&share).enumerate() {
+        if rooms.is_empty() {
+            continue;
+        }
+        let names: std::collections::BTreeSet<&str> = rooms.iter().map(|q| q.key.as_str()).collect();
+        let sub = Brief { envelope: *region, rooms: rooms.iter().map(|q| (*q).clone()).collect(), adjacency: lp.brief.adjacency.iter().filter(|a| names.contains(a.a.as_str()) && names.contains(a.b.as_str())).cloned().collect(), entry: lp.brief.entry };
+        let mut ls = layout::generate(&sub, &Options { seed: seed.wrapping_add(idx as u64 * 977), ..Options::default() }).map_err(|e| format!("the space left by the locked rooms ({:.1} m2): {e}", region.area_m2()))?;
+        // Circulation filler rooms of the second and later pieces get their own keys.
+        if idx > 0 {
+            for l in &mut ls {
+                for q in l.rooms.iter_mut().filter(|q| q.key == "reserve") {
+                    q.key = if level == 0 { format!("reserve{idx}") } else { format!("reserve{idx}@{level}") };
+                }
+            }
+        }
+        per_region.push(ls);
+    }
+    let count = per_region.iter().map(Vec::len).min().unwrap_or(1).max(1);
+    Ok((0..count)
+        .map(|k| {
+            let mut rooms = placed();
+            let (mut cost, mut reserve) = (0.0, 0.0);
+            for v in &per_region {
+                let l = &v[k.min(v.len() - 1)];
+                rooms.extend(l.rooms.iter().cloned());
+                cost += l.cost;
+                reserve += l.reserve_m2;
+            }
+            Layout { rooms, cost, breakdown: layout::Breakdown::default(), reserve_m2: reserve }
+        })
+        .collect())
+}
+/// Alternatives for the whole building: alternative `k` takes the `k`-th layout of every level. Some rooms may be locked at exact\n/// rectangles (room key -> rectangle); with none locked this is the plain generator.
+pub fn generate_building_locked(plan: &BuildingPlan, seed: u64, locked: &BTreeMap<String, layout::Rect>) -> Result<Vec<Building>, String> {
     let mut per_level: Vec<Vec<Layout>> = Vec::new();
     for (l, lp) in plan.levels.iter().enumerate() {
-        let layouts = layout::generate(&lp.brief, &Options { seed: seed.wrapping_add(l as u64), ..Options::default() }).map_err(|e| format!("floor {}: {e}", l + 1))?;
+        let layouts = generate_level(lp, l, seed.wrapping_add(l as u64), locked).map_err(|e| format!("floor {}: {e}", l + 1))?;
         per_level.push(
             layouts
                 .into_iter()

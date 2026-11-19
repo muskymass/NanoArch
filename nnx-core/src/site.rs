@@ -496,6 +496,11 @@ fn esc(s: &str) -> String {
 
 /// The site plan as SVG (north up): the plot, the setback distances, the buildable polygon and the building.
 pub fn site_svg(r: &SiteResult, title: &str) -> String {
+    site_svg_with(r, title, None)
+}
+
+/// The site plan with the landscape layout (boundary walls, gate, guard room, carport, pool, courtyard) drawn over it.
+pub fn site_svg_with(r: &SiteResult, title: &str, layout: Option<&crate::site_layout::SiteLayout>) -> String {
     use std::fmt::Write;
     let pts = || r.polygon_m.iter();
     let (minx, miny) = (pts().map(|p| p[0]).fold(f64::MAX, f64::min), pts().map(|p| p[1]).fold(f64::MAX, f64::min));
@@ -511,6 +516,24 @@ pub fn site_svg(r: &SiteResult, title: &str) -> String {
     let _ = writeln!(o, "<polygon class=\"plot\" points=\"{}\"/>", poly(&r.polygon_m));
     let _ = writeln!(o, "<polygon class=\"buildable\" points=\"{}\"/>", poly(&r.buildable_m));
     let _ = writeln!(o, "<polygon class=\"building\" points=\"{}\"/>", poly(&r.building.corners_m));
+    if let Some(l) = layout {
+        for it in &l.items {
+            let (fill, label) = match it.kind {
+                "guard" => ("#c9b79c", "guard"),
+                "carport" => ("#b0bec5", "carport"),
+                "pool" => ("#80deea", "pool"),
+                _ => ("#c5e1a5", "courtyard"),
+            };
+            let c = it.corners_plot;
+            let _ = writeln!(o, "<polygon points=\"{}\" style=\"fill:{fill};stroke:#37474f;stroke-width:1\"/><text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\" style=\"font:11px sans-serif;fill:#263238\">{label}</text>", poly(&c), tx((c[0][0] + c[2][0]) / 2.0), ty((c[0][1] + c[2][1]) / 2.0));
+        }
+        for w in &l.walls {
+            let _ = writeln!(o, "<line x1=\"{:.1}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\" style=\"stroke:#4e342e;stroke-width:{:.1}\"/>", tx(w.a[0]), ty(w.a[1]), tx(w.b[0]), ty(w.b[1]), (l.wall_thickness_m * s).max(2.5));
+        }
+        if let Some([g0, g1]) = l.gate_m {
+            let _ = writeln!(o, "<line x1=\"{:.1}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\" style=\"stroke:#e65100;stroke-width:3;stroke-dasharray:4 3\"/><text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\" style=\"font:11px sans-serif;fill:#e65100\">gate</text>", tx(g0[0]), ty(g0[1]), tx(g1[0]), ty(g1[1]), tx((g0[0] + g1[0]) / 2.0), ty((g0[1] + g1[1]) / 2.0) + 16.0);
+        }
+    }
     let n = r.polygon_m.len();
     for i in 0..n {
         let (a, b) = (r.polygon_m[i], r.polygon_m[(i + 1) % n]);
