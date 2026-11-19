@@ -256,6 +256,7 @@ impl App {
             "presets" => Ok(nnx_core::presets::presets_json()),
             "site_analyze" => Self::site_analyze(args),
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
+            "analysis" => self.analysis(args),
             "template_apply" => Self::template_apply(args),
             "site_plan" => self.site_plan(),
             "zone_preset" => self.zone_preset(args),
@@ -659,6 +660,26 @@ impl App {
         let r = nnx_core::site::analyse(&input).map_err(|e| e.join("; "))?;
         let svg = nnx_core::site::site_svg(&r, "Site plan");
         Ok(json!({ "result": r, "svg": svg, "rule_source": nnx_core::site::RULE_SOURCE }))
+    }
+
+    /// Early-design analyses (`kind`: solar, screen, compare, stair, ramp). Every limit comes from the caller; a missing one is named.
+    fn analysis(&self, args: &Value) -> Result<Value, String> {
+        use nnx_core::analysis as an;
+        let n = |k: &str| args.get(k).and_then(Value::as_f64);
+        let need = |k: &str| n(k).ok_or_else(|| format!("{k} is missing"));
+        let kind = args.get("kind").and_then(Value::as_str).ok_or("kind is missing")?;
+        let ser = |v: Result<serde_json::Value, serde_json::Error>| v.map_err(|e| e.to_string());
+        match kind {
+            "solar" => ser(serde_json::to_value(an::solar(need("latitude_deg")?, n("window_height_m"))?)),
+            "screen" => ser(serde_json::to_value(an::screen_height(need("eye_m")?, need("viewer_to_screen_m")?, need("screen_to_target_m")?, need("target_m")?)?)),
+            "stair" => ser(serde_json::to_value(an::stair(need("floor_height_mm")?, need("risers")? as u32, need("tread_mm")?, need("target_mm")?, need("tolerance_mm")?)?)),
+            "ramp" => ser(serde_json::to_value(an::ramp(need("rise_mm")?, need("run_mm")?, n("max_slope_pct"))?)),
+            "compare" => {
+                let alts: Vec<(f64, Vec<(String, f64)>)> = self.alternatives.iter().map(|b| (b.levels[0].cost, b.levels.iter().flat_map(|l| l.rooms.iter().map(|r| (r.func.clone(), r.area_m2))).collect())).collect();
+                ser(serde_json::to_value(an::compare(&alts, need("max_circulation_pct")?)?))
+            }
+            other => Err(format!("unknown analysis '{other}'")),
+        }
     }
 
     /// A starter template with the Ministry-rule setbacks of its plot (each carries its clause).
@@ -1866,6 +1887,26 @@ mod tests {
         // Switching back to a rectangle removes the outline, and the site plan is the rectangle's again.
         app.handle("project_set", &json!({ "meta": { "plotPolygonM": null, "plotEdges": [], "setbackRule": null } })).unwrap();
         assert_eq!(app.handle("site_plan", &json!({})).unwrap()["result"]["polygon_m"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn the_analysis_commands_report_missing_inputs_by_name_and_compare_generated_alternatives() {
+        let mut app = App::default();
+        let s = app.handle("analysis", &json!({ "kind": "solar", "latitude_deg": 27.0, "window_height_m": 1.5 })).unwrap();
+        assert_eq!(s["table"].as_array().unwrap().len(), 4);
+        assert!(app.handle("analysis", &json!({ "kind": "solar" })).unwrap_err().contains("latitude_deg is missing"));
+        assert!(app.handle("analysis", &json!({ "kind": "ramp", "rise_mm": 1500, "run_mm": 10000 })).unwrap_err().contains("maximum ramp slope"));
+        assert_eq!(app.handle("analysis", &json!({ "kind": "ramp", "rise_mm": 1500, "run_mm": 10000, "max_slope_pct": 15 })).unwrap()["ok"], true);
+        assert!(app.handle("analysis", &json!({ "kind": "stair", "floor_height_mm": 3000, "risers": 17, "tread_mm": 270, "target_mm": 620, "tolerance_mm": 20 })).unwrap()["comfortable"].as_bool().unwrap());
+        assert!(app.handle("analysis", &json!({ "kind": "screen", "eye_m": 1.7, "viewer_to_screen_m": 3, "screen_to_target_m": 6, "target_m": 1.2 })).unwrap()["required_height_m"].as_f64().unwrap() > 1.0);
+        assert!(app.handle("analysis", &json!({ "kind": "nope" })).is_err());
+        // No alternatives yet; then the generated ones are compared (at most three).
+        assert!(app.handle("analysis", &json!({ "kind": "compare", "max_circulation_pct": 15 })).is_err());
+        app.handle("generate", &json!({ "brief": brief(), "struct": {} })).unwrap();
+        assert!(app.handle("analysis", &json!({ "kind": "compare" })).unwrap_err().contains("max_circulation_pct is missing"));
+        let c = app.handle("analysis", &json!({ "kind": "compare", "max_circulation_pct": 15 })).unwrap();
+        let rows = c["rows"].as_array().unwrap();
+        assert!(!rows.is_empty() && rows.len() <= 3 && rows.iter().all(|r| r["efficiency"]["gross_m2"].as_f64().unwrap() > 0.0));
     }
 
     #[test]

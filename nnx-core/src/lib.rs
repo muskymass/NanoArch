@@ -3,6 +3,7 @@
 //! All edits go through [`Command`]s grouped into atomic transactions on a
 //! [`Document`], which provides undo/redo. [`persist`] reads and writes `.nnx` files.
 
+pub mod analysis;
 pub mod boq;
 pub mod briefai;
 pub mod building;
