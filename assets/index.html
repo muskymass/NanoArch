@@ -185,7 +185,7 @@ ul.clean li{margin:3px 0}
   <section class="col">
     <div class="tabs">
       <button class="tab on" data-tab="notes" data-i="t_notes"></button><button class="tab" data-tab="qto" data-i="t_qto"></button>
-      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="an" id="tab-an"></button>
+      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="an" id="tab-an"></button><button class="tab" data-tab="cp" id="tab-cp"></button>
     </div>
     <div class="scroll">
       <div class="pane" id="p-sketch">
@@ -277,6 +277,7 @@ ul.clean li{margin:3px 0}
         <div id="clash-out"></div>
       </div>
       <div class="pane" id="p-an"></div>
+      <div class="pane" id="p-cp"></div>
       <div class="pane" id="p-rules">
         <div class="note" data-i="rules_note"></div>
         <textarea id="pack" spellcheck="false" dir="ltr" style="text-align:left"></textarea>
@@ -406,6 +407,7 @@ function applyLang() {
   if (state.levels) setLevels(state.levels);
   $("to3d").textContent = (typeof V3 !== "undefined" && V3.on) ? t("to2d") : t("to3d");
   renderRooms(); renderWorkdays(); renderRates(); try { renderTemplates(); polyRender(); anBuild(); } catch (e) { /* not loaded yet */ }
+  try { $("tab-cp").textContent = L("الامتثال والكود", "Compliance"); cpBuild(); } catch (e) { /* not loaded yet */ }
   if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
 }
 
@@ -1444,6 +1446,140 @@ function anLoad(m) {
   set("ax-x", a.xMm); set("ax-y", a.yMm); set("ax-w", a.widthMm); set("ax-l", a.lengthMm); set("ax-h", a.heightMm);
 }
 anBuild();
+
+// ---------------------------------------------------------------- compliance pack (M2)
+// Inputs are stored in the project (compliance_set) and every verdict comes from the backend with its clause and page. Starting values
+// the page offers (0.12 / 0.03 surface resistances from the guide's example; 900 mm, 1:12, 1500 mm from the feature brief; the A-E
+// band limits of this application's own scale) are labelled as such and are ordinary editable inputs.
+const CP = { rep: null, mats: null, inputs: {} };
+const cpSt = s => `<span class="${s === "ok" ? "ok" : s === "violation" ? "bad" : s === "warn" || s === "skipped" ? "warn" : "hint"}">${({ ok: L("مطابق", "pass"), violation: L("مخالفة", "violation"), warn: L("تنبيه", "warn"), skipped: L("لم يُفحص", "skipped"), info: L("معلومة", "info") })[s] || s}</span>`;
+const cpRows = rows => rows && rows.length ? `<table class="rooms"><tbody>${rows.map(r => `<tr><td>${cpSt(r.status)}</td><td>${esc(lang === "ar" ? r.ar : r.en)}${r.element ? ` <span class="hint" dir="ltr">${esc(String(r.element).slice(0, 8))}</span>` : ""}</td><td class="hint" dir="ltr" title="${esc(r.source)}">${esc(r.clause)}</td></tr>`).join("")}</tbody></table>` : `<div class="hint">${L("لا شيء للفحص", "Nothing to check")}</div>`;
+const cpIn = (id, label, val, ph = "", type = "number") => `<div><label>${label}</label><input id="${id}" type="${type}" step="any" value="${val ?? ""}" placeholder="${ph}" ${type === "number" ? 'dir="ltr"' : ""}></div>`;
+const cpV = id => { const e = document.getElementById(id); return !e || e.value === "" ? null : Number(e.value); };
+const cpT = id => { const e = document.getElementById(id); return !e || e.value.trim() === "" ? null : e.value.trim(); };
+const cpRoomBoxes = (name, chosen) => ((CP.rep && CP.rep.rooms) || []).map(r => `<label><input type="checkbox" data-pick="${name}" value="${esc(r.key)}" ${(chosen || []).includes(r.key) ? "checked" : ""}>${esc(r.key)} <span class="hint">${esc(r.func)}</span></label>`).join("") || `<span class="hint">${L("ولّد مخططاً أولاً", "Generate a plan first")}</span>`;
+const cpPicked = name => [...document.querySelectorAll(`[data-pick="${name}"]:checked`)].map(e => e.value);
+
+async function cpLoad() {
+  if (!CP.mats) CP.mats = await call("materials");
+  CP.rep = await call("compliance"); CP.inputs = JSON.parse(JSON.stringify(CP.rep.inputs || {}));
+  cpBuild();
+}
+function cpLayerRows(sec) {
+  const arr = (CP.inputs.thermal && CP.inputs.thermal[sec + "Layers"]) || [], mats = CP.mats.materials;
+  return arr.map((l, i) => { const m = mats.find(x => x.id === l.material);
+    return `<tr><td><select data-sec="${sec}" data-n="${i}" data-f="material">${mats.map(x => `<option value="${x.id}" ${x.id === l.material ? "selected" : ""}>${esc(lang === "ar" ? x.name_ar : x.name_en)}${x.needs_user_values ? " *" : ""}</option>`).join("")}</select></td>
+      <td><input type="number" step="any" style="width:70px" dir="ltr" data-sec="${sec}" data-n="${i}" data-f="thicknessMm" value="${l.thicknessMm ?? ""}" placeholder="mm"></td>
+      <td><input type="number" step="any" style="width:70px" dir="ltr" data-sec="${sec}" data-n="${i}" data-f="lambda" value="${l.lambda ?? ""}" placeholder="${m && m.lambda != null ? m.lambda : "λ"}"></td>
+      <td class="hint" dir="ltr">${m && m.min_thickness_cm ? `min ${m.min_thickness_cm.join("/")} cm` : ""}</td><td><button data-sec="${sec}" data-del="${i}">×</button></td></tr>`; }).join("");
+}
+function cpBuild() {
+  const box = $("p-cp"); if (!box || !CP.rep || !CP.mats) return;
+  $("tab-cp").textContent = L("الامتثال والكود", "Compliance");
+  const r = CP.rep, i = CP.inputs, th = i.thermal || {}, ac = i.access || {}, vt = i.vent || {}, so = i.soil || {}, cv = i.cover || {}, tr = r.thermal, mal = r.malath;
+  const br = th.bandRatios || [0.5, 0.65, 0.8, 1, 1.25];
+  const matRows = CP.mats.materials.map(m => `<tr><td>${esc(lang === "ar" ? m.name_ar : m.name_en)}</td><td dir="ltr">${m.density ?? "-"}</td><td dir="ltr">${m.lambda ?? "-"}</td><td dir="ltr">${m.min_thickness_cm ? m.min_thickness_cm.join(" / ") : "-"}</td><td class="hint" title="${esc(m.source || "")}">${m.source ? esc(m.source.split(",").pop()) : `<span class="warn">${L("أدخل القيم من الشهادة", "enter values from the data sheet")}</span>`}</td></tr>`).join("");
+  const stageName = s => (lang === "ar" ? s.ar : s.en);
+  box.innerHTML = `
+    <h2>${L("تقرير الامتثال المبدئي", "Preliminary compliance report")}</h2>
+    <div class="note">${L("تقرير للطباعة يجمع كل الفحوص مع البند والصفحة وأرقام العناصر ومسار المراجعة. ليس شهادة رسمية من بلدي ولا يغني عن الجهة المعتمدة.", "A printable report gathering every check with clause, page, element ids and the audit trail. It is not an official Balady certificate and does not replace the approving authority.")}</div>
+    <div class="bar" style="padding:6px 0;border:0;flex-wrap:wrap;gap:6px"><button id="cp-cert" class="primary">${L("تقرير الامتثال (PDF)", "Compliance report (PDF)")}</button></div>
+
+    <h2>${L("الغلاف الحراري (SBC 602) والمواد", "Thermal envelope (SBC 602) and materials")}</h2>
+    <div class="note">${esc(L(tr.caveat_ar, tr.caveat_en))} <span class="hint">${esc(tr.limits_source)}</span></div>
+    <div class="row3">${cpIn("cp-rsi", L("Rsi (م²·ك/و)", "Rsi (m²K/W)"), th.rsi, "0.12")}${cpIn("cp-rse", "Rse", th.rse, "0.03")}${cpIn("cp-wu", L("U النافذة", "Window U"), th.windowU)}</div>
+    <div class="row3">${cpIn("cp-shgc", "SHGC", th.windowShgc)}${cpIn("cp-bridge", L("الجسور الحرارية %", "Thermal bridges %"), th.bridgePct)}<div></div></div>
+    <div class="hint">${L("Rsi وRse مثالان من الدليل (ص199). حدود الفئات A–E مقياس نسبي من التطبيق (نسبة U المرجّح إلى مرجع المنطقة) وليست تصنيف SBC أو SEC:", "Rsi and Rse are the guide's example values (p.199). The A–E limits are this application's relative scale (weighted U / zone reference U), not an SBC or SEC rating:")}</div>
+    <div class="row3">${br.map((b, k) => cpIn("cp-b" + k, "≤ " + "ABCDE"[k], b)).join("")}</div>
+    <div class="bar" style="padding:4px 0;border:0"><b>${L("طبقات الجدار", "Wall layers")}</b><button id="cp-addwall">+</button></div>
+    <table class="rooms"><tbody id="cp-wall">${cpLayerRows("wall")}</tbody></table>
+    <div class="bar" style="padding:4px 0;border:0"><b>${L("طبقات السقف", "Roof layers")}</b><button id="cp-addroof">+</button></div>
+    <table class="rooms"><tbody id="cp-roof">${cpLayerRows("roof")}</tbody></table>
+    <details><summary>${L("مكتبة المواد (النجمة: لا قيمة في ملفات الكود)", "Materials library (* = no value in the code files)")}</summary><table class="rooms"><thead><tr><th>${L("المادة", "Material")}</th><th>kg/m³</th><th>λ</th><th>${L("أقل سماكة مناطق 1/2/3 (سم)", "Least thickness zones 1/2/3 (cm)")}</th><th>${L("المصدر", "Source")}</th></tr></thead><tbody>${matRows}</tbody></table></details>
+    <div id="cp-thermal-out">${cpThermal(tr)}</div>
+
+    <h2>${L("إمكانية الوصول", "Accessibility")}</h2>
+    <div class="note">${L("ملفات الكود لا تحمل أرقاماً لهذا الباب: كل الحدود مدخلات منك مع مصدرها. القيم المعبأة (900 مم، 1:12، 1500 مم) من وصف الميزة ولم تُتحقق من نص الكود.", "The code files carry no figures for this chapter: every limit is your input with its source. The prefilled values (900 mm, 1:12, 1500 mm) come from the feature brief and were not verified against the code text.")}</div>
+    <div class="row3">${cpIn("cp-dw", L("أقل عرض صافٍ للباب (مم)", "Least clear door width (mm)"), ac.doorMinClearMm ?? 900)}${cpIn("cp-dd", L("خصم العرض الصافي (مم)", "Clear-width deduction (mm)"), ac.doorDeductionMm)}${cpIn("cp-tc", L("قطر دائرة الدوران (مم)", "Turning circle (mm)"), ac.turningCircleMm ?? 1500)}</div>
+    <div class="row3">${cpIn("cp-rn", L("أشد منحدر 1 : N", "Steepest ramp 1 : N"), ac.rampMaxRatioN ?? 12)}${cpIn("cp-rrise", L("ارتفاع منحدر المدخل (مم)", "Entrance ramp rise (mm)"), ac.entranceRampRiseMm)}${cpIn("cp-rrun", L("طوله (مم)", "run (mm)"), ac.entranceRampRunMm)}</div>
+    <label>${L("مصدر الحدود", "Source of the limits")}</label><input id="cp-asrc" value="${esc(ac.source || "")}">
+    <label>${L("الغرف المصممة كدورات مياه متاحة", "Rooms designed as accessible bathrooms")}</label><div class="chk">${cpRoomBoxes("acc", ac.accessibleRooms)}</div>
+    <div id="cp-acc-out">${cpRows(r.access.rows)}</div>
+
+    <h2>${L("تهوية المطابخ ودورات المياه والمناور (5-1-6)", "Wet-area ventilation and lightwells (5-1-6)")}</h2>
+    <div class="note">${L("لكل مطبخ ودورة مياه: نافذة خارجية أو منور مطابق لجدول 5-1-6 (ص27) أو شفاط ميكانيكي (مسموح لدورات المياه؛ المطبخ بالشفاط تنبيه).", "Each kitchen and bathroom needs an external window, a lightwell that meets Table 5-1-6 (p.27), or a mechanical exhaust (allowed for bathrooms; a kitchen on exhaust alone is a warning).")}</div>
+    <table class="rooms"><tbody id="cp-wells">${(vt.lightwells || []).map((w, k) => `<tr><td><input data-well="${k}" data-f="name" value="${esc(w.name)}" style="width:70px" placeholder="${L("اسم", "name")}"></td><td><input type="number" step="any" dir="ltr" data-well="${k}" data-f="widthM" value="${w.widthM}" style="width:56px" placeholder="W"></td><td><input type="number" step="any" dir="ltr" data-well="${k}" data-f="lengthM" value="${w.lengthM}" style="width:56px" placeholder="L"></td><td><input type="number" dir="ltr" data-well="${k}" data-f="floors" value="${w.floors}" style="width:44px" placeholder="${L("أدوار", "floors")}"></td><td><label style="margin:0;display:flex;gap:3px"><input type="checkbox" data-well="${k}" data-f="oppositeOrAll" ${w.oppositeOrAll ? "checked" : ""}>${L("متقابلة/كل الجهات", "opposite/all")}</label></td><td><input data-well="${k}" data-f="rooms" value="${esc((w.rooms || []).join(","))}" style="width:90px" placeholder="${L("غرف", "rooms")}"></td><td><button data-delwell="${k}">×</button></td></tr>`).join("")}</tbody></table>
+    <div class="bar" style="padding:4px 0;border:0"><button id="cp-addwell">${L("+ منور", "+ Lightwell")}</button></div>
+    <label>${L("الغرف المخدومة بشفاط ميكانيكي", "Rooms served by a mechanical exhaust")}</label><div class="chk">${cpRoomBoxes("exh", vt.exhaustRooms)}</div>
+    <div id="cp-vent-out">${cpRows(r.ventilation.rows)}</div>
+
+    <h2>${L("البروزات والشرفات (5-1-11)", "Projections and balconies (5-1-11)")}</h2>
+    <div class="row">${cpIn("cp-street", L("عرض الشارع الأمامي (م)", "Front street width (m)"), i.streetWidthM)}<div></div></div>
+    <table class="rooms"><tbody id="cp-projs">${(i.projections || []).map((p, k) => `<tr><td><input data-proj="${k}" data-f="name" value="${esc(p.name)}" style="width:70px" placeholder="${L("اسم", "name")}"></td><td><input type="number" dir="ltr" data-proj="${k}" data-f="level" value="${p.level}" style="width:40px" placeholder="${L("دور", "floor")}"></td><td><select data-proj="${k}" data-f="side">${["south", "north", "east", "west"].map(s => `<option ${s === p.side ? "selected" : ""}>${s}</option>`).join("")}</select></td><td><input type="number" step="any" dir="ltr" data-proj="${k}" data-f="depthM" value="${p.depthM}" style="width:56px" placeholder="${L("عمق م", "depth m")}"></td><td><select data-proj="${k}" data-f="kind">${["balcony", "bay", "cornice"].map(s => `<option ${s === p.kind ? "selected" : ""}>${s}</option>`).join("")}</select></td><td><input type="number" step="any" dir="ltr" data-proj="${k}" data-f="guardHeightM" value="${p.guardHeightM ?? ""}" style="width:56px" placeholder="${L("حاجز م", "guard m")}"></td><td><button data-delproj="${k}">×</button></td></tr>`).join("")}</tbody></table>
+    <div class="bar" style="padding:4px 0;border:0"><button id="cp-addproj">${L("+ بروز", "+ Projection")}</button></div>
+    <div id="cp-cant-out">${cpRows(r.cantilever.rows)}</div>
+    <div class="bar" style="padding:6px 0;border:0"><button id="cp-save" class="primary">${L("احفظ المدخلات وأعد الفحص", "Save inputs and re-check")}</button></div>
+
+    <h2>${L("قائمة تدقيق العيوب الخفية (ملاذ)", "Latent-defects (Malath) checklist")}</h2>
+    <div class="note">${esc(L(mal.disclaimer_ar, mal.disclaimer_en))}</div>
+    <div class="row3"><div><label>${L("تقرير التربة", "Soil report")}</label><select id="cp-soil">${["none", "ordered", "received", "reviewed"].map(s => `<option ${s === (so.status || "none") ? "selected" : ""}>${s}</option>`).join("")}</select></div>${cpIn("cp-bor", L("عدد الجسات", "Borings"), so.borings)}<div><label>${L("مرجع التقرير", "Report ref.")}</label><input id="cp-sref" value="${esc(so.reference || "")}"></div></div>
+    <div class="note">${L("الغطاء الخرساني (الجدول 4A5 ص134):", "Concrete cover (Table 4A5, p.134):")}</div>
+    <div class="row3"><div><label>${L("التعرض", "Exposure")}</label><select id="cp-cex"><option value=""></option>${["ground", "weather", "protected"].map(s => `<option ${s === cv.exposure ? "selected" : ""}>${s}</option>`).join("")}</select></div><div><label>${L("العنصر", "Member")}</label><select id="cp-cm"><option value=""></option>${["slab", "frame"].map(s => `<option ${s === cv.member ? "selected" : ""}>${s}</option>`).join("")}</select></div>${cpIn("cp-cd", L("قطر القضيب (مم)", "Bar dia. (mm)"), cv.barDiaMm)}</div>
+    <div class="row">${cpIn("cp-cs", L("الغطاء المحدد (مم)", "Specified cover (mm)"), cv.specifiedMm)}<div class="hint">${mal.cover ? `${L("المطلوب", "required")}: <b dir="ltr">${mal.cover.required_mm ?? "-"} mm</b> ${mal.cover.missing.length ? "· " + esc(mal.cover.missing.join("; ")) : ""}` : ""}</div></div>
+    ${mal.stages.map(s => `<h3 style="margin:10px 0 2px">${esc(stageName(s))} <span class="badge">${s.accepted}✓ ${s.rejected}✗ ${s.pending}…</span> ${s.complete ? `<span class="ok">✔</span>` : s.open ? "" : `<span class="hint">${L("مقفلة حتى تكتمل المراحل السابقة", "waits for earlier gates")}</span>`}</h3>
+      <table class="rooms"><tbody>${mal.items.filter(x => x.stage === s.stage).map(x => `<tr><td style="max-width:230px">${esc(lang === "ar" ? x.ar : x.en)}<div class="hint" title="${esc(x.source)}">${esc(x.source)}</div></td><td><select data-mal="${x.id}" ${x.auto && x.status !== "pending" ? "disabled" : ""}>${["pending", "accepted", "rejected", "na"].map(o => `<option value="${o}" ${o === x.status ? "selected" : ""}>${({ pending: L("معلّق", "pending"), accepted: L("مقبول", "accepted"), rejected: L("مرفوض", "rejected"), na: L("لا ينطبق", "n/a") })[o]}</option>`).join("")}</select></td><td><input data-malnote="${x.id}" value="${esc(x.note)}" style="width:110px" ${x.auto && x.status !== "pending" ? "disabled" : ""}></td></tr>`).join("")}</tbody></table>`).join("")}
+
+    <h2>${L("سجل التغييرات وسحب المراجعة", "Change log and revision clouds")}</h2>
+    <div class="note">${L("خط الأساس لقطة للنموذج؛ كل عنصر أُضيف أو عُدّل أو حُذف بعده يُسجَّل بمعرّفه ويُحاط بسحابة حمراء في المخطط وتُضاف جدول المراجعات للتصدير.", "The baseline is a snapshot of the model; every element added, modified or removed after it is logged by id and circled with a red cloud in the plan, and a revision table is added to the exports.")}</div>
+    <div class="row"><div><label>${L("اسم خط الأساس", "Baseline name")}</label><input id="cp-bname" placeholder="Rev A"></div><div style="align-self:end"><button id="cp-base" class="primary">${L("حدّد خط الأساس الآن", "Set baseline now")}</button></div></div>
+    <label style="display:flex;gap:6px;align-items:center;color:var(--ink)"><input type="checkbox" id="cp-clouds" ${CP.clouds ? "checked" : ""}>${L("أظهر سحب المراجعة في المخطط", "Show revision clouds in the plan")}</label>
+    ${r.baseline ? `<div class="hint">${L("خط الأساس", "Baseline")}: <b>${esc(r.baseline.name)}</b> · ${r.baseline.date} · ${r.baseline.elements} ${L("عنصر", "elements")} — <b class="warn">+${r.change_counts.added}</b> ${L("مضاف", "added")} · <b class="warn">${r.change_counts.modified}</b> ${L("معدّل", "modified")} · <b class="bad">−${r.change_counts.removed}</b> ${L("محذوف", "removed")}</div>
+      <table class="rooms"><tbody>${r.changes.slice(0, 60).map(c => `<tr><td>${esc(c.status)}</td><td>${esc(c.kind)}</td><td class="hint" dir="ltr">${esc(c.id)}</td></tr>`).join("")}</tbody></table>` : `<div class="hint">${L("لم يُحدَّد خط أساس بعد", "No baseline set yet")}</div>`}
+    ${r.history.length ? `<table class="rooms"><thead><tr><th>${L("المراجعة", "Rev.")}</th><th>${L("الاسم", "Name")}</th><th>+</th><th>Δ</th><th>−</th></tr></thead><tbody>${r.history.map(h => `<tr><td>${h.rev}</td><td>${esc(h.name)}</td><td>${h.added}</td><td>${h.modified}</td><td>${h.removed}</td></tr>`).join("")}</tbody></table>` : ""}`;
+  cpWire();
+}
+function cpThermal(tr) {
+  const rows = tr.rows.map(x => `<tr><td>${esc(x.class)}</td><td dir="ltr">${x.area_m2}</td><td dir="ltr">${x.u ?? "-"}</td><td dir="ltr">${x.limit ?? "-"}</td><td class="${x.status === "ok" ? "ok" : x.status === "exceeds limit" ? "bad" : "warn"}">${esc(x.status)}</td></tr>`).join("");
+  return `<table class="rooms"><thead><tr><th>${L("الفئة", "Class")}</th><th>m²</th><th>U</th><th>${L("حد المنطقة", "zone limit")}</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="${tr.band ? "ok" : "warn"}">${L("U المرجّح", "Weighted U")}: <b dir="ltr">${tr.weighted_u ?? "-"}</b> · ${L("المرجع", "reference")}: <b dir="ltr">${tr.reference_u ?? "-"}</b> · ${L("النسبة", "ratio")}: <b dir="ltr">${tr.ratio ?? "-"}</b> · ${L("الفئة", "band")}: <b style="font-size:18px">${tr.band ?? "-"}</b> · ${L("المنطقة", "zone")}: ${tr.zone ?? "-"}</div>
+    <ul class="clean">${tr.notes.map(n => `<li class="hint">${esc(n)}</li>`).join("")}${tr.missing.map(n => `<li class="warn">${L("ناقص", "missing")}: ${esc(n)}</li>`).join("")}</ul>`;
+}
+// Reads every field of the pane back into the stored inputs.
+function cpCollect() {
+  const i = CP.inputs; i.thermal = i.thermal || {}; i.access = i.access || {}; i.vent = i.vent || {}; i.soil = i.soil || {};
+  const th = i.thermal;
+  th.rsi = cpV("cp-rsi"); th.rse = cpV("cp-rse"); th.windowU = cpV("cp-wu"); th.windowShgc = cpV("cp-shgc"); th.bridgePct = cpV("cp-bridge");
+  const br = [0, 1, 2, 3, 4].map(k => cpV("cp-b" + k)); th.bandRatios = br.every(x => x != null) ? br : null;
+  for (const sec of ["wall", "roof"]) { th[sec + "Layers"] = th[sec + "Layers"] || []; document.querySelectorAll(`[data-sec="${sec}"][data-f]`).forEach(e => { const l = th[sec + "Layers"][Number(e.dataset.n)]; if (!l) return; l[e.dataset.f] = e.dataset.f === "material" ? e.value : (e.value === "" ? null : Number(e.value)); }); }
+  const a = i.access;
+  a.doorMinClearMm = cpV("cp-dw"); a.doorDeductionMm = cpV("cp-dd"); a.turningCircleMm = cpV("cp-tc"); a.rampMaxRatioN = cpV("cp-rn"); a.entranceRampRiseMm = cpV("cp-rrise"); a.entranceRampRunMm = cpV("cp-rrun"); a.source = cpT("cp-asrc"); a.accessibleRooms = cpPicked("acc");
+  i.vent.exhaustRooms = cpPicked("exh");
+  document.querySelectorAll("[data-well]").forEach(e => { const w = i.vent.lightwells[Number(e.dataset.well)]; if (!w) return; const f = e.dataset.f; w[f] = f === "oppositeOrAll" ? e.checked : f === "rooms" ? e.value.split(",").map(s => s.trim()).filter(Boolean) : f === "name" ? e.value : Number(e.value); });
+  i.streetWidthM = cpV("cp-street");
+  document.querySelectorAll("[data-proj]").forEach(e => { const p = (i.projections || [])[Number(e.dataset.proj)]; if (!p) return; const f = e.dataset.f; p[f] = ["name", "side", "kind"].includes(f) ? e.value : f === "guardHeightM" ? (e.value === "" ? null : Number(e.value)) : Number(e.value); });
+  i.soil = { status: $("cp-soil").value === "none" ? "" : $("cp-soil").value, borings: cpV("cp-bor"), reference: cpT("cp-sref") };
+  const any = cpT("cp-cex") || cpT("cp-cm") || cpV("cp-cd") != null || cpV("cp-cs") != null;
+  i.cover = any ? { exposure: cpT("cp-cex"), member: cpT("cp-cm"), barDiaMm: cpV("cp-cd"), specifiedMm: cpV("cp-cs") } : null;
+}
+async function cpSave() { cpCollect(); CP.rep = await call("compliance_set", { compliance: CP.inputs }); CP.inputs = JSON.parse(JSON.stringify(CP.rep.inputs)); cpBuild(); toast(t("proj_saved")); }
+function cpWire() {
+  const act = (id, fn) => { const e = $(id); if (e) e.onclick = () => busy(fn); };
+  act("cp-cert", async () => { const r = await call("certificate_html", { lang }); const s = await call("save_pdf", { html: r.html, name: r.name, size: "A4" }); toast(s.saved ? t("saved") + ": " + s.saved : t("cancelled")); });
+  act("cp-save", cpSave);
+  const addLayer = sec => async () => { cpCollect(); CP.inputs.thermal[sec + "Layers"] = [...(CP.inputs.thermal[sec + "Layers"] || []), { material: CP.mats.materials[0].id, thicknessMm: null, lambda: null }]; cpBuild(); };
+  $("cp-addwall").onclick = addLayer("wall"); $("cp-addroof").onclick = addLayer("roof");
+  document.querySelectorAll("[data-del]").forEach(b => { if (b.dataset.sec) b.onclick = () => { cpCollect(); CP.inputs.thermal[b.dataset.sec + "Layers"].splice(Number(b.dataset.del), 1); cpBuild(); }; });
+  $("cp-addwell").onclick = () => { cpCollect(); CP.inputs.vent.lightwells = [...(CP.inputs.vent.lightwells || []), { name: "L" + ((CP.inputs.vent.lightwells || []).length + 1), widthM: 1.8, lengthM: 1.8, floors: 2, oppositeOrAll: true, rooms: [] }]; cpBuild(); };
+  document.querySelectorAll("[data-delwell]").forEach(b => b.onclick = () => { cpCollect(); CP.inputs.vent.lightwells.splice(Number(b.dataset.delwell), 1); cpBuild(); });
+  $("cp-addproj").onclick = () => { cpCollect(); CP.inputs.projections = [...(CP.inputs.projections || []), { name: "B" + ((CP.inputs.projections || []).length + 1), level: 2, side: "south", depthM: 1, kind: "balcony", guardHeightM: null }]; cpBuild(); };
+  document.querySelectorAll("[data-delproj]").forEach(b => b.onclick = () => { cpCollect(); CP.inputs.projections.splice(Number(b.dataset.delproj), 1); cpBuild(); });
+  document.querySelectorAll("[data-mal]").forEach(s => s.onchange = () => busy(async () => { const note = document.querySelector(`[data-malnote="${s.dataset.mal}"]`); CP.rep = await call("malath_set", { id: s.dataset.mal, status: s.value, note: note ? note.value : "" }); CP.inputs = JSON.parse(JSON.stringify(CP.rep.inputs)); cpBuild(); }));
+  document.querySelectorAll("[data-malnote]").forEach(n => n.onchange = () => { const s = document.querySelector(`[data-mal="${n.dataset.malnote}"]`); if (s && !s.disabled) s.onchange(); });
+  act("cp-base", async () => { CP.rep = await call("baseline_set", { name: cpT("cp-bname") ?? "" }); CP.inputs = JSON.parse(JSON.stringify(CP.rep.inputs)); if (CP.rep.svg) showPlan(CP.rep.svg); cpBuild(); toast(L("حُدد خط الأساس", "Baseline set")); });
+  $("cp-clouds").onchange = () => busy(async () => { CP.clouds = $("cp-clouds").checked; const r = await call("set_clouds", { show: CP.clouds }); if (r.svg) showPlan(r.svg); });
+}
+document.querySelector('[data-tab="cp"]').addEventListener("click", () => busy(cpLoad));
+$("tab-cp").textContent = L("الامتثال والكود", "Compliance");
 
 // ---------------------------------------------------------------- project details and code check
 function projectPayload() {

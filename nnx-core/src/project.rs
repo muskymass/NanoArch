@@ -69,6 +69,11 @@ pub struct ProjectMeta {
     pub furniture: Option<crate::furniture::FurnitureInput>,
     /// Elevator shaft, basement levels with a ramp, and a roof annex.
     pub vertical: Option<crate::vertical::VerticalInput>,
+    /// Inputs of the compliance pack: thermal layers, accessibility limits, ventilation, projections, the Malath checklist.
+    pub compliance: crate::compliance::ComplianceInputs,
+    /// The change log's baseline snapshot and the closed revisions.
+    pub baseline: Option<crate::compliance::Baseline>,
+    pub revision_history: Vec<crate::compliance::RevisionEntry>,
 }
 
 /// Limits set by the municipality for this plot. Each carries the source the user took it from. A limit without a
@@ -197,6 +202,7 @@ impl NanoArchProject {
         if let Some(v) = &self.meta.vertical {
             v.check()?;
         }
+        self.meta.compliance.check()?;
         if let Some(f) = &self.meta.furniture
             && f.min_clear_mm.is_some_and(|m| !m.is_finite() || m <= 0.0)
         {

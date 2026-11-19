@@ -44,6 +44,17 @@ fn esc(s: &str) -> String {
 }
 
 /// All elements of kind `T` on the level (or all levels), parsed; unparsable ones are skipped.
+/// The plan's frame as `plan_svg` computes it: `(min x, max y, pixels per mm, margin)`, so overlays can use the same coordinates.
+pub fn frame(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Option<(f64, f64, f64, f64)> {
+    let spaces = collect::<Space>(model, level);
+    if spaces.is_empty() {
+        return None;
+    }
+    let minx = spaces.iter().map(|(_, s)| s.x as f64).fold(f64::INFINITY, f64::min);
+    let maxy = spaces.iter().map(|(_, s)| (s.y + s.h) as f64).fold(f64::NEG_INFINITY, f64::max);
+    Some((minx, maxy, opts.px_per_m / 1000.0, opts.margin_px))
+}
+
 fn collect<T: Typed>(model: &Model, level: Option<Id>) -> Vec<(&Element, T)> {
     model
         .elements

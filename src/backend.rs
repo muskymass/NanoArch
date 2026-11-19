@@ -34,6 +34,8 @@ pub struct App {
     doc: Option<Document>,
     show_structure: bool,
     show_mep: bool,
+    /// Draw revision clouds around what changed since the baseline.
+    show_clouds: bool,
 }
 
 /// The buildable rectangle (plot minus setbacks) and the entrance side.
@@ -178,13 +180,34 @@ impl App {
     }
 
     fn render(&self) -> Result<String, String> {
-        plan_svg(&self.doc()?.model, self.current_level(), &self.draw_opts(self.show_structure)).map_err(|e| e.to_string())
+        plan_svg(&self.doc()?.model, self.current_level(), &self.draw_opts(self.show_structure)).map(|s| self.with_clouds(s)).map_err(|e| e.to_string())
+    }
+
+    /// The plan with revision clouds around the elements changed since the baseline (when switched on and a baseline exists).
+    fn with_clouds(&self, svg: String) -> String {
+        if !self.show_clouds {
+            return svg;
+        }
+        let (Some(doc), Some(base)) = (self.doc.as_ref(), self.project().and_then(|p| p.meta.baseline)) else { return svg };
+        let ch = nnx_core::revisions::changes(&doc.model, &base);
+        nnx_core::revisions::add_clouds(&svg, &doc.model, self.current_level(), &self.draw_opts(self.show_structure), &ch)
+    }
+
+    /// The revision-history table appended to an exported document.
+    fn with_history(&self, html: String, arabic: bool) -> String {
+        let (Some(doc), Some(p)) = (self.doc.as_ref(), self.project()) else { return html };
+        let ch = p.meta.baseline.as_ref().map(|b| nnx_core::revisions::changes(&doc.model, b)).unwrap_or_default();
+        let frag = nnx_core::revisions::history_html(&p, &ch, arabic);
+        match html.rfind("</body>") {
+            Some(i) => format!("{}{}{}", &html[..i], frag, &html[i..]),
+            None => format!("{html}{frag}"),
+        }
     }
 
     /// The plan as JSON `svg`, or null when the model is empty (after undoing the whole generation).
     fn render_or_null(&self) -> Result<Value, String> {
         Ok(match plan_svg(&self.doc()?.model, self.current_level(), &self.draw_opts(self.show_structure)) {
-            Ok(svg) => Value::String(svg),
+            Ok(svg) => Value::String(self.with_clouds(svg)),
             Err(nnx_core::drawing::DrawError::NoSpaces) => Value::Null,
         })
     }
@@ -279,6 +302,16 @@ impl App {
             "site_analyze" => Self::site_analyze(args),
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
             "analysis" => self.analysis(args),
+            "materials" => Ok(nnx_core::materials::catalog_json()),
+            "compliance" => self.compliance_report(),
+            "compliance_set" => self.compliance_set(args),
+            "malath_set" => self.malath_set(args),
+            "baseline_set" => self.baseline_set(args),
+            "set_clouds" => {
+                self.show_clouds = args.get("show").and_then(Value::as_bool).unwrap_or(false);
+                Ok(json!({ "svg": self.render_or_null()? }))
+            }
+            "certificate_html" => self.certificate(args),
             "lock" => self.lock(args),
             "regenerate" => self.regenerate(args),
             "site_layout" => self.site_layout_cmd(),
@@ -313,7 +346,10 @@ impl App {
             "model3d" => serde_json::to_value(nnx_core::model3d::build_styled(&self.doc()?.model, self.style())).map_err(|e| e.to_string()),
             "export_ifc" => self.export_ifc(),
             "export_dxf" => self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false)),
-            "report_html" => self.report(args).map(|(html, _)| json!({ "html": html, "name": "engineering-report.pdf" })),
+            "report_html" => {
+                let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+                self.report(args).map(|(html, _)| json!({ "html": self.with_history(html, arabic), "name": "engineering-report.pdf" }))
+            }
             "report_xlsx" => self.report(args).map(|(_, b64)| json!({ "xlsx_b64": b64, "name": "engineering-report.xlsx" })),
             "pdf_html" => self.pdf_html(args.get("lang").and_then(Value::as_str) != Some("en")),
             "template_keys" => Ok(json!(schedule::template_keys().iter().map(|(k, fixed)| json!({ "key": k, "fixed": fixed })).collect::<Vec<_>>())),
@@ -439,7 +475,7 @@ impl App {
             show_mep: self.show_mep,
             date: utc_now().chars().take(10).collect(),
         };
-        let html = nnx_core::printdoc::print_html(&self.doc()?.model, &opts)?;
+        let html = self.with_history(nnx_core::printdoc::print_html(&self.doc()?.model, &opts)?, arabic);
         Ok(json!({ "html": html, "name": "plan.pdf" }))
     }
 
@@ -820,6 +856,75 @@ impl App {
         let v = p.meta.vertical.clone().ok_or("no vertical inputs: enter the elevator, basement or roof annex")?;
         let scene = nnx_core::model3d::build(&self.doc()?.model);
         serde_json::to_value(nnx_core::vertical::report(&scene, &v)?).map_err(|e| e.to_string())
+    }
+
+    /// Every compliance audit of the open project in one answer.
+    fn compliance_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let model = &self.doc()?.model;
+        let changes = p.meta.baseline.as_ref().map(|b| nnx_core::revisions::changes(model, b)).unwrap_or_default();
+        let (a, m, r) = nnx_core::revisions::counts(&changes);
+        Ok(json!({
+            "inputs": p.meta.compliance,
+            "thermal": nnx_core::thermal::report(model, &p),
+            "access": nnx_core::audits::accessibility(model, &p),
+            "ventilation": nnx_core::audits::ventilation(model, &p),
+            "cantilever": nnx_core::audits::cantilever(model, &p),
+            "malath": nnx_core::malath::report(&p.meta.compliance),
+            "baseline": p.meta.baseline.as_ref().map(|b| json!({ "name": b.name, "date": nnx_core::revisions::date(b.created_unix), "elements": b.elements.len() })),
+            "history": p.meta.revision_history,
+            "changes": changes,
+            "change_counts": { "added": a, "modified": m, "removed": r },
+            "rooms": nnx_core::audits::room_keys(model),
+        }))
+    }
+
+    /// Replaces the compliance inputs (one undoable project edit).
+    fn compliance_set(&mut self, args: &Value) -> Result<Value, String> {
+        let c: nnx_core::compliance::ComplianceInputs = serde_json::from_value(args.get("compliance").cloned().ok_or("compliance is required")?).map_err(|e| format!("compliance inputs: {e}"))?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "compliance inputs", |p| {
+            p.meta.compliance = c.clone();
+            Ok(())
+        })?;
+        let mut v = self.compliance_report()?;
+        v["changed"] = json!(out.changed);
+        Ok(v)
+    }
+
+    /// Sets the status of one checklist item.
+    fn malath_set(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+        let status = args.get("status").and_then(Value::as_str).ok_or("status is required")?.to_string();
+        let note = args.get("note").and_then(Value::as_str).unwrap_or("").to_string();
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "checklist", |p| nnx_core::malath::set_status(&mut p.meta.compliance, &id, &status, &note))?;
+        self.compliance_report()
+    }
+
+    /// Takes a baseline snapshot of the model; the previous baseline is closed into the revision history.
+    fn baseline_set(&mut self, args: &Value) -> Result<Value, String> {
+        let name = args.get("name").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).ok_or("give the baseline a name")?.to_string();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let model = doc.model.clone();
+        nnx_core::project::update(doc, "baseline", |p| {
+            nnx_core::revisions::set_baseline(&model, p, &name, now);
+            Ok(())
+        })?;
+        let mut v = self.compliance_report()?;
+        v["svg"] = self.render_or_null()?;
+        Ok(v)
+    }
+
+    /// The preliminary compliance report as a printable document.
+    fn certificate(&self, args: &Value) -> Result<Value, String> {
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        let p = self.project().ok_or("choose a layout first")?;
+        let model = &self.doc()?.model;
+        let changes = p.meta.baseline.as_ref().map(|b| nnx_core::revisions::changes(model, b)).unwrap_or_default();
+        let d = nnx_core::certificate::CertData { model, project: &p, changes: &changes, date: utc_now().chars().take(10).collect() };
+        Ok(json!({ "html": nnx_core::certificate::certificate_html(&d, arabic), "name": "balady_certificate.pdf" }))
     }
 
     /// A starter template with the Ministry-rule setbacks of its plot (each carries its clause).
@@ -2167,6 +2272,73 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    #[test]
+    fn compliance_inputs_checklist_and_baseline_live_in_the_project_with_undo() {
+        let mut app = started_with_project();
+        assert_eq!(app.handle("materials", &json!({})).unwrap()["materials"].as_array().unwrap().len(), 22);
+        let r = app.handle("compliance", &json!({})).unwrap();
+        assert_eq!(r["malath"]["items"].as_array().unwrap().len(), 11);
+        assert!(r["baseline"].is_null() && r["changes"].as_array().unwrap().is_empty());
+        assert!(!r["rooms"].as_array().unwrap().is_empty());
+        // Inputs: stored as one undoable project edit; impossible numbers are refused and change nothing.
+        let hash = app.doc().unwrap().model.state_hash();
+        assert!(app.handle("compliance_set", &json!({ "compliance": { "streetWidthM": -3.0 } })).is_err());
+        assert!(app.handle("compliance_set", &json!({ "compliance": { "thermal": { "bandRatios": [1, 2] } } })).is_err());
+        assert_eq!(app.doc().unwrap().model.state_hash(), hash);
+        let inputs = json!({ "streetWidthM": 15.0, "access": { "doorMinClearMm": 900.0, "source": "test circular" },
+            "thermal": { "rsi": 0.12, "rse": 0.03, "windowU": 2.0, "wallLayers": [{ "material": "rockwool_150", "thicknessMm": 100.0 }, { "material": "block_hollow_1216", "thicknessMm": 200.0 }], "roofLayers": [{ "material": "xps_35", "thicknessMm": 150.0 }] } });
+        let r = app.handle("compliance_set", &json!({ "compliance": inputs })).unwrap();
+        assert_eq!(r["changed"], true);
+        assert!(r["thermal"]["rows"][0]["u"].as_f64().unwrap() > 0.0 && r["access"]["rows"].as_array().unwrap().iter().any(|x| x["rule"] == "access.door_width"));
+        assert_eq!(app.project().unwrap().meta.compliance.street_width_m, Some(15.0));
+        // The checklist.
+        let r = app.handle("malath_set", &json!({ "id": "soil.level", "status": "accepted", "note": "checked on site" })).unwrap();
+        assert_eq!(r["malath"]["items"][1]["status"], "accepted");
+        assert!(app.handle("malath_set", &json!({ "id": "nope", "status": "accepted" })).is_err());
+        assert!(app.handle("malath_set", &json!({ "id": "soil.level", "status": "done" })).is_err());
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.project().unwrap().meta.compliance.malath.is_empty(), "the tick was one undo step");
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.project().unwrap().meta.compliance, Default::default(), "and the inputs another");
+        app.handle("redo", &json!({})).unwrap();
+        assert_eq!(app.project().unwrap().meta.compliance.street_width_m, Some(15.0));
+    }
+
+    #[test]
+    fn a_baseline_tracks_changes_draws_revision_clouds_and_the_exports_carry_the_history() {
+        let mut app = started_with_project();
+        assert!(app.handle("baseline_set", &json!({ "name": "  " })).is_err());
+        let r = app.handle("baseline_set", &json!({ "name": "Rev A" })).unwrap();
+        assert_eq!(r["baseline"]["name"], "Rev A");
+        assert!(r["changes"].as_array().unwrap().is_empty());
+        let door = app.doc().unwrap().model.elements.values().find(|e| e.kind == "Door").unwrap().id;
+        app.handle("set_opening", &json!({ "id": door.to_string(), "width": 1000 })).unwrap();
+        let r = app.handle("compliance", &json!({})).unwrap();
+        assert!(r["change_counts"]["modified"].as_u64().unwrap() >= 1, "{}", r["change_counts"]);
+        assert!(r["changes"].as_array().unwrap().iter().any(|c| c["id"] == door.to_string() && c["status"] == "modified"));
+        // Clouds only when switched on.
+        let plain = app.handle("svg", &json!({})).unwrap()["svg"].as_str().unwrap().to_string();
+        assert!(!plain.contains("rev-cloud"));
+        let cl = app.handle("set_clouds", &json!({ "show": true })).unwrap()["svg"].as_str().unwrap().to_string();
+        assert!(cl.contains("class=\"rev-cloud\"") && cl.contains(&door.to_string()));
+        assert!(!app.handle("set_clouds", &json!({ "show": false })).unwrap()["svg"].as_str().unwrap().contains("rev-cloud"));
+        // The plan print and the certificate carry the revision-history table.
+        let pdf = app.handle("pdf_html", &json!({ "lang": "en" })).unwrap();
+        assert!(pdf["html"].as_str().unwrap().contains("Revision history") && pdf["html"].as_str().unwrap().contains("Rev A"));
+        let cert = app.handle("certificate_html", &json!({ "lang": "en" })).unwrap();
+        assert_eq!(cert["name"], "balady_certificate.pdf");
+        let h = cert["html"].as_str().unwrap();
+        assert!(h.contains("NOT an official certificate of Balady") && h.contains("5-1-4") && h.contains("Revision history") && h.contains("Rev A"));
+        assert!(app.handle("certificate_html", &json!({})).unwrap()["html"].as_str().unwrap().contains("dir=\"rtl\""));
+        // A second baseline closes the first into the history; one undo takes it back.
+        let r = app.handle("baseline_set", &json!({ "name": "Rev B" })).unwrap();
+        assert_eq!(r["history"][0]["name"], "Rev A");
+        assert!(r["history"][0]["modified"].as_u64().unwrap() >= 1);
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.project().unwrap().meta.baseline.unwrap().name, "Rev A");
+        // Without a document nothing is invented.
+        assert!(App::default().handle("certificate_html", &json!({})).is_err() && App::default().handle("compliance", &json!({})).is_err());
+    }
     #[test]
     fn every_starter_template_applies_and_generates_a_plan_with_no_empty_room_area() {
         let list = App::default().handle("templates", &json!({})).unwrap();

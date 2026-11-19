@@ -102,7 +102,7 @@ pub struct InsulationReport {
 const SCOPES: [&str; 3] = ["wall", "roof", "wet_floor"];
 
 /// Area (m2) and source elements of one scope, measured from the model.
-fn scope_area(model: &Model, scope: &str, upturn_mm: Option<f64>) -> (f64, Vec<Id>) {
+pub(crate) fn scope_area(model: &Model, scope: &str, upturn_mm: Option<f64>) -> (f64, Vec<Id>) {
     match scope {
         "wall" => {
             let mut open: BTreeMap<Id, f64> = BTreeMap::new();
