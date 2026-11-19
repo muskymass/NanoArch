@@ -69,6 +69,8 @@ pub struct RebarIn {
     pub beam: Option<BeamBars>,
     /// Tie beams use the beam template when this is absent.
     pub tie_beam: Option<BeamBars>,
+    /// Design parameters: bars not covered by a template are sized from the loads (see `rebar`).
+    pub design: Option<crate::rebar::DesignIn>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -148,6 +150,8 @@ pub struct BarRow {
     pub cut_length_mm: f64,
     pub total_m: f64,
     pub kg: f64,
+    /// `template` (yours) or `design` (sized by `rebar`).
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -159,6 +163,8 @@ pub struct SizingReport {
     pub concrete_total_m3: f64,
     pub bars: Vec<BarRow>,
     pub steel_total_kg: f64,
+    /// What the design chose per element, with its status.
+    pub designs: Vec<crate::rebar::DesignRow>,
     /// Section -> the inputs that are missing, so it was not computed.
     pub missing: BTreeMap<String, Vec<String>>,
     pub warnings: Vec<String>,
@@ -191,13 +197,13 @@ fn storey_mm(model: &Model, level: Option<Id>) -> Option<i64> {
 }
 
 /// Concrete and bar bending schedules need a bar row builder: one per template line.
-fn bars(rows: &mut Vec<BarRow>, who: (&str, Option<String>), mark: &str, role: &str, dia: f64, number: u64, cut_mm: f64) {
-    let (element, id) = who;
+fn bars(rows: &mut Vec<BarRow>, who: (&str, Option<String>, &str), mark: &str, role: &str, dia: f64, number: u64, cut_mm: f64) {
+    let (element, id, source) = who;
     if number == 0 || cut_mm <= 0.0 || dia <= 0.0 {
         return;
     }
     let total_m = number as f64 * cut_mm / 1000.0;
-    rows.push(BarRow { element: element.into(), id, mark: mark.into(), role: role.into(), dia_mm: dia, number, cut_length_mm: (cut_mm * 10.0).round() / 10.0, total_m: round3(total_m), kg: round3(kg_of(dia, total_m)) });
+    rows.push(BarRow { element: element.into(), id, mark: mark.into(), role: role.into(), dia_mm: dia, number, cut_length_mm: (cut_mm * 10.0).round() / 10.0, total_m: round3(total_m), kg: round3(kg_of(dia, total_m)), source: source.into() });
 }
 
 pub fn compute(model: &Model, soil_kpa: Option<f64>, inp: &SizingInputs) -> SizingReport {
@@ -358,61 +364,104 @@ pub fn compute(model: &Model, soil_kpa: Option<f64>, inp: &SizingInputs) -> Sizi
         add(&mut rep, format!("SL-{}", i + 1), Some(e.id.to_string()), "Slab", s.w as f64 * s.h as f64 * s.thickness as f64 / 1e9, format!("{} x {} x {} mm", s.w, s.h, s.thickness));
     }
 
-    // ---- reinforcement from the templates
+    // ---- reinforcement: your templates first, and the design (`rebar`) for what has none
     if let Some(rb) = &inp.rebar {
+        let has_template = rb.column.is_some() || rb.footing.is_some() || rb.beam.is_some() || rb.tie_beam.is_some();
         let (cover, anchor, hook) = (mm_pos(rb.cover_mm), rb.anchorage_mm.filter(|v| *v >= 0.0), rb.hook_mm.filter(|v| *v >= 0.0));
+        let needs_cover = has_template || rb.design.is_none();
         let mut miss = Vec::new();
-        for (n, v) in [("rebar.cover_mm", cover.is_some()), ("rebar.anchorage_mm", anchor.is_some()), ("rebar.hook_mm", hook.is_some())] {
+        for (n, v) in [("rebar.cover_mm", cover.is_some() || !needs_cover), ("rebar.anchorage_mm", anchor.is_some()), ("rebar.hook_mm", hook.is_some())] {
             if !v {
                 miss.push(n.to_string());
+            }
+        }
+        let designed = rb.design.as_ref().map(|dsn| {
+            let col_in: Vec<crate::rebar::ColIn> = rep.columns.iter().zip(&cols).map(|(row, (_, c))| crate::rebar::ColIn { name: &row.name, id: &row.id, b: c.b as f64, h: c.h as f64, axial_kn: row.axial_kn }).collect();
+            let fnd_in: Vec<crate::rebar::FndIn> = rep
+                .footings
+                .iter()
+                .zip(&fnds)
+                .map(|(row, (_, f))| {
+                    let (cb, ch) = f.column.parse::<Id>().ok().and_then(|cid| cols.iter().find(|(e, _)| e.id == cid)).map_or((0.0, 0.0), |(_, c)| (c.b as f64, c.h as f64));
+                    crate::rebar::FndIn { name: &row.name, id: &row.id, length: f.length as f64, width: f.width as f64, load_kn: f.service_load_kn, col_b: cb, col_h: ch }
+                })
+                .collect();
+            let beam_in: Vec<crate::rebar::BeamIn> = beam_rows
+                .iter()
+                .map(|(n, id, b, below)| crate::rebar::BeamIn { name: n, id: Some(id), b: b.b as f64, depth: (*below).max(b.h) as f64, tie: false })
+                .chain(rep.tie_beams.iter().map(|t| crate::rebar::BeamIn { name: &t.name, id: t.id.as_deref(), b: t.width_mm as f64, depth: t.depth_mm as f64, tie: true }))
+                .collect();
+            crate::rebar::design(dsn, thick, &col_in, &fnd_in, &beam_in)
+        });
+        if let Some(d) = &designed {
+            rep.designs = d.rows.clone();
+            rep.warnings.extend(d.warnings.clone());
+            if !d.missing.is_empty() {
+                rep.missing.insert("design".into(), d.missing.clone());
             }
         }
         if !miss.is_empty() {
             rep.missing.insert("reinforcement".into(), miss);
         } else {
-            let (c, a, hk) = (cover.expect("checked"), anchor.expect("checked"), hook.expect("checked"));
-            if let Some(t) = &rb.column {
-                for (row, (e, col)) in rep.columns.clone().iter().zip(&cols) {
-                    let Some(h) = storey_mm(model, e.level_id) else { continue };
-                    let h = h as f64;
-                    bars(&mut rep.bars, (&row.name, Some(row.id.clone())), &format!("{}/V", row.name), "vertical bars", t.bar_dia_mm, t.count as u64, h + a);
-                    let perimeter = 2.0 * ((col.b as f64 - 2.0 * c) + (col.h as f64 - 2.0 * c)) + 2.0 * hk;
-                    let n = if t.tie_spacing_mm > 0.0 { (h / t.tie_spacing_mm).floor() as u64 + 1 } else { 0 };
-                    bars(&mut rep.bars, (&row.name, Some(row.id.clone())), &format!("{}/T", row.name), "ties", t.tie_dia_mm, n, perimeter);
-                }
+            let (a, hk) = (anchor.expect("checked"), hook.expect("checked"));
+            let c_tmpl = cover.unwrap_or(0.0);
+            let none = crate::rebar::DesignOut::default();
+            let des = designed.as_ref().unwrap_or(&none);
+            for (row, (e, col)) in rep.columns.clone().iter().zip(&cols) {
+                let Some(h) = storey_mm(model, e.level_id) else { continue };
+                let h = h as f64;
+                let (t, c, src) = match (&rb.column, des.columns.get(&row.name)) {
+                    (Some(t), _) => (t.clone(), c_tmpl, "template"),
+                    (None, Some((t, cv))) => (t.clone(), *cv, "design"),
+                    _ => continue,
+                };
+                bars(&mut rep.bars, (&row.name, Some(row.id.clone()), src), &format!("{}/V", row.name), "vertical bars", t.bar_dia_mm, t.count as u64, h + a);
+                let perimeter = 2.0 * ((col.b as f64 - 2.0 * c) + (col.h as f64 - 2.0 * c)) + 2.0 * hk;
+                let n = if t.tie_spacing_mm > 0.0 { (h / t.tie_spacing_mm).floor() as u64 + 1 } else { 0 };
+                bars(&mut rep.bars, (&row.name, Some(row.id.clone()), src), &format!("{}/T", row.name), "ties", t.tie_dia_mm, n, perimeter);
             }
-            if let Some(m) = &rb.footing
-                && m.spacing_mm > 0.0
-            {
-                for (row, (_, f)) in rep.footings.clone().iter().zip(&fnds) {
-                    let (l, w) = (f.length as f64, f.width as f64);
-                    bars(&mut rep.bars, (&row.name, Some(row.id.clone())), &format!("{}/X", row.name), "bottom mesh, along x", m.bar_dia_mm, ((w - 2.0 * c) / m.spacing_mm).floor() as u64 + 1, l - 2.0 * c + 2.0 * hk);
-                    bars(&mut rep.bars, (&row.name, Some(row.id.clone())), &format!("{}/Y", row.name), "bottom mesh, along y", m.bar_dia_mm, ((l - 2.0 * c) / m.spacing_mm).floor() as u64 + 1, w - 2.0 * c + 2.0 * hk);
+            for (row, (_, f)) in rep.footings.clone().iter().zip(&fnds) {
+                let (m, c, src) = match (&rb.footing, des.footings.get(&row.name)) {
+                    (Some(m), _) => (m.clone(), c_tmpl, "template"),
+                    (None, Some((m, cv))) => (m.clone(), *cv, "design"),
+                    _ => continue,
+                };
+                if m.spacing_mm <= 0.0 {
+                    continue;
                 }
+                let (l, w) = (f.length as f64, f.width as f64);
+                bars(&mut rep.bars, (&row.name, Some(row.id.clone()), src), &format!("{}/X", row.name), "bottom mesh, along x", m.bar_dia_mm, ((w - 2.0 * c) / m.spacing_mm).floor() as u64 + 1, l - 2.0 * c + 2.0 * hk);
+                bars(&mut rep.bars, (&row.name, Some(row.id.clone()), src), &format!("{}/Y", row.name), "bottom mesh, along y", m.bar_dia_mm, ((l - 2.0 * c) / m.spacing_mm).floor() as u64 + 1, w - 2.0 * c + 2.0 * hk);
             }
-            let beam_bars = |rep: &mut SizingReport, name: &str, id: Option<String>, b_mm: f64, depth: f64, len: f64, t: &BeamBars| {
-                bars(&mut rep.bars, (name, id.clone()), &format!("{name}/T"), "top bars", t.top_dia_mm, t.top_count as u64, len - 2.0 * c + 2.0 * hk);
-                bars(&mut rep.bars, (name, id.clone()), &format!("{name}/B"), "bottom bars", t.bottom_dia_mm, t.bottom_count as u64, len - 2.0 * c + 2.0 * hk);
+            let beam_bars = |rep: &mut SizingReport, name: &str, id: Option<String>, b_mm: f64, depth: f64, len: f64, t: &BeamBars, c: f64, src: &str| {
+                bars(&mut rep.bars, (name, id.clone(), src), &format!("{name}/T"), "top bars", t.top_dia_mm, t.top_count as u64, len - 2.0 * c + 2.0 * hk);
+                bars(&mut rep.bars, (name, id.clone(), src), &format!("{name}/B"), "bottom bars", t.bottom_dia_mm, t.bottom_count as u64, len - 2.0 * c + 2.0 * hk);
                 let perimeter = 2.0 * ((b_mm - 2.0 * c) + (depth - 2.0 * c)) + 2.0 * hk;
                 let n = if t.stirrup_spacing_mm > 0.0 { ((len - 2.0 * c) / t.stirrup_spacing_mm).floor() as u64 + 1 } else { 0 };
-                bars(&mut rep.bars, (name, id), &format!("{name}/S"), "stirrups", t.stirrup_dia_mm, n, perimeter);
+                bars(&mut rep.bars, (name, id, src), &format!("{name}/S"), "stirrups", t.stirrup_dia_mm, n, perimeter);
             };
-            if let Some(t) = &rb.beam {
-                for (name, id, b, below) in &beam_rows {
-                    beam_bars(&mut rep, name, Some(id.clone()), b.b as f64, (*below).max(b.h) as f64, b.length as f64, t);
-                }
+            for (name, id, b, below) in &beam_rows {
+                let (t, c, src) = match (&rb.beam, des.beams.get(name)) {
+                    (Some(t), _) => (t.clone(), c_tmpl, "template"),
+                    (None, Some((t, cv))) => (t.clone(), *cv, "design"),
+                    _ => continue,
+                };
+                beam_bars(&mut rep, name, Some(id.clone()), b.b as f64, (*below).max(b.h) as f64, b.length as f64, &t, c, src);
             }
-            if let Some(t) = rb.tie_beam.as_ref().or(rb.beam.as_ref()) {
-                for tb in rep.tie_beams.clone() {
-                    beam_bars(&mut rep, &tb.name, tb.id.clone(), tb.width_mm as f64, tb.depth_mm as f64, tb.clear_mm as f64, t);
-                }
+            for tb in rep.tie_beams.clone() {
+                let (t, c, src) = match (rb.tie_beam.as_ref().or(rb.beam.as_ref()), des.beams.get(&tb.name)) {
+                    (Some(t), _) => (t.clone(), c_tmpl, "template"),
+                    (None, Some((t, cv))) => (t.clone(), *cv, "design"),
+                    _ => continue,
+                };
+                beam_bars(&mut rep, &tb.name, tb.id.clone(), tb.width_mm as f64, tb.depth_mm as f64, tb.clear_mm as f64, &t, c, src);
             }
             rep.steel_total_kg = round3(rep.bars.iter().map(|b| b.kg).sum());
         }
     } else {
-        rep.missing.insert("reinforcement".into(), vec!["rebar (cover, anchorage, hook and the bar templates): the application does not design reinforcement".into()]);
+        rep.missing.insert("reinforcement".into(), vec!["rebar (anchorage, hook and either bar templates or the design parameters): enter them".into()]);
     }
-    rep.warnings.push("preliminary: self-weight is not in the column loads, reinforcement is the bars you specified (not a design), footing depth is your input".into());
+    rep.warnings.push("preliminary: self-weight is not in the column loads; reinforcement is your templates or the minimum/axial design of `rebar` (see its notes), not a complete design; footing depth is your input".into());
     rep
 }
 
@@ -506,11 +555,11 @@ impl SizingReport {
 
     /// The bar bending schedule.
     pub fn bbs_csv(&self) -> String {
-        let mut o = String::from("element,element_id,mark,role,dia_mm,number,cut_length_mm,total_m,kg\n");
+        let mut o = String::from("element,element_id,mark,role,dia_mm,number,cut_length_mm,total_m,kg,source\n");
         for b in &self.bars {
-            let _ = writeln!(o, "{},{},{},{},{},{},{},{},{}", b.element, b.id.clone().unwrap_or_default(), b.mark, csv_cell(&b.role), b.dia_mm, b.number, b.cut_length_mm, b.total_m, b.kg);
+            let _ = writeln!(o, "{},{},{},{},{},{},{},{},{},{}", b.element, b.id.clone().unwrap_or_default(), b.mark, csv_cell(&b.role), b.dia_mm, b.number, b.cut_length_mm, b.total_m, b.kg, b.source);
         }
-        let _ = writeln!(o, "TOTAL,,,,,,,,{}", self.steel_total_kg);
+        let _ = writeln!(o, "TOTAL,,,,,,,,{},", self.steel_total_kg);
         o
     }
 }

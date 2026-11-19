@@ -12,6 +12,7 @@
 
 use crate::building;
 use crate::model::{Id, Model};
+use crate::presets;
 use crate::project::{self, NanoArchProject};
 use crate::rules::Severity;
 use crate::typed::{Space, Window};
@@ -131,7 +132,7 @@ pub fn check(model: &Model) -> SbcReport {
     let Ok(p) = project::get(model).map(|p| p.unwrap_or_default()) else { return r };
     setbacks(&p, pe.id, &mut r);
     coverage(&p, model, pe.id, &mut r);
-    r.skip("thermal", THERMAL_NOTE_EN, THERMAL_NOTE_AR);
+    thermal(&p, pe.id, &mut r);
     rooms(model, &mut r);
     daylight(model, &mut r);
     r.violations.sort_by(|a, b| (&a.rule, a.element).cmp(&(&b.rule, b.element)));
@@ -207,6 +208,48 @@ fn coverage(p: &NanoArchProject, model: &Model, pid: Id, r: &mut SbcReport) {
             value: ratio,
             limit: max,
         });
+    }
+}
+
+/// Thermal limits of the climate zone the project names, against the U-values of its insulation assemblies and the glazing U it
+/// designs with. The limits are the guide's reproduction of SBC 602 Table 5.2 (secondary, with a caveat), so a breach is a
+/// warning that cites the page, never an error that could refuse an edit. Without a zone, or with incomplete assemblies, the
+/// check is skipped and says why.
+fn thermal(p: &NanoArchProject, pid: Id, r: &mut SbcReport) {
+    let Some(z) = p.meta.climate_zone.as_deref().and_then(presets::zone_of).and_then(presets::zone) else {
+        r.skip("thermal", format!("{} Set the climate zone (1, 2, 3 or a city) in the project details.", THERMAL_NOTE_EN), format!("{} حدّد المنطقة المناخية (1 أو 2 أو 3 أو مدينة) في تفاصيل المشروع.", THERMAL_NOTE_AR));
+        return;
+    };
+    let lib = p.mep.as_ref().and_then(|m| m.insulation.as_ref());
+    let mut compare = |rule: &str, name_en: &str, name_ar: &str, u: f64, max: f64| {
+        r.checked += 1;
+        if u > max + 1e-9 {
+            r.violations.push(Violation {
+                rule: rule.into(),
+                code: "SBC 602 (via the SBC 1101 guide)".into(),
+                clause: format!("zone {}", z.zone),
+                source: format!("{} {}", z.source.text(), presets::ZONE_CAVEAT_EN),
+                severity: Severity::Warning,
+                element: Some(pid),
+                en: format!("The {name_en} U-value is {u:.3} W/m2.K; the zone {} maximum is {max} W/m2.K", z.zone),
+                ar: format!("معامل انتقال حرارة {name_ar} {u:.3} واط/م².ك، والحد الأقصى للمنطقة {} هو {max} واط/م².ك", z.zone),
+                value: u,
+                limit: max,
+            });
+        }
+    };
+    let mut missing: Vec<String> = Vec::new();
+    for (scope, en, ar, max) in [("wall", "wall", "الجدار", z.wall_u_max), ("roof", "roof", "السقف", z.roof_u_max)] {
+        match lib.and_then(|l| l.assemblies.get(scope)).map(|a| a.u_value()) {
+            Some(Ok(u)) => compare(&format!("thermal.{scope}.u"), en, ar, u, max),
+            _ => missing.push(scope.to_string()),
+        }
+    }
+    if let Some(wu) = p.mep.as_ref().and_then(|m| m.hvac.as_ref()).and_then(|h| h.window_u) {
+        compare("thermal.window.u", "glazing", "الزجاج", wu, z.window_u_max);
+    }
+    if !missing.is_empty() {
+        r.skip("thermal.assemblies", format!("thermal limits of zone {}: the {} insulation assembl{} must be complete (layers with thickness and lambda) to get a U-value", z.zone, missing.join(" and "), if missing.len() > 1 { "ies" } else { "y" }), format!("حدود المنطقة {}: يجب إكمال تجميعة العزل ({}) لحساب معامل الانتقال الحراري", z.zone, missing.join("، ")));
     }
 }
 
