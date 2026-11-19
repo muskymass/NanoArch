@@ -255,6 +255,8 @@ impl App {
             }
             "presets" => Ok(nnx_core::presets::presets_json()),
             "site_analyze" => Self::site_analyze(args),
+            "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
+            "template_apply" => Self::template_apply(args),
             "site_plan" => self.site_plan(),
             "zone_preset" => self.zone_preset(args),
             "elevation" => self.elevation(args),
@@ -659,10 +661,27 @@ impl App {
         Ok(json!({ "result": r, "svg": svg, "rule_source": nnx_core::site::RULE_SOURCE }))
     }
 
-    /// The site plan of the open project (its plot outline, edges and rule).
+    /// A starter template with the Ministry-rule setbacks of its plot (each carries its clause).
+    fn template_apply(args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("template id missing")?;
+        let t = nnx_core::templates::find(id).ok_or_else(|| format!("unknown template '{id}'"))?;
+        let (sb, sources) = nnx_core::templates::setbacks(&t).map_err(|e| e.join("; "))?;
+        Ok(json!({ "template": t, "setbacks": { "front_m": sb[0], "side_m": sb[1], "back_m": sb[2] }, "sources": sources }))
+    }
+
+    /// The site plan of the open project: its plot outline, edges and rule, or for a rectangular plot the brief's plot size and
+    /// the setbacks entered for it.
     fn site_plan(&self) -> Result<Value, String> {
         let p = self.project().ok_or("choose a layout first")?;
-        let input = p.site_input().ok_or("this project has no plot outline: enter the plot as a polygon")?;
+        let input = match p.site_input() {
+            Some(i) => i,
+            None => {
+                let b = p.brief.as_ref().ok_or("the project has no brief: enter the plot size and generate first")?;
+                let mut i = nnx_core::site::rectangle_with_setbacks(b.width_m, b.length_m, b.setback_front_m, b.setback_back_m, b.setback_side_m);
+                i.floors = p.structure.floors;
+                i
+            }
+        };
         let r = nnx_core::site::analyse(&input).map_err(|e| e.join("; "))?;
         Ok(json!({ "svg": nnx_core::site::site_svg(&r, &self.display_title()), "name": "site-plan.svg", "result": r }))
     }
@@ -1830,10 +1849,13 @@ mod tests {
         // Bad shapes and missing rules come back as messages, with nothing changed.
         assert!(app.handle("site_analyze", &json!({ "polygonM": [[0, 0], [10, 0]] })).is_err());
         assert!(app.handle("site_analyze", &json!({ "polygonM": "x" })).unwrap_err().starts_with("plot:"));
-        // No project yet, and then a rectangle: there is no outline to draw.
+        // No project yet: nothing to draw. A rectangular plot draws from the brief and its setbacks (18 x 22 m, 2 m each side).
         assert!(app.handle("site_plan", &json!({})).is_err());
         let mut app = started_with_project();
-        assert!(app.handle("site_plan", &json!({})).unwrap_err().contains("no plot outline"));
+        let rect = app.handle("site_plan", &json!({})).unwrap();
+        assert!(rect["svg"].as_str().unwrap().contains(">N</text>") && rect["svg"].as_str().unwrap().contains("class=\"building\""));
+        assert_eq!(rect["result"]["setbacks_m"], json!([2.0, 2.0, 2.0, 2.0]));
+        assert_eq!((rect["result"]["building"]["width_m"].as_f64(), rect["result"]["building"]["length_m"].as_f64()), (Some(14.0), Some(18.0)));
         let edges: Vec<Value> = ["front_street", "neighbour", "neighbour", "neighbour", "neighbour", "neighbour"].iter().map(|k| json!({ "kind": k, "streetWidthM": if *k == "front_street" { json!(15.0) } else { Value::Null } })).collect();
         let l_shape = json!({ "meta": { "plotPolygonM": [[0, 0], [18, 0], [18, 10], [8, 10], [8, 22], [0, 22]], "plotEdges": edges } });
         app.handle("project_set", &l_shape).unwrap();
@@ -1841,9 +1863,37 @@ mod tests {
         assert_eq!(plan["name"], "site-plan.svg");
         assert!(plan["svg"].as_str().unwrap().contains("<polygon"), "the outline is drawn");
         assert!(plan["result"]["buildable_area_m2"].as_f64().unwrap() > 100.0, "{}", plan["result"]["buildable_area_m2"]);
-        // Switching back to a rectangle removes the outline.
+        // Switching back to a rectangle removes the outline, and the site plan is the rectangle's again.
         app.handle("project_set", &json!({ "meta": { "plotPolygonM": null, "plotEdges": [], "setbackRule": null } })).unwrap();
-        assert!(app.handle("site_plan", &json!({})).unwrap_err().contains("no plot outline"));
+        assert_eq!(app.handle("site_plan", &json!({})).unwrap()["result"]["polygon_m"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn every_starter_template_applies_and_generates_a_plan_with_no_empty_room_area() {
+        let list = App::default().handle("templates", &json!({})).unwrap();
+        let ids: Vec<String> = list["templates"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap().to_string()).collect();
+        assert_eq!(ids, vec!["villa_jubail", "palace", "apartments_4"]);
+        assert!(App::default().handle("template_apply", &json!({ "id": "nope" })).is_err());
+        for id in ids {
+            let r = App::default().handle("template_apply", &json!({ "id": id })).unwrap();
+            let t = &r["template"];
+            assert!(r["sources"].as_array().unwrap().iter().all(|s| s.as_str().unwrap().contains("clause 4-")));
+            // The page sends exactly this: the plot, the setbacks from the rule, the rooms with their areas.
+            let rooms: Vec<Value> = t["rooms"].as_array().unwrap().iter().map(|x| json!({ "key": x["key"], "name": x["name"], "func": x["func"], "area": x["area_m2"], "zone": x["zone"], "light": x["func"] != "bathroom", "floor": x["floor"] })).collect();
+            assert!(rooms.iter().all(|x| x["area"].as_f64().unwrap() > 0.0));
+            let st = t["stair"].as_array().unwrap();
+            let brief = json!({ "title": t["project_title"], "width_m": t["plot_width_m"], "length_m": t["plot_length_m"], "setback_front_m": r["setbacks"]["front_m"], "setback_back_m": r["setbacks"]["back_m"], "setback_side_m": r["setbacks"]["side_m"], "entry": "south", "rooms": rooms,
+                "stair": { "width_m": st[0], "length_m": st[1], "side": st[2] } });
+            let meta = json!({ "buildingType": t["building_type"], "style": t["style"], "climateZone": t["city"] });
+            let mut app = App::default();
+            let g = app.handle("generate", &json!({ "brief": brief, "struct": { "floors": t["floors"] }, "meta": meta })).unwrap_or_else(|e| panic!("{id}: {e}"));
+            assert!(!g["alternatives"].as_array().unwrap().is_empty(), "{id}");
+            let s = app.handle("select", &json!({ "index": 0, "struct": { "floors": t["floors"] } })).unwrap_or_else(|e| panic!("{id}: {e}"));
+            assert!(s["svg"].as_str().unwrap().starts_with("<svg"), "{id}");
+            // The site plan of the template's rectangle shows the Ministry setbacks.
+            let site = app.handle("site_plan", &json!({})).unwrap();
+            assert_eq!(site["result"]["setbacks_m"][0], r["setbacks"]["front_m"], "{id}");
+        }
     }
 
     #[test]

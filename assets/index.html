@@ -67,6 +67,7 @@ td.num{font-variant-numeric:tabular-nums}
 ul.clean{margin:0;padding-inline-start:18px}
 ul.clean li{margin:3px 0}
 .chk{display:flex;gap:10px;flex-wrap:wrap}.chk label{display:flex;gap:4px;align-items:center;margin:0;color:var(--ink)}
+.sugg{background:color-mix(in srgb,var(--warn) 18%,transparent)}
 .missing{background:color-mix(in srgb,var(--bad) 14%,transparent)}
 .gantt{overflow:auto;border:1px solid var(--line);border-radius:6px;background:#fff;margin-top:8px}
 .badge{display:inline-block;border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:11px;color:var(--mute)}
@@ -88,6 +89,11 @@ ul.clean li{margin:3px 0}
   <!-- ============ brief ============ -->
   <section class="col">
     <div class="scroll">
+      <h2 data-i="h_tpl"></h2>
+      <div class="note" data-i="tpl_note"></div>
+      <div id="tpl-list" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div id="tpl-out"></div>
+
       <h2 data-i="h_ai"></h2>
       <div class="note" data-i="ai_note"></div>
       <textarea id="ai-text" rows="3" style="width:100%" data-ph="ai_ph"></textarea>
@@ -295,6 +301,7 @@ const call = (cmd, args = {}) => new Promise((resolve, reject) => {
 // ---------------------------------------------------------------- text
 const T = {
 ar: {
+  h_tpl:"مشاريع جاهزة بنقرة", tpl_note:"تملأ الأرض والطراز والأدوار والغرف؛ الارتدادات تُحسب بقاعدة الوزارة. الأرقام نقطة بداية قابلة للتعديل (الغرف المظلّلة مساحاتها مقترحة).", tpl_sb:"مصدر الارتدادات", tpl_applied:"طُبّق القالب: راجع الأرقام ثم ولّد", sugg_tip:"مساحة مقترحة من التطبيق (أعلى من الحد الأدنى في الكود): راجعها",
   h_ai:"مساعد الوصف (Ollama محلي، اختياري)", ai_note:"اكتب وصف المشروع بالعربية أو الإنجليزية، فيملأ الحقول لتراجعها. لا يُرسل النص إلا إلى خادم على جهازك؛ وإن لم يعمل Ollama تُستخرج الحقول من الكلمات المفتاحية.", ai_ph:"مثال: فيلا دورين وملحق في الجبيل على أرض 600م طراز نجدي حديث", ai_endpoint:"عنوان Ollama", ai_model:"النموذج", ai_check:"فحص الاتصال", ai_run:"املأ الموجز", ai_online:"متصل", ai_offline:"غير متصل", ai_src_kw:"من الكلمات المفتاحية", ai_src_model:"من النموذج", ai_review:"اقتراح — راجعه قبل التوليد", ai_applied:"طُبّقت الحقول", ai_rooms:"غرف مقترحة", ai_assumed:"مفترضة", ai_empty:"اكتب وصفاً أولاً",
   plot_shape:"شكل الأرض", shape_rect:"مستطيل", shape_poly:"مضلع (شبه منحرف، شطفة، حرف L...)", poly_note:"أدخل رؤوس حد الأرض بالأمتار مرتبة حول الحد. الضلع i يمتد من الرأس i إلى التالي. حدّد نوع كل ضلع وعرض شارعه، ثم حلّل: يُحسب الارتداد لكل ضلع ويُوضع أكبر مستطيل بناء.", tpl_trap:"شبه منحرف", tpl_chamfer:"شطفة ركنية", tpl_l:"حرف L", edge_kind:"نوع الضلع", street_w:"عرض الشارع (م)", edge_sb:"ارتداد يدوي (م)", poly_add:"+ رأس", poly_analyze:"حلّل الأرض", rule_villa:"فلل (الوزارة 4-1)", rule_apt:"عمارات (الوزارة 4-2)", rule_manual:"يدوي (أدخل ارتداد كل ضلع)", ek_front_street:"شارع أمامي", ek_side_street:"شارع جانبي", ek_neighbour:"جار", ek_plaza:"ساحة", site_area:"مساحة الأرض", site_bld:"مستطيل البناء", site_cov:"نسبة التغطية", site_unused:"مساحة قابلة للبناء غير مستغلة", site_src:"مصدر قواعد الارتداد", site_first:"حلّل الأرض أولاً (وأعد التحليل بعد أي تعديل)", v_site:"موقع عام",
   subtitle:"مصمم مخططات الفلل", prelim:"أولي — غير صالح للتنفيذ", h_project:"المشروع", title:"اسم المشروع", width:"عرض الأرض (م)", length:"عمق الأرض (م)",
@@ -340,6 +347,7 @@ ar: {
   b_boq:"جدول الكميات والأسعار", b_no:"رقم", b_desc:"الوصف", b_rate:"السعر", b_amount:"المبلغ", b_materials:"قائمة المواد", b_material:"المادة", b_spec:"المواصفة", b_specs:"جدول المواصفات والكميات", b_no_materials:"لا معاملات استهلاك مُدخلة، فلا قائمة مواد.", m_cleared:"عُدّل المخطط وأُزيلت {n} نقطة كهروميكانيكية: أعد الحساب لوضعها من جديد (التراجع يعيدها)",
 },
 en: {
+  h_tpl:"One-click starter projects", tpl_note:"Fills the plot, style, floors and rooms; the setbacks are computed by the Ministry rule. The figures are editable starting points (shaded room areas are suggestions).", tpl_sb:"Setbacks from", tpl_applied:"Template applied: review the figures, then generate", sugg_tip:"Suggested by the application (above the code minimum): review it",
   h_ai:"Brief assistant (local Ollama, optional)", ai_note:"Describe the project in Arabic or English and the fields are filled for you to review. The text goes only to a server on this computer; if Ollama is not running the fields are read from keywords.", ai_ph:"e.g. A two-floor villa with an annex in Jubail on a 600 m2 plot, modern Najdi style", ai_endpoint:"Ollama address", ai_model:"Model", ai_check:"Check connection", ai_run:"Fill the brief", ai_online:"online", ai_offline:"offline", ai_src_kw:"from keywords", ai_src_model:"from the model", ai_review:"Suggestion - review it before generating", ai_applied:"Fields applied", ai_rooms:"Proposed rooms", ai_assumed:"assumed", ai_empty:"Write a description first",
   plot_shape:"Plot shape", shape_rect:"Rectangle", shape_poly:"Polygon (trapezoid, chamfer, L...)", poly_note:"Enter the plot boundary vertices in metres, in order around the boundary. Edge i runs from vertex i to the next. Set each edge's kind and street width, then analyse: every edge gets its own setback and the largest buildable rectangle is placed.", tpl_trap:"Trapezoid", tpl_chamfer:"Corner chamfer", tpl_l:"L shape", edge_kind:"Edge kind", street_w:"Street width (m)", edge_sb:"Manual setback (m)", poly_add:"+ Vertex", poly_analyze:"Analyse plot", rule_villa:"Villa (Ministry 4-1)", rule_apt:"Apartment (Ministry 4-2)", rule_manual:"Manual (enter every edge's setback)", ek_front_street:"Front street", ek_side_street:"Side street", ek_neighbour:"Neighbour", ek_plaza:"Plaza", site_area:"Plot area", site_bld:"Building rectangle", site_cov:"Coverage", site_unused:"Buildable area left unused", site_src:"Setback rule source", site_first:"Analyse the plot first (and again after any change)", v_site:"Site plan",
   subtitle:"Villa plan designer", prelim:"Preliminary - not for construction", h_project:"Project", title:"Project name", width:"Plot width (m)", length:"Plot depth (m)",
@@ -394,7 +402,7 @@ function applyLang() {
   $("lang").textContent = lang === "ar" ? "English" : "العربية";
   if (state.levels) setLevels(state.levels);
   $("to3d").textContent = (typeof V3 !== "undefined" && V3.on) ? t("to2d") : t("to3d");
-  renderRooms(); renderWorkdays(); renderRates();
+  renderRooms(); renderWorkdays(); renderRates(); try { renderTemplates(); polyRender(); } catch (e) { /* not loaded yet */ }
   if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
 }
 
@@ -415,13 +423,14 @@ function renderRooms() {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td><input value="${esc(r.name)}" data-f="name" placeholder="${esc(r.key)}"></td>
       <td><select data-f="func">${FUNCS.map(f => `<option value="${f}" ${f === r.func ? "selected" : ""}>${t("func")[f]}</option>`).join("")}</select></td>
-      <td><input type="number" step="0.5" min="1" value="${r.area}" data-f="area" style="width:54px"></td>
+      <td><input type="number" step="0.5" min="1" value="${r.area}" data-f="area" style="width:54px" class="${r.suggested ? "sugg" : ""}" ${r.suggested ? `title="${t("sugg_tip")}"` : ""}></td>
       <td><select data-f="zone">${ZONES.map(z => `<option value="${z}" ${z === r.zone ? "selected" : ""}>${t("zone")[z]}</option>`).join("")}</select></td>
       <td><input type="number" step="1" min="1" value="${r.floor || 1}" data-f="floor" style="width:40px;padding:4px 2px;text-align:center"></td>
       <td><input type="checkbox" ${r.light ? "checked" : ""} data-f="light"></td>
       <td><button data-del="${i}" title="x">×</button></td>`;
     tr.querySelectorAll("[data-f]").forEach(el => el.addEventListener("change", () => {
       const f = el.dataset.f; r[f] = f === "light" ? el.checked : (f === "area" || f === "floor") ? Number(el.value) : el.value;
+      if (f === "area") { r.suggested = false; el.classList.remove("sugg"); el.title = ""; }
     }));
     tr.querySelector("[data-del]").addEventListener("click", () => { state.rooms.splice(i, 1); renderRooms(); });
     tb.appendChild(tr);
@@ -1211,6 +1220,28 @@ function polyLoad(m) {
 }
 $("plot-shape").value = "rect"; polyApplyShape();
 
+// ---------------------------------------------------------------- one-click starter templates
+// Plot, style, floors and rooms come from the backend ("templates"); the setbacks come from "template_apply", which runs the Ministry
+// rule of the template. Everything stays editable and every room area is flagged as a suggestion.
+const TPL = { list: [] };
+function renderTemplates() {
+  $("tpl-list").innerHTML = TPL.list.map(x => `<button data-tpl="${esc(x.id)}" style="text-align:start">${esc(lang === "ar" ? x.title_ar : x.title_en)}</button>`).join("");
+  $("tpl-list").querySelectorAll("[data-tpl]").forEach(b => b.onclick = () => busy(() => applyTemplate(b.dataset.tpl)));
+}
+async function applyTemplate(id) {
+  const r = await call("template_apply", { id }), x = r.template;
+  $("plot-shape").value = "rect"; polyApplyShape();
+  $("title").value = x.project_title; $("width").value = x.plot_width_m; $("length").value = x.plot_length_m;
+  $("sbf").value = r.setbacks.front_m; $("sbb").value = r.setbacks.back_m; $("sbs").value = r.setbacks.side_m; $("entry").value = "south";
+  $("floors").value = x.floors; if (x.stair) { $("stairw").value = x.stair[0]; $("stairl").value = x.stair[1]; $("stairside").value = x.stair[2]; } else { $("stairw").value = ""; $("stairl").value = ""; }
+  $("p-btype").value = x.building_type; $("p-style").value = x.style; $("p-climate").value = x.city;
+  state.rooms = x.rooms.map(q => ({ key: q.key, name: q.name, func: q.func, area: q.area_m2, zone: q.zone, light: q.func !== "bathroom", floor: q.floor, suggested: true }));
+  renderRooms();
+  $("tpl-out").innerHTML = `<ul class="clean">${x.assumptions.map(a => `<li class="warn">${esc(a)}</li>`).join("")}</ul><div class="hint">${t("tpl_sb")}: ${r.sources.map(esc).join(" · ")}</div>`;
+  toast(t("tpl_applied"));
+}
+call("templates").then(r => { TPL.list = r.templates; renderTemplates(); }).catch(() => {});
+
 // ---------------------------------------------------------------- local brief assistant (Ollama, optional)
 function aiArgs() { return { endpoint: $("ai-endpoint").value.trim() || undefined, model: $("ai-model").value || undefined }; }
 async function aiCheck() {
@@ -1233,7 +1264,7 @@ $("ai-run").onclick = () => busy(async () => {
   if (d.smart_tech && d.smart_tech.length) $("p-smart").value = d.smart_tech.join(", ");
   if (d.rooms && d.rooms.length) {
     const have = new Set(state.rooms.map(x => x.key));
-    d.rooms.forEach((x, i) => { const key = "ai" + (Date.now() % 100000) + i; if (have.has(key)) return; state.rooms.push({ key, name: x.name || "", func: x.func, area: x.area_m2 || 0, zone: ZONE_OF[x.func] || "service", light: x.func !== "bathroom", floor: x.floor || 1, ai: true }); });
+    d.rooms.forEach((x, i) => { const key = "ai" + (Date.now() % 100000) + i; if (have.has(key)) return; state.rooms.push({ key, name: x.name || "", func: x.func, area: x.area_m2, suggested: !!x.area_suggested, zone: ZONE_OF[x.func] || "service", light: x.func !== "bathroom", floor: x.floor || 1, ai: true }); });
     renderRooms();
   }
   $("ai-out").innerHTML = `<div class="badge">${t("ai_review")} · ${r.online ? t("ai_src_model") : t("ai_src_kw")}</div><ul class="clean">${(d.notes || []).map(n => `<li class="warn">${esc(n)}</li>`).join("")}</ul>${d.rooms && d.rooms.length ? `<div class="hint">${t("ai_rooms")}: ${d.rooms.map(x => `${esc(x.name || x.func)}${x.assumed ? ` (${t("ai_assumed")})` : ""}`).join("، ")}</div>` : ""}`;
