@@ -74,6 +74,8 @@ pub struct ProjectMeta {
     /// The change log's baseline snapshot and the closed revisions.
     pub baseline: Option<crate::compliance::Baseline>,
     pub revision_history: Vec<crate::compliance::RevisionEntry>,
+    /// Inputs of the advanced structural pack: column grid, slab systems, punching, merging, tanks, rebar cutting.
+    pub structural: crate::structx::StructuralInputs,
 }
 
 /// Limits set by the municipality for this plot. Each carries the source the user took it from. A limit without a
@@ -203,6 +205,7 @@ impl NanoArchProject {
             v.check()?;
         }
         self.meta.compliance.check()?;
+        self.meta.structural.check()?;
         if let Some(f) = &self.meta.furniture
             && f.min_clear_mm.is_some_and(|m| !m.is_finite() || m <= 0.0)
         {

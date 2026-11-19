@@ -264,6 +264,7 @@ ul.clean li{margin:3px 0}
         <div class="bar" style="padding:8px 0;border:0;flex-wrap:wrap;gap:6px"><button id="str-example" data-i="str_example"></button><button id="str-run" class="primary" data-i="str_run"></button>
           <button id="str-csv-m" data-i="s_csv_members"></button><button id="str-csv-c" data-i="s_csv_conc"></button><button id="str-csv-b" data-i="s_csv_bbs"></button></div>
         <div id="strout"></div>
+        <div id="sx-box"></div>
       </div>
       <div class="pane" id="p-bim">
         <div class="note" data-i="bim_note"></div>
@@ -408,6 +409,7 @@ function applyLang() {
   $("to3d").textContent = (typeof V3 !== "undefined" && V3.on) ? t("to2d") : t("to3d");
   renderRooms(); renderWorkdays(); renderRates(); try { renderTemplates(); polyRender(); anBuild(); } catch (e) { /* not loaded yet */ }
   try { $("tab-cp").textContent = L("الامتثال والكود", "Compliance"); cpBuild(); } catch (e) { /* not loaded yet */ }
+  try { sxBuild(); } catch (e) { /* not loaded yet */ }
   if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
 }
 
@@ -1580,6 +1582,110 @@ function cpWire() {
 }
 document.querySelector('[data-tab="cp"]').addEventListener("click", () => busy(cpLoad));
 $("tab-cp").textContent = L("الامتثال والكود", "Compliance");
+
+// ---------------------------------------------------------------- advanced structural pack (M3), in the Structural tab
+// Every coefficient, limit and rate is an input stored in the project (structural_set). The only starting values the page offers are the
+// ones in the feature brief (punching factor 0.33, stock bar 12 000 mm), labelled as such; the verdicts and their missing inputs come
+// from the backend.
+const SX = { rep: null, inputs: {} };
+const sxGet = (o, path) => path.split(".").reduce((a, k) => (a == null ? undefined : a[k]), o);
+const sxSet = (o, path, v) => { const ks = path.split("."); let a = o; ks.slice(0, -1).forEach((k, i) => { if (a[k] == null || typeof a[k] !== "object") a[k] = /^\d+$/.test(ks[i + 1]) ? [] : {}; a = a[k]; }); a[ks[ks.length - 1]] = v; };
+const sxN = (path, label, ph = "", dflt) => { const v = sxGet(SX.inputs, path) ?? dflt ?? ""; return `<div><label>${label}</label><input type="number" step="any" dir="ltr" data-sx="${path}" value="${v}" placeholder="${ph}"></div>`; };
+const sxT = (rows, head) => `<table class="rooms"><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td dir="ltr">${c ?? "-"}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+const sxMiss = m => (m && m.length ? `<ul class="clean">${m.map(x => `<li class="warn">${L("ناقص", "missing")}: ${esc(x)}</li>`).join("")}</ul>` : "");
+const sxSt = s => `<span class="${s === "ok" || s === "move" ? "ok" : s === "fails" || s === "uplift" || s.startsWith("section") ? "bad" : "warn"}">${esc(s)}</span>`;
+
+async function sxLoad() { SX.rep = await call("structural"); SX.inputs = JSON.parse(JSON.stringify(SX.rep.inputs || {})); sxBuild(); }
+function sxCollect() {
+  document.querySelectorAll("[data-sx]").forEach(e => { const v = e.type === "checkbox" ? e.checked : e.tagName === "SELECT" || e.type === "text" ? e.value : (e.value === "" ? null : Number(e.value)); sxSet(SX.inputs, e.dataset.sx, v); });
+  const dias = document.getElementById("sx-dias"); if (dias) sxSet(SX.inputs, "tankDesign.barDiasMm", dias.value.split(",").map(s => Number(s.trim())).filter(x => x > 0));
+}
+async function sxSave() { sxCollect(); SX.rep = await call("structural_set", { structural: SX.inputs }); SX.inputs = JSON.parse(JSON.stringify(SX.rep.inputs)); sxBuild(); toast(t("proj_saved")); }
+function sxBuild() {
+  const box = $("sx-box"); if (!box || !SX.rep) return;
+  const r = SX.rep, g = r.grid, sl = r.slabs, pu = r.punching, mg = r.merge, ct = r.cutting;
+  const tanks = SX.inputs.tanks || [];
+  box.innerHTML = `
+    <h2>${L("إنشائي متقدم", "Advanced structural")}</h2>
+    <div class="note">${L("كل المعاملات والحدود والأسعار مدخلات منك (ملفات الكود لا تحمل معاملات تصميم إنشائي). 0.33 و12000 مم قيم من وصف الميزة. النتائج أولية وتحتاج مهندساً إنشائياً مرخّصاً.", "Every coefficient, limit and rate is your input (the code files hold no structural design coefficient). 0.33 and 12000 mm are values from the feature brief. Results are preliminary and need a licensed structural engineer.")}</div>
+    <div class="row3">${sxN("fcMpa", "f'c (MPa)")}${sxN("fyMpa", "fy (MPa)")}${sxN("loadFactor", L("معامل الحمل", "Load factor"))}</div>
+    <div class="row3">${sxN("phiShear", "φ (shear)")}${sxN("punchingFactor", L("معامل القص الثاقب ×√f'c", "Punching factor × √f'c"), "", 0.33)}${sxN("coverMm", L("الغطاء (مم)", "Cover (mm)"))}</div>
+    <div class="row3">${sxN("barDiaMm", L("قطر القضيب (مم)", "Bar dia. (mm)"))}${sxN("beamSpanDepthMax", L("حد بحر/عمق للجسور", "Beam span/depth limit"))}${sxN("slabSpanDepthMax", L("حد بحر/عمق للبلاطات", "Slab span/depth limit"))}</div>
+    <label style="display:flex;gap:6px;align-items:center;color:var(--ink)"><input type="checkbox" data-sx="treatSlabsAsFlat" ${SX.inputs.treatSlabsAsFlat ? "checked" : ""}>${L("افحص البلاطات كبلاطات مسطحة على الأعمدة", "Check the slabs as flat slabs on the columns")}</label>
+
+    <h3>${L("محسّن شبكة الأعمدة", "Column grid optimizer")}</h3>
+    <div class="row">${sxN("grid.maxSpanMm", L("أطول بحر مقبول (مم)", "Longest span accepted (mm)"))}${sxN("grid.snapMm", L("أقصى إزاحة (مم)", "Largest move (mm)"))}</div>
+    ${sxMiss(g.missing)}
+    ${sxT(g.proposals.map(p => [p.column, `${p.from[0]},${p.from[1]} → ${p.to[0]},${p.to[1]}`, p.projection_before_m2, p.projection_after_m2, p.span_before_mm, p.span_after_mm, sxSt(p.status), esc(p.reason)]), [L("عمود", "Column"), L("الموضع", "Position"), L("بروز قبل م²", "Proj. before m²"), L("بعد", "after"), L("بحر قبل", "span before"), L("بعد", "after"), "", ""])}
+    <div class="bar" style="padding:4px 0;border:0"><button id="sx-grid" ${g.proposals.some(p => p.status === "move") ? "" : "disabled"}>${L("نفّذ نقل الأعمدة", "Apply the column moves")}</button></div>
+
+    <h3>${L("مستشار نظام البلاطات", "Slab system advisor")}</h3>
+    <div class="row3">${["hourdi", "solid", "flat"].map(s => `<div><b>${({ hourdi: L("هوردي", "Hourdi"), solid: L("مصمتة", "Solid"), flat: L("مسطحة", "Flat") })[s]}</b></div>`).join("")}</div>
+    ${[["spanDepth", L("بحر/عمق", "span/depth")], ["maxSpanMm", L("أقصى بحر (مم)", "max span (mm)")], ["rebarKgM3", L("حديد كجم/م³", "steel kg/m³")], ["extraRateM2", L("سعر إضافي/م²", "extra rate/m²")]].map(([f, l]) => `<div class="row3">${["hourdi", "solid", "flat"].map(s => sxN(`slabs.${s}.${f}`, l)).join("")}</div>`).join("")}
+    <div class="row3">${sxN("slabs.ribbed.toppingMm", L("طبقة الضغط (مم)", "Topping (mm)"))}${sxN("slabs.ribbed.ribWidthMm", L("عرض العصب (مم)", "Rib width (mm)"))}${sxN("slabs.ribbed.ribSpacingMm", L("تباعد الأعصاب (مم)", "Rib spacing (mm)"))}</div>
+    <div class="row">${sxN("slabs.concreteRate", L("سعر م³ الخرسانة", "Concrete rate / m³"))}${sxN("slabs.steelRate", L("سعر كجم الحديد", "Steel rate / kg"))}</div>
+    ${sl.levels.map(l => `<div class="hint">${L("الدور", "Level")} ${l.level ?? "-"} · ${l.area_m2} m² · ${L("بحر قصير", "short")} ${l.short_span_mm} / ${L("طويل", "long")} ${l.long_span_mm} mm · ${L("الحالي", "now")} ${l.current_thickness_mm} mm / ${l.current_m3} m³ · ${L("الأرخص", "cheapest")}: <b>${l.cheapest ?? "-"}</b></div>
+      ${sxT(l.systems.map(s => [s.system, s.span_mm, s.depth_mm, s.concrete_m3, s.rebar_kg, s.cost, s.within_max_span === null ? "-" : s.within_max_span ? "✓" : "✗"]), [L("النظام", "System"), L("البحر", "Span"), L("العمق مم", "Depth mm"), "m³", "kg", L("التكلفة", "Cost"), L("ضمن الحد", "≤ max")])}
+      ${sxMiss([...new Set(l.systems.flatMap(s => s.missing))])}`).join("")}
+    ${sl.notes.map(n => `<div class="hint">${esc(n)}</div>`).join("")}
+
+    <h3>${L("القص الثاقب والترخيم", "Punching shear and deflection")}</h3>
+    ${sxMiss(pu.missing)}
+    ${sxT(pu.punching.map(p => [p.name, p.column, p.kind, p.d_mm, p.vu_kn, p.stress_mpa, p.capacity_mpa, p.safety, sxSt(p.status)]), [L("العنصر", "Element"), L("العمود", "Column"), "", "d", "Vu kN", "v MPa", L("السعة", "capacity"), L("معامل الأمان", "safety"), ""])}
+    ${sxT(pu.deflection.map(d => [d.name, d.kind, d.span_mm, d.depth_mm, d.ratio, d.limit, d.safety, sxSt(d.status)]), [L("العنصر", "Element"), "", L("البحر", "span"), L("العمق", "depth"), L("النسبة", "ratio"), L("الحد", "limit"), L("معامل الأمان", "safety"), ""])}
+    ${pu.notes.map(n => `<div class="hint">${esc(n)}</div>`).join("")}
+
+    <h3>${L("دمج القواعد (مشتركة / لبشة)", "Footing merger (combined / raft)")}</h3>
+    <div class="row3">${sxN("merge.minGapMm", L("أقل فاصل (مم)", "Least gap (mm)"))}${sxN("merge.raftThresholdPct", L("حد اللبشة % من البصمة", "Raft threshold %"))}${sxN("merge.raftEdgeMm", L("بروز اللبشة (مم)", "Raft edge (mm)"))}</div>
+    ${sxMiss(mg.missing)}
+    <div class="hint">${L("القواعد", "Footings")}: ${mg.footings} · ${L("نسبة التغطية", "coverage")}: ${mg.coverage_pct ?? "-"}% ${mg.raft ? `· <b class="bad">${L("لبشة", "raft")}</b>` : ""}</div>
+    ${sxT(mg.groups.map(x => [x.label, x.kind, x.footings.join(", "), `${x.length_mm}×${x.width_mm}`, x.load_kn, x.required_m2, x.provided_m2]), [L("الاسم", "Label"), "", L("القواعد", "Footings"), "mm", "kN", L("المطلوب م²", "required m²"), L("المتوفر", "provided")])}
+    ${mg.notes.map(n => `<div class="hint">${esc(n)}</div>`).join("")}
+    <div class="bar" style="padding:4px 0;border:0"><button id="sx-merge" ${mg.groups.length ? "" : "disabled"}>${L("ادمج القواعد", "Merge the footings")}</button></div>
+
+    <h3>${L("خزانات أرضية وبيارات (خرسانة مسلحة)", "Underground water and septic tanks")}</h3>
+    <div class="note">${L("ضغط التربة والمياه الجوفية من تقرير التربة الخاص بك (لا قيم مقترحة لأي مدينة). الأحمال والمعاملات مدخلاتك.", "Soil and groundwater come from YOUR soil report (no value is proposed for any city). Loads and factors are yours.")}</div>
+    <div class="row3">${sxN("tankDesign.fcMpa", "f'c")}${sxN("tankDesign.fyMpa", "fy")}${sxN("tankDesign.phiFlexure", "φ")}</div>
+    <div class="row3">${sxN("tankDesign.gammaSoil", "γ soil")}${sxN("tankDesign.gammaWater", "γ water")}${sxN("tankDesign.gammaLiquid", "γ liquid")}</div>
+    <div class="row3">${sxN("tankDesign.gammaDead", "γ dead")}${sxN("tankDesign.concreteUnitWeightKnM3", L("وزن الخرسانة kN/م³", "Concrete kN/m³"))}${sxN("tankDesign.upliftFsMin", L("أمان الطفو", "Uplift FS"))}</div>
+    <div class="row3">${sxN("tankDesign.rhoMin", "ρ min")}${sxN("tankDesign.rhoMax", "ρ max")}${sxN("tankDesign.coverMm", L("الغطاء مم", "cover mm"))}</div>
+    <div class="row3">${sxN("tankDesign.minSpacingMm", L("أقل تباعد", "min spacing"))}${sxN("tankDesign.maxSpacingMm", L("أقصى تباعد", "max spacing"))}${sxN("tankDesign.minThicknessMm", L("أقل سماكة تُجرَّب", "smallest thickness"))}</div>
+    <div class="row"><div><label>${L("أقطار القضبان (مم)", "Bar sizes (mm)")}</label><input id="sx-dias" dir="ltr" value="${((SX.inputs.tankDesign || {}).barDiasMm || []).join(", ")}" placeholder="12, 16, 20"></div>${sxN("tankDesign.hookMm", L("طول الخطاف (مم)", "Hook (mm)"))}</div>
+    ${tanks.map((tk, i) => `<div style="border:1px solid var(--line);border-radius:6px;padding:6px;margin:6px 0"><div class="bar" style="padding:0;border:0"><input data-sx="tanks.${i}.name" type="text" value="${esc(tk.name || "")}" style="width:90px"><select data-sx="tanks.${i}.kind"><option value="water" ${tk.kind === "water" ? "selected" : ""}>${L("مياه", "water")}</option><option value="septic" ${tk.kind === "septic" ? "selected" : ""}>${L("بيارة", "septic")}</option></select><button data-deltank="${i}">×</button></div>
+      <div class="row3">${sxN(`tanks.${i}.innerLengthMm`, L("الطول الداخلي", "Inner length"))}${sxN(`tanks.${i}.innerWidthMm`, L("العرض الداخلي", "Inner width"))}${sxN(`tanks.${i}.liquidDepthMm`, L("عمق السائل", "Liquid depth"))}</div>
+      <div class="row3">${sxN(`tanks.${i}.freeboardMm`, L("الارتفاع الحر", "Freeboard"))}${sxN(`tanks.${i}.soilCoverMm`, L("ردم فوق السقف", "Soil cover"))}${sxN(`tanks.${i}.groundwaterDepthMm`, L("عمق الماء الجوفي", "Groundwater depth"))}</div>
+      <div class="row3">${sxN(`tanks.${i}.soilUnitWeightKnM3`, L("وزن التربة", "Soil kN/m³"))}${sxN(`tanks.${i}.k0`, "k0")}${sxN(`tanks.${i}.surchargeKpa`, L("حمل إضافي kPa", "Surcharge kPa"))}</div>
+      <div class="row3">${sxN(`tanks.${i}.liquidUnitWeightKnM3`, L("وزن السائل", "Liquid kN/m³"))}${sxN(`tanks.${i}.compartments`, L("حجرات", "Compartments"), "1")}${sxN(`tanks.${i}.groundwaterUnitWeightKnM3`, L("وزن الماء الجوفي", "Groundwater kN/m³"))}</div>
+      <div class="row3">${sxN(`tanks.${i}.wallMm`, L("سماكة الجدار (فارغ=تصميم)", "Wall (blank = design)"))}${sxN(`tanks.${i}.baseMm`, L("القاعدة", "Base"))}${sxN(`tanks.${i}.topMm`, L("السقف", "Top"))}</div></div>`).join("")}
+    <div class="bar" style="padding:4px 0;border:0"><button id="sx-addtank">${L("+ خزان", "+ Tank")}</button></div>
+    ${r.tanks.map(tk => `<div class="hint"><b>${esc(tk.name)}</b> (${tk.kind}) ${sxSt(tk.status)} · ${L("خرسانة", "concrete")} ${tk.concrete_m3} m³ · ${L("حديد", "steel")} ${tk.steel_kg} kg · ${L("أمان الطفو", "uplift FS")} ${tk.uplift_fs ?? "-"} · ${L("عمق", "depth")} ${tk.depth_below_ground_m} m</div>
+      ${sxMiss(tk.missing)}
+      ${tk.elements.length ? sxT(tk.elements.map(e => [e.role, e.thickness_mm, e.mu_kn_m, e.as_required_mm2_m, e.as_min_mm2_m, e.bar_dia_mm ? `Ø${e.bar_dia_mm}@${e.spacing_mm}` : "-", e.sized_by, sxSt(e.status)]), [L("العنصر", "Element"), "h mm", "Mu kN·m/m", "As req", "As min", L("التسليح", "bars"), "", ""]) : ""}
+      ${tk.bars.length ? sxT(tk.bars.map(b => [b.mark, b.role, b.dia_mm, b.spacing_mm, b.number, b.cut_length_mm, b.kg]), ["", L("الدور", "Role"), "Ø", "@", "#", L("طول القص", "cut mm"), "kg"]) : ""}
+      <ul class="clean">${tk.notes.map(n => `<li class="hint">${esc(n)}</li>`).join("")}</ul>`).join("")}
+
+    <h3>${L("تقطيع حديد التسليح (قضبان 12 م)", "Rebar cutting (12 m stock bars)")}</h3>
+    <div class="row">${sxN("cutting.stockMm", L("طول القضيب (مم)", "Stock length (mm)"), "", 12000)}${sxN("cutting.lapMm", L("طول الوصلة (مم)", "Lap (mm)"))}</div>
+    ${sxMiss(ct.missing)}
+    ${ct.per_dia ? sxT(ct.per_dia.map(d => [d.dia_mm, d.pieces, d.stock_bars, d.lower_bound, d.cut_m, d.stock_m, `${d.waste_pct}%`, d.splices]), ["Ø", L("قطع", "pieces"), L("قضبان", "stock bars"), L("حد أدنى", "lower bound"), L("مقطوع م", "cut m"), L("مشترى م", "bought m"), L("هدر", "waste"), L("وصلات", "splices")]) : ""}
+    <div class="hint">${L("المجموع", "Total")}: <b>${ct.stock_bars}</b> ${L("قضيباً", "bars")} · ${L("هدر", "waste")} <b>${ct.waste_pct}%</b> · ${ct.stock_kg} kg ${L("مشترى", "bought")} / ${ct.cut_kg} kg ${L("مقطوع", "cut")} · ${L("الحديد من جدول الحصر والخزانات", "bars from the BBS and the tanks")}</div>
+    ${(ct.notes || []).map(n => `<div class="hint">${esc(n)}</div>`).join("")}
+
+    <div class="bar" style="padding:8px 0;border:0;flex-wrap:wrap;gap:6px"><button id="sx-save" class="primary">${L("احفظ المدخلات وأعد الحساب", "Save inputs and recompute")}</button>
+      <button id="sx-dxf">${L("تصدير تحليلي DXF", "Analytical DXF")}</button><button id="sx-ifc">${L("تصدير تحليلي IFC", "Analytical IFC")}</button></div>
+    <div class="hint">${L("التصدير التحليلي: الشبكة والعقد ومحاور الجسور والأعمدة وحدود البلاطات وأحمال الأعمدة (الخدمة، ونهائي إن أدخلت معامل الحمل) لـ ETABS/SAFE/Robot. ملف IFC لم يُفتح في برنامج طرف ثالث هنا: افحصه عند الاستيراد.", "Analytical export: grid, nodes, beam and column centrelines, slab outlines and column loads (service, and ultimate when you give a load factor) for ETABS/SAFE/Robot. The IFC was not opened in a third-party program here: check it on import.")}</div>`;
+  sxWire();
+}
+function sxWire() {
+  const act = (id, fn) => { const e = $(id); if (e) e.onclick = () => busy(fn); };
+  act("sx-save", sxSave);
+  act("sx-grid", async () => { sxCollect(); await call("structural_set", { structural: SX.inputs }); const r = await call("grid_apply"); if (r.svg) showPlan(r.svg); SX.rep = r; SX.inputs = JSON.parse(JSON.stringify(r.inputs)); sxBuild(); toast(`${r.moved} ${L("عمود نُقل", "column(s) moved")}`); });
+  act("sx-merge", async () => { sxCollect(); await call("structural_set", { structural: SX.inputs }); const r = await call("merge_apply"); if (r.svg) showPlan(r.svg); SX.rep = r; SX.inputs = JSON.parse(JSON.stringify(r.inputs)); sxBuild(); toast(r.merged.join(", ")); });
+  $("sx-addtank").onclick = () => { sxCollect(); SX.inputs.tanks = [...(SX.inputs.tanks || []), { name: "T" + ((SX.inputs.tanks || []).length + 1), kind: "water", compartments: 1 }]; sxBuild(); };
+  document.querySelectorAll("[data-deltank]").forEach(b => b.onclick = () => { sxCollect(); SX.inputs.tanks.splice(Number(b.dataset.deltank), 1); sxBuild(); });
+  for (const k of ["dxf", "ifc"]) act("sx-" + k, async () => { sxCollect(); await call("structural_set", { structural: SX.inputs }); const r = await call("export_analytical", { kind: k }); const s = await call("export", { name: r.name, data: r.data }); toast(s.saved ? `${r.nodes} ${L("عقدة", "nodes")} · ${r.members} ${L("عنصراً", "members")} · ${r.loads} ${L("حملاً", "loads")}` : t("cancelled")); });
+}
+document.querySelector('[data-tab="str"]').addEventListener("click", () => busy(sxLoad));
 
 // ---------------------------------------------------------------- project details and code check
 function projectPayload() {

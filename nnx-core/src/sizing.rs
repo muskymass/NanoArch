@@ -239,8 +239,16 @@ pub fn compute(model: &Model, soil_kpa: Option<f64>, inp: &SizingInputs) -> Sizi
     let mut fnds: Vec<(&crate::model::Element, Footing)> = model.elements.values().filter(|e| e.kind == Footing::KIND).filter_map(|e| Some((e, e.typed::<Footing>().ok()?))).collect();
     fnds.sort_by_key(|(_, f)| (col_name.get(&f.column.parse::<Id>().unwrap_or_default()).and_then(|n| n.trim_start_matches("COL-").parse::<usize>().ok()).unwrap_or(usize::MAX), f.x, f.y));
     let mut fnd_name: BTreeMap<Id, String> = BTreeMap::new();
-    for (i, (e, f)) in fnds.iter().enumerate() {
-        let name = format!("FND-{}", i + 1);
+    let mut plain = 0;
+    for (e, f) in fnds.iter() {
+        // A combined footing or a raft carries its own label (CFND-n, RAFT-n); the others are numbered in order.
+        let name = match f.extra.get("label").and_then(|v| v.as_str()) {
+            Some(l) => l.to_string(),
+            None => {
+                plain += 1;
+                format!("FND-{plain}")
+            }
+        };
         fnd_name.insert(e.id, name.clone());
         let col = f.column.parse::<Id>().ok().and_then(|c| col_name.get(&c).cloned()).unwrap_or_else(|| f.column.clone());
         let (req, side, status) = match soil_kpa.filter(|q| *q > 0.0) {

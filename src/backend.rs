@@ -303,6 +303,11 @@ impl App {
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
             "analysis" => self.analysis(args),
             "materials" => Ok(nnx_core::materials::catalog_json()),
+            "structural" => self.structural_report(),
+            "structural_set" => self.structural_set(args),
+            "grid_apply" => self.grid_apply(),
+            "merge_apply" => self.merge_apply(),
+            "export_analytical" => self.export_analytical(args),
             "compliance" => self.compliance_report(),
             "compliance_set" => self.compliance_set(args),
             "malath_set" => self.malath_set(args),
@@ -725,6 +730,94 @@ impl App {
         let r = nnx_core::site::analyse(&input).map_err(|e| e.join("; "))?;
         let svg = nnx_core::site::site_svg(&r, "Site plan");
         Ok(json!({ "result": r, "svg": svg, "rule_source": nnx_core::site::RULE_SOURCE }))
+    }
+
+    /// Every advanced structural analysis of the open project in one answer (inputs are the project's own).
+    fn structural_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let model = &self.doc()?.model;
+        let s = &p.meta.structural;
+        let thick = p.sizing.as_ref().and_then(|z| z.footing_thickness_mm);
+        let tank_results: Vec<nnx_core::tanks::TankResult> = s.tanks.iter().map(|t| nnx_core::tanks::design(t, &s.tank_design)).collect();
+        let mut pieces = Vec::new();
+        let schedule = p.sizing.as_ref().map(|z| nnx_core::sizing::compute(model, p.structure.bearing_kpa, z));
+        if let Some(r) = &schedule {
+            pieces.extend(nnx_core::cutting::pieces_from_schedule(&r.bars));
+        }
+        for t in &tank_results {
+            pieces.extend(nnx_core::cutting::pieces_from_tank(&t.name, &t.bars));
+        }
+        Ok(json!({
+            "inputs": s,
+            "grid": nnx_core::gridopt::analyze(model, &s.grid),
+            "slabs": nnx_core::slabadv::advise(model, &s.slabs),
+            "punching": nnx_core::punching::check(model, s, thick, p.structure.dead_kpa, p.structure.live_kpa),
+            "merge": nnx_core::merger::plan(model, &s.merge, thick),
+            "tanks": tank_results,
+            "cutting": nnx_core::cutting::optimize(&pieces, s.cutting.stock_mm, s.cutting.lap_mm),
+            "bars_in_schedule": schedule.map_or(0, |r| r.bars.len()),
+        }))
+    }
+
+    /// Replaces the structural inputs (one undoable project edit).
+    fn structural_set(&mut self, args: &Value) -> Result<Value, String> {
+        let s: nnx_core::structx::StructuralInputs = serde_json::from_value(args.get("structural").cloned().ok_or("structural is required")?).map_err(|e| format!("structural inputs: {e}"))?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "structural inputs", |p| {
+            p.meta.structural = s.clone();
+            Ok(())
+        })?;
+        let mut v = self.structural_report()?;
+        v["changed"] = json!(out.changed);
+        Ok(v)
+    }
+
+    /// Moves the columns the grid optimizer proposes (with their footings and beam ends) as one undoable step.
+    fn grid_apply(&mut self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let inp = p.meta.structural.grid.clone();
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let rep = nnx_core::gridopt::analyze(&doc.model, &inp);
+        let cmds = nnx_core::gridopt::apply(&doc.model, &rep, inp.snap_mm.unwrap_or(0.0).round() as i64);
+        let moved = rep.proposals.iter().filter(|x| x.status == "move").count();
+        if cmds.is_empty() {
+            return Err("no column to move: see the grid report for why".into());
+        }
+        doc.commit("optimise the column grid", nnx_core::Origin::User, cmds).map_err(|e| e.to_string())?;
+        let mut v = self.structural_report()?;
+        v["moved"] = json!(moved);
+        v["svg"] = self.render_or_null()?;
+        Ok(v)
+    }
+
+    /// Merges the footings into combined footings or a raft as one undoable step.
+    fn merge_apply(&mut self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let thick = p.sizing.as_ref().and_then(|z| z.footing_thickness_mm);
+        let inp = p.meta.structural.merge.clone();
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let plan = nnx_core::merger::plan(&doc.model, &inp, thick);
+        if plan.groups.is_empty() {
+            return Err(if plan.missing.is_empty() { plan.notes.first().cloned().unwrap_or_else(|| "nothing to merge".into()) } else { format!("enter: {}", plan.missing.join("; ")) });
+        }
+        let cmds = nnx_core::merger::apply(&doc.model, &plan);
+        doc.commit("merge footings", nnx_core::Origin::User, cmds).map_err(|e| e.to_string())?;
+        let mut v = self.structural_report()?;
+        v["merged"] = json!(plan.groups.iter().map(|g| g.label.clone()).collect::<Vec<_>>());
+        v["svg"] = self.render_or_null()?;
+        Ok(v)
+    }
+
+    /// The analytical model as a DXF drawing or an IFC4 structural analysis view.
+    fn export_analytical(&self, args: &Value) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let a = nnx_core::analytical::build(&self.doc()?.model, p.meta.structural.load_factor)?;
+        let title = self.display_title();
+        match args.get("kind").and_then(Value::as_str).unwrap_or("dxf") {
+            "dxf" => Ok(json!({ "data": nnx_core::analytical::dxf(&a, &title), "name": "analytical-model.dxf", "nodes": a.nodes.len(), "members": a.members.len(), "surfaces": a.surfaces.len(), "loads": a.loads.len(), "notes": a.notes })),
+            "ifc" => Ok(json!({ "data": nnx_core::analytical::ifc(&a, &title, &utc_now()), "name": "analytical-model.ifc", "nodes": a.nodes.len(), "members": a.members.len(), "surfaces": a.surfaces.len(), "loads": a.loads.len(), "notes": a.notes })),
+            other => Err(format!("unknown export kind '{other}' (dxf or ifc)")),
+        }
     }
 
     /// Early-design analyses (`kind`: solar, screen, compare, stair, ramp). Every limit comes from the caller; a missing one is named.
@@ -2338,6 +2431,88 @@ mod tests {
         assert_eq!(app.project().unwrap().meta.baseline.unwrap().name, "Rev A");
         // Without a document nothing is invented.
         assert!(App::default().handle("certificate_html", &json!({})).is_err() && App::default().handle("compliance", &json!({})).is_err());
+    }
+    /// A project with columns, footings (loads and soil given) and slabs, so the structural pack has something to work on.
+    fn started_with_structure() -> App {
+        let mut app = App::default();
+        let s = json!({ "dead_kpa": 5.0, "live_kpa": 2.0, "bearing_kpa": 150.0, "floors": 1 });
+        app.handle("generate", &json!({ "brief": brief(), "struct": s, "meta": { "title": "x" } })).unwrap();
+        app.handle("select", &json!({ "index": 0, "struct": s })).unwrap();
+        app
+    }
+
+    fn count(app: &App, kind: &str) -> usize {
+        app.doc().unwrap().model.elements.values().filter(|e| e.kind == kind).count()
+    }
+
+    #[test]
+    fn structural_inputs_live_in_the_project_and_every_analysis_names_what_it_misses() {
+        let mut app = started_with_structure();
+        assert!(count(&app, "Column") >= 4 && count(&app, "Footing") >= 4);
+        let r = app.handle("structural", &json!({})).unwrap();
+        assert!(r["grid"]["missing"].as_array().unwrap().len() == 2 && r["merge"]["missing"].as_array().unwrap().len() == 3);
+        assert!(r["punching"]["missing"].as_array().unwrap().iter().any(|m| m.as_str().unwrap().contains("f'c")));
+        assert!(!r["slabs"]["levels"][0]["systems"][0]["missing"].as_array().unwrap().is_empty() && r["tanks"].as_array().unwrap().is_empty());
+        // Impossible numbers are refused and change nothing.
+        let hash = app.doc().unwrap().model.state_hash();
+        assert!(app.handle("structural_set", &json!({ "structural": { "fcMpa": -5.0 } })).is_err());
+        assert!(app.handle("structural_set", &json!({ "structural": { "merge": { "raftThresholdPct": 500.0 } } })).is_err());
+        assert_eq!(app.doc().unwrap().model.state_hash(), hash);
+        let inputs = json!({ "fcMpa": 25.0, "loadFactor": 1.4, "phiShear": 0.75, "punchingFactor": 0.33, "coverMm": 50.0, "barDiaMm": 16.0, "beamSpanDepthMax": 16.0, "slabSpanDepthMax": 30.0,
+            "grid": { "maxSpanMm": 7000.0, "snapMm": 300.0 }, "cutting": { "stockMm": 12000.0, "lapMm": 600.0 },
+            "tankDesign": { "fcMpa": 25.0, "fyMpa": 420.0, "phiFlexure": 0.9, "gammaSoil": 1.6, "gammaWater": 1.4, "gammaLiquid": 1.4, "gammaDead": 1.2, "concreteUnitWeightKnM3": 25.0, "rhoMin": 0.0018, "rhoMax": 0.02, "coverMm": 50.0, "barDiasMm": [12.0, 16.0], "minSpacingMm": 100.0, "maxSpacingMm": 250.0, "upliftFsMin": 1.1, "minThicknessMm": 200.0, "hookMm": 150.0 },
+            "tanks": [{ "name": "T1", "kind": "water", "innerLengthMm": 4000.0, "innerWidthMm": 3000.0, "liquidDepthMm": 2000.0, "freeboardMm": 300.0, "soilCoverMm": 500.0, "groundwaterDepthMm": 1500.0, "soilUnitWeightKnM3": 18.0, "k0": 0.5, "surchargeKpa": 10.0, "liquidUnitWeightKnM3": 9.81, "compartments": 1 }] });
+        let r = app.handle("structural_set", &json!({ "structural": inputs })).unwrap();
+        assert_eq!(r["changed"], true);
+        assert!(r["punching"]["missing"].as_array().unwrap().iter().all(|m| !m.as_str().unwrap().contains("f'c")));
+        assert!(!r["punching"]["deflection"].as_array().unwrap().is_empty());
+        assert_eq!(r["tanks"][0]["status"], "ok");
+        assert!(r["tanks"][0]["bars"].as_array().unwrap().len() >= 6);
+        assert!(r["cutting"]["stock_bars"].as_u64().unwrap() > 0, "the tank bars are nested");
+        assert!(!r["grid"]["proposals"].as_array().unwrap().is_empty());
+        assert_eq!(app.project().unwrap().meta.structural.fc_mpa, Some(25.0));
+        // One undo reverts the inputs.
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.project().unwrap().meta.structural, Default::default());
+        app.handle("redo", &json!({})).unwrap();
+        assert_eq!(app.project().unwrap().meta.structural.cutting.stock_mm, Some(12000.0));
+    }
+
+    #[test]
+    fn merging_footings_into_a_raft_is_undoable_and_survives_a_structure_sync() {
+        let mut app = started_with_structure();
+        let before = count(&app, "Footing");
+        assert!(app.handle("merge_apply", &json!({})).unwrap_err().contains("enter:"));
+        app.handle("structural_set", &json!({ "structural": { "merge": { "minGapMm": 10.0, "raftThresholdPct": 1.0, "raftEdgeMm": 300.0 } } })).unwrap();
+        let plan = app.handle("structural", &json!({})).unwrap();
+        assert_eq!(plan["merge"]["raft"], true);
+        let r = app.handle("merge_apply", &json!({})).unwrap();
+        assert_eq!(r["merged"], json!(["RAFT-1"]));
+        assert_eq!(count(&app, "Footing"), 1);
+        // The structure sync does not make the single footings again.
+        let s = app.handle("sync", &json!({})).unwrap();
+        assert_eq!(count(&app, "Footing"), 1, "{s}");
+        // The raft carries every column and shows in the schedule by its label.
+        let raft = app.doc().unwrap().model.elements.values().find(|e| e.kind == "Footing").unwrap();
+        assert_eq!(raft.props["columns"].as_array().unwrap().len(), before);
+        app.handle("undo", &json!({})).unwrap();
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(count(&app, "Footing"), before);
+    }
+
+    #[test]
+    fn the_analytical_model_exports_as_dxf_and_ifc() {
+        let mut app = started_with_structure();
+        let d = app.handle("export_analytical", &json!({ "kind": "dxf" })).unwrap();
+        assert!(d["data"].as_str().unwrap().contains("S-GRID") && d["data"].as_str().unwrap().ends_with("EOF\n") && d["nodes"].as_u64().unwrap() >= 8);
+        let i = app.handle("export_analytical", &json!({ "kind": "ifc" })).unwrap();
+        let text = i["data"].as_str().unwrap();
+        assert!(text.starts_with("ISO-10303-21;") && text.contains("IFCSTRUCTURALPOINTCONNECTION") && text.contains("IFCSTRUCTURALCURVEMEMBER") && text.contains("IFCSTRUCTURALSURFACEMEMBER"));
+        assert!(i["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("no load factor")));
+        assert!(app.handle("export_analytical", &json!({ "kind": "stl" })).is_err());
+        app.handle("structural_set", &json!({ "structural": { "loadFactor": 1.4 } })).unwrap();
+        assert!(app.handle("export_analytical", &json!({})).unwrap()["data"].as_str().unwrap().contains(" Pu="));
+        assert!(App::default().handle("export_analytical", &json!({})).is_err() && App::default().handle("structural", &json!({})).is_err());
     }
     #[test]
     fn every_starter_template_applies_and_generates_a_plan_with_no_empty_room_area() {

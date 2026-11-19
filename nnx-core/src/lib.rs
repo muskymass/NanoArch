@@ -4,9 +4,11 @@
 //! [`Document`], which provides undo/redo. [`persist`] reads and writes `.nnx` files.
 
 pub mod analysis;
+pub mod analytical;
 pub mod audits;
 pub mod certificate;
 pub mod compliance;
+pub mod cutting;
 pub mod boq;
 pub mod briefai;
 pub mod building;
@@ -23,6 +25,7 @@ pub mod layout;
 pub mod mep;
 pub mod model;
 pub mod malath;
+pub mod merger;
 pub mod materials;
 pub mod model3d;
 pub mod persist;
@@ -36,11 +39,16 @@ pub mod routing;
 pub mod rules;
 pub mod sbc;
 pub mod furniture;
+pub mod gridopt;
+pub mod punching;
 pub mod revisions;
 pub mod site;
+pub mod slabadv;
 pub mod site_layout;
 pub mod sizing;
+pub mod structx;
 pub mod style;
+pub mod tanks;
 pub mod templates;
 pub mod thermal;
 pub mod vertical;

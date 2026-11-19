@@ -640,6 +640,8 @@ pub fn sync_commands(model: &Model, opts: &StructOpts, level: Option<Id>) -> Res
             all_existing.push(e);
         }
     }
+    // Columns carried by a combined footing or a raft: their single footings are not made again.
+    let merged_cols: BTreeSet<String> = model.elements.values().filter(|e| e.kind == "Footing").filter_map(|e| e.props.get("columns")?.as_array().cloned()).flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
     let mut report = SyncReport { warnings: notes, ..SyncReport::default() };
     let mut matched: BTreeSet<Id> = BTreeSet::new();
     let mut creates: Vec<Command> = Vec::new();
@@ -652,6 +654,9 @@ pub fn sync_commands(model: &Model, opts: &StructOpts, level: Option<Id>) -> Res
             && let Some(c) = el.props.get("column").and_then(|v| v.as_str()).and_then(|c| column_id.get(c)) {
                 el.props.insert("column".into(), serde_json::json!(c));
             }
+        if el.kind == "Footing" && el.props.get("column").and_then(|v| v.as_str()).is_some_and(|c| merged_cols.contains(c)) {
+            continue;
+        }
         match existing.get_mut(&signature(&el)).and_then(|v| v.pop()) {
             Some(old) => {
                 matched.insert(old);
