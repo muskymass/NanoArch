@@ -274,6 +274,7 @@ impl App {
             "assumptions" => Ok(assumptions()),
             "qto" => self.qto(),
             "mep" => self.mep(args),
+            "sizing" => self.sizing(args),
             "boq" => self.boq(args),
             "model3d" => serde_json::to_value(nnx_core::model3d::build(&self.doc()?.model)).map_err(|e| e.to_string()),
             "export_ifc" => self.export_ifc(),
@@ -366,7 +367,7 @@ impl App {
         let (report, applied) = {
             let doc = self.doc.as_mut().ok_or("choose a layout first")?;
             let report = nnx_core::mep::compute(&doc.model, &inputs);
-            let applied = if apply { Some(nnx_core::mep::apply(doc, &report.points)?) } else { None };
+            let applied = if apply { Some(nnx_core::mep::apply_with_runs(doc, &report.points, &report.runs)?) } else { None };
             (report, applied)
         };
         Ok(json!({
@@ -444,6 +445,21 @@ impl App {
         }
         v.extend(nnx_core::mep::point_items(model));
         v
+    }
+
+    /// The structural schedules: column loads by tributary area, footings against the soil value, tie beams, concrete and
+    /// the bar bending schedule. `inputs` are stored in the project (one undoable step, a no-op when unchanged); the soil
+    /// bearing value is the one of the structural inputs.
+    fn sizing(&mut self, args: &Value) -> Result<Value, String> {
+        let inputs: nnx_core::sizing::SizingInputs = serde_json::from_value(args.get("inputs").cloned().unwrap_or(json!({}))).map_err(|e| format!("sizing inputs: {e}"))?;
+        let stored = inputs.clone();
+        nnx_core::project::update(self.doc.as_mut().ok_or("choose a layout first")?, "structural sizing inputs", |p| {
+            p.sizing = Some(stored.clone());
+            Ok(())
+        })?;
+        let soil = self.project().and_then(|p| p.structure.bearing_kpa);
+        let r = nnx_core::sizing::compute(&self.doc()?.model, soil, &inputs);
+        Ok(json!({ "report": r, "members_csv": r.members_csv(), "concrete_csv": r.concrete_csv(), "bbs_csv": r.bbs_csv(), "soil_kpa": soil }))
     }
 
     fn qto(&self) -> Result<Value, String> {
@@ -626,6 +642,9 @@ impl App {
             z2: mm("z2")?,
             width: mm("width")?,
             height: mm("height")?,
+            room: args.get("room").and_then(Value::as_str).map(str::to_string),
+            role: None,
+            label: args.get("label").and_then(Value::as_str).map(str::to_string),
             extra: Default::default(),
         };
         let doc = self.doc.as_mut().ok_or("choose a layout first")?;
@@ -700,6 +719,7 @@ impl App {
         v["brief"] = serde_json::to_value(&p.brief).unwrap_or(Value::Null);
         v["mep"] = serde_json::to_value(&p.mep).unwrap_or(Value::Null);
         v["boq"] = serde_json::to_value(&p.boq).unwrap_or(Value::Null);
+        v["sizing"] = serde_json::to_value(&p.sizing).unwrap_or(Value::Null);
         v
     }
     /// True when the open plan has changes that were never saved.
@@ -2061,6 +2081,112 @@ mod tests {
         let e = two.handle("add_run", &json!({ "system": "duct", "x1": 0, "y1": 0, "z1": 2500, "x2": 500, "y2": 0, "z2": 2500, "width": 100, "height": 100 })).unwrap_err();
         assert!(e.contains("which level"), "{e}");
         assert!(two.handle("add_run", &json!({ "system": "duct", "level": 1, "x1": 0, "y1": 0, "z1": 2500, "x2": 500, "y2": 0, "z2": 2500, "width": 100, "height": 100 })).is_ok());
+    }
+
+    // ------------------------------------------------------------------ routing and structural schedules
+
+    fn routing_inputs() -> Value {
+        let mut i = mep_inputs();
+        i["hvac"]["cop"] = json!(3.0);
+        i["routing"] = json!({
+            "ahu_room": "living", "supply_delta_t_c": 10, "duct_velocity_mps": 5, "duct_height_mm": 300, "ceiling_height_mm": 2600, "return_offset_mm": 400,
+            "drain_slope_pct": 1.5, "drain_invert_mm": 400, "stack_offset_mm": 1500,
+            "tank": { "kind": "ground", "x_mm": -2000, "y_mm": 1000, "z_mm": 0 }, "supply_z_mm": 600,
+            "tray_z_mm": 2800, "tray_width_mm": 300, "tray_height_mm": 100 });
+        i
+    }
+
+    #[test]
+    fn routing_through_the_mep_command_creates_runs_and_diffusers_found_by_the_clash_check_and_one_undo_removes_them() {
+        let mut app = started_with_project();
+        let runs_in_model = |a: &App| a.doc.as_ref().unwrap().model.elements.values().filter(|e| e.kind == "MepRun").count();
+        assert_eq!(runs_in_model(&app), 0);
+        let r = app.handle("mep", &json!({ "inputs": routing_inputs(), "apply": true, "show": true })).unwrap();
+        assert_eq!(r["report"]["missing"], json!({}), "{}", r["report"]["missing"]);
+        let routes = r["report"]["routes"].as_array().unwrap();
+        for system in ["duct", "drain", "pipe", "cable"] {
+            assert!(routes.iter().any(|x| x["system"] == system), "no {system} run in {}", r["report"]["routes"]);
+        }
+        let drain = routes.iter().find(|x| x["system"] == "drain").unwrap();
+        assert!((drain["slope_pct"].as_f64().unwrap() - 1.5).abs() < 0.1, "{drain}");
+        let n = runs_in_model(&app);
+        assert_eq!(n, routes.len(), "every route is a model element");
+        assert_eq!(app.handle("runs", &json!({})).unwrap().as_array().unwrap().len(), n);
+        // Cooling load and electrical totals in the units asked for.
+        let h = &r["report"]["hvac"];
+        assert!(h["total_btu_hr"].as_f64().unwrap() > 0.0 && h["total_tons"].as_f64().unwrap() > 0.0 && h["rooms"][0]["airflow_lps"].as_f64().unwrap() > 0.0);
+        assert!(r["report"]["electrical"]["demand_kva"].as_f64().unwrap() > 0.0);
+        assert!(r["report"]["electrical"]["circuits"].as_array().unwrap().iter().any(|c| c["kind"] == "hvac"));
+        // Ducts hang in the beams' zone, so the clash check reports them with exact ids.
+        let c = app.handle("clashes", &json!({})).unwrap();
+        let list = c["clashes"].as_array().unwrap();
+        assert!(!list.is_empty(), "a duct crossing the room lines meets the beams: {c}");
+        let model = &app.doc.as_ref().unwrap().model;
+        for k in list {
+            let (run, st) = (k["run_id"].as_str().unwrap().parse().unwrap(), k["struct_id"].as_str().unwrap().parse().unwrap());
+            assert_eq!(model.get(&run).unwrap().kind, "MepRun");
+            assert!(matches!(model.get(&st).unwrap().kind.as_str(), "Beam" | "Column" | "Footing"));
+        }
+        // The 3D scene carries every discipline now; the quantities count the runs in metres.
+        let scene = app.handle("model3d", &json!({})).unwrap();
+        let disc: std::collections::BTreeSet<&str> = scene["boxes"].as_array().unwrap().iter().map(|b| b["discipline"].as_str().unwrap()).collect();
+        assert_eq!(disc.len(), 5, "{disc:?}");
+        let q = app.handle("qto", &json!({})).unwrap();
+        assert!(q["items"].as_array().unwrap().iter().any(|i| i["code"].as_str().unwrap().starts_with("MEP.run.duct") && i["unit"] == "m"));
+        // One undo takes the generated points and runs away; the inputs stay.
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(runs_in_model(&app), 0);
+        assert!(app.project().unwrap().mep.unwrap().routing.is_some());
+        assert!(app.handle("clashes", &json!({})).unwrap()["clashes"].as_array().unwrap().is_empty());
+    }
+
+    fn sized_app() -> App {
+        let mut app = App::default();
+        let s = json!({ "dead_kpa": 5.0, "live_kpa": 2.0, "bearing_kpa": 150.0, "max_span_mm": 5000 });
+        app.handle("generate", &json!({ "brief": brief(), "struct": s })).unwrap();
+        app.handle("select", &json!({ "index": 0, "struct": s })).unwrap();
+        app
+    }
+
+    fn sizing_inputs() -> Value {
+        json!({
+            "footing_thickness_mm": 500, "tie_beam": { "width_mm": 250, "span_depth_ratio": 12 },
+            "rebar": { "cover_mm": 40, "anchorage_mm": 300, "hook_mm": 100,
+                "column": { "bar_dia_mm": 16, "count": 8, "tie_dia_mm": 8, "tie_spacing_mm": 200 },
+                "footing": { "bar_dia_mm": 12, "spacing_mm": 150 },
+                "beam": { "top_dia_mm": 16, "top_count": 2, "bottom_dia_mm": 16, "bottom_count": 3, "stirrup_dia_mm": 8, "stirrup_spacing_mm": 150 } } })
+    }
+
+    #[test]
+    fn the_sizing_command_schedules_columns_footings_tie_beams_concrete_and_bars_by_element_id() {
+        let mut app = sized_app();
+        let r = app.handle("sizing", &json!({ "inputs": sizing_inputs() })).unwrap();
+        let rep = &r["report"];
+        assert_eq!(rep["missing"], json!({}), "{}", rep["missing"]);
+        assert_eq!(r["soil_kpa"], 150.0);
+        let cols = rep["columns"].as_array().unwrap();
+        assert!(cols.len() >= 4 && cols.iter().all(|c| c["name"].as_str().unwrap().starts_with("COL-") && c["axial_kn"].as_f64().unwrap() > 0.0));
+        // The loads carried by all columns equal the loads of all slabs: 7 kPa over the plan.
+        let carried: f64 = cols.iter().map(|c| c["axial_kn"].as_f64().unwrap()).sum();
+        let plan_m2: f64 = app.rooms_json().iter().map(|r| r["area"].as_f64().unwrap()).sum();
+        assert!((carried - plan_m2 * 7.0).abs() < 1.0 + plan_m2 * 7.0 * 1e-3, "{carried} vs {}", plan_m2 * 7.0);
+        let trib: f64 = cols.iter().map(|c| c["tributary_m2"].as_f64().unwrap()).sum();
+        assert!((trib - plan_m2).abs() < 0.05, "{trib} vs {plan_m2}");
+        assert!(rep["footings"].as_array().unwrap().iter().all(|f| f["name"].as_str().unwrap().starts_with("FND-") && f["status"] == "ok"));
+        assert!(!rep["tie_beams"].as_array().unwrap().is_empty() && rep["concrete_total_m3"].as_f64().unwrap() > 0.0 && rep["steel_total_kg"].as_f64().unwrap() > 0.0);
+        assert!(rep["bars"].as_array().unwrap().iter().filter(|b| !b["element"].as_str().unwrap().starts_with("TB-")).all(|b| b["id"].is_string()));
+        assert!(r["bbs_csv"].as_str().unwrap().contains("COL-1/V") && r["concrete_csv"].as_str().unwrap().contains("TOTAL") && r["members_csv"].as_str().unwrap().contains("FND-1"));
+        // The inputs live in the project: undo takes them out, the same inputs again are not a change.
+        assert!(app.project().unwrap().sizing.is_some());
+        let h = hash(&app);
+        app.handle("sizing", &json!({ "inputs": sizing_inputs() })).unwrap();
+        assert_eq!(hash(&app), h);
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.project().unwrap().sizing.is_none());
+        // Incomplete inputs are named, nothing is computed from nothing.
+        let bare = app.handle("sizing", &json!({ "inputs": {} })).unwrap();
+        assert!(bare["report"]["missing"]["tie beams"].is_array() && bare["report"]["missing"]["reinforcement"].is_array());
+        assert!(app.handle("sizing", &json!({ "inputs": { "tie_beam": "x" } })).unwrap_err().contains("sizing inputs"));
     }
 
     #[test]

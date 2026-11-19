@@ -157,7 +157,7 @@ ul.clean li{margin:3px 0}
   <section class="col">
     <div class="tabs">
       <button class="tab on" data-tab="notes" data-i="t_notes"></button><button class="tab" data-tab="qto" data-i="t_qto"></button>
-      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button>
+      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button>
     </div>
     <div class="scroll">
       <div class="pane" id="p-sketch">
@@ -225,6 +225,13 @@ ul.clean li{margin:3px 0}
         <div class="bar" style="padding:10px 0;border:0"><button id="proj-save" class="primary" data-i="proj_save"></button></div>
         <div id="sbcout"></div>
       </div>
+      <div class="pane" id="p-str">
+        <div class="note" data-i="str_note"></div>
+        <textarea id="strin" spellcheck="false" dir="ltr" style="text-align:left;min-height:170px"></textarea>
+        <div class="bar" style="padding:8px 0;border:0;flex-wrap:wrap;gap:6px"><button id="str-example" data-i="str_example"></button><button id="str-run" class="primary" data-i="str_run"></button>
+          <button id="str-csv-m" data-i="s_csv_members"></button><button id="str-csv-c" data-i="s_csv_conc"></button><button id="str-csv-b" data-i="s_csv_bbs"></button></div>
+        <div id="strout"></div>
+      </div>
       <div class="pane" id="p-bim">
         <div class="note" data-i="bim_note"></div>
         <div class="row"><div><label data-i="run_sys"></label><select id="run-sys"><option value="duct" data-i="sys_duct"></option><option value="pipe" data-i="sys_pipe"></option><option value="drain" data-i="sys_drain"></option></select></div><div><label data-i="run_level"></label><input id="run-level" type="number" step="1" min="0"></div></div>
@@ -280,10 +287,11 @@ ar: {
   i_wall:"حاجز بين", i_ext:"جدار خارجي: يحدد حدود المبنى ولا يُنقل", i_len:"الطول", i_move:"انقل (مم)", i_hint:"أو اسحب الحاجز بالفأرة. النقل يعيد توليد الجدران والأبواب والنوافذ ويزامن الإنشائي.",
   i_door:"باب", i_window:"نافذة", i_width:"العرض (مم)", i_offset:"الموضع (مم من بداية الجدار)", i_apply:"طبّق", i_delete:"احذف", i_room:"فراغ", i_clear:"إلغاء التحديد", i_done:"تم التعديل",
   open_proj:"فتح مشروع", discard_q:"يوجد عمل غير محفوظ. هل تفتح مشروعاً آخر دون حفظه؟", opened:"تم الفتح",
-  t_mep:"الكهروميكانيكا", mep_note:"مدخلات الكهرباء والسباكة والتكييف والعزل من بياناتك (الكود والكتالوجات). لا قيم افتراضية: أي مدخل ناقص يُذكر باسمه ولا يُحسب القسم. النتائج أولية وتقديرية، والمسارات لا تُرسم: الأطوال مقدَّرة بخط مستقيم.", mep_example:"املأ بقيم اصطناعية (للاختبار فقط)", mep_run:"احسب", mep_apply:"احسب وأضف النقاط للمخطط", mep_show:"إظهار على المخطط",
+  t_mep:"الكهروميكانيكا", mep_note:"مدخلات الكهرباء والسباكة والتكييف والعزل من بياناتك (الكود والكتالوجات). لا قيم افتراضية: أي مدخل ناقص يُذكر باسمه ولا يُحسب القسم. النتائج أولية وتقديرية، إذا أدخلت القسم routing تُولَّد المجاري والمصارف والأنابيب وصواني الكابلات والناشرات كعناصر قابلة للتراجع وتدخل في فحص التعارضات؛ وإلا فالأطوال مقدَّرة بخط مستقيم.", mep_example:"املأ بقيم اصطناعية (للاختبار فقط)", mep_run:"احسب", mep_apply:"احسب وأضف النقاط للمخطط", mep_show:"إظهار على المخطط",
   m_missing:"مدخلات ناقصة", m_circuits:"الدوائر الكهربائية", m_circuit:"الدائرة", m_points:"نقاط", m_watts:"واط", m_amps:"أمبير", m_breaker:"القاطع (A)", m_cable:"الكابل (مم²)", m_len:"الطول (م)", m_vd:"هبوط الجهد %", m_total:"المجموع", m_demand:"الطلب", m_main:"القاطع الرئيسي (A)",
   m_plumb:"السباكة", m_flow:"التدفق (L/s)", m_pipe:"الأنبوب", m_dfu:"وحدات التصريف", m_drain:"المصرف (مم)", m_tank:"الخزان (م³)", m_design:"تدفق التصميم (L/s)", m_hvac:"التكييف", m_load:"الحمل (W)", m_units:"الوحدات", m_tons:"طن تبريد", m_ins:"العزل", m_scope:"النطاق", m_area:"المساحة (م²)", m_u:"U", m_limit:"الحد", m_status:"الحالة", m_applied:"أُضيفت {c} نقطة وأُزيلت {r}", m_pts:"النقاط في النموذج: {n}",
   export_pdf:"تصدير PDF",
+  t_str:"الجداول الإنشائية", str_note:"أحمال الأعمدة بالمساحة المساهمة، والقواعد مقابل تحمل التربة (من المدخلات الإنشائية)، والميدات الرابطة، والخرسانة وجدول ثني الحديد. الحديد يُجدول من نماذج تحددها أنت (أقطار وأعداد وتباعد وغطاء)؛ التطبيق لا يصمم التسليح. أولي ولا يغني عن مهندس إنشائي مرخّص.", str_example:"املأ بقيم اصطناعية (للاختبار فقط)", str_run:"احسب الجداول", str_cols:"الأعمدة", str_fnd:"القواعد", str_tb:"الميدات الرابطة", str_conc:"الخرسانة (م³)", str_bbs:"جدول ثني الحديد", s_trib:"المساحة المساهمة (م²)", s_axial:"الحمل المحوري (kN)", s_req:"المطلوب (م²)", s_prov:"المقاس القائم", s_status:"الحالة", s_span:"البحر (مم)", s_clear:"الصافي (مم)", s_size:"المقطع", s_vol:"الحجم (م³)", s_mark:"العلامة", s_dia:"القطر", s_num:"العدد", s_cut:"طول القص (مم)", s_kg:"كغ", s_soil:"تحمل التربة (kPa)", s_csv_members:"تصدير العناصر (CSV)", s_csv_conc:"تصدير الخرسانة (CSV)", s_csv_bbs:"تصدير ثني الحديد (CSV)", m_btu:"BTU/ساعة", m_tons:"طن تبريد", m_air:"تدفق الهواء (L/s)", m_kva:"kVA", m_board:"اللوحة", m_boards:"لوحات التوزيع", m_routes:"المسارات المولّدة", m_sys:"النظام", m_role:"الدور", m_from:"من", m_to:"إلى", m_slope:"ميل %",
   t_bim:"BIM والتعارضات", bim_note:"أدخل المجاري والأنابيب والمصارف (مم؛ الارتفاع فوق سطح أرضية الدور). التطبيق لا يرسم مساراتها. يُفحص تقاطعها مع الكمرات والأعمدة والقواعد بالهندسة الفعلية، وتُلوَّن العناصر المتعارضة بالأحمر في العرض ثلاثي الأبعاد.", run_sys:"النظام", sys_duct:"مجرى تكييف", sys_pipe:"أنبوب", sys_drain:"مصرف", run_from:"من (x, y, z)", run_to:"إلى (x, y, z)", run_size:"العرض × الارتفاع (مم)", run_level:"الدور (رقم)", run_add:"أضف", run_none:"لا مجاري ولا أنابيب بعد", clash_run:"افحص التعارضات", clash_h:"التعارضات", clash_none:"لا تعارض", clash_new:"تعارض جديد: {n}", d_architectural:"معماري", d_structural:"إنشائي", d_electrical:"كهرباء", d_plumbing:"سباكة", d_hvac:"تكييف", v_plan:"المخطط", v_north:"واجهة شمالية", v_south:"واجهة جنوبية", v_east:"واجهة شرقية", v_west:"واجهة غربية", v_aa:"مقطع A-A", v_bb:"مقطع B-B", sec_at:"موضع المقطع (م)", p_parapet:"ارتفاع الجدار الاستنادي للسطح (م)",
   t_sbc:"المشروع والكود", sbc_note:"تفاصيل المشروع وحدود البلدية (الارتدادات ونسبة البناء) تُدخل من أنظمة البلدية مع مصدرها. فحص الكود أولي ولا يغني عن الجهة المعتمدة.", bt:"نوع المبنى", bt_villa:"فيلا", bt_house:"منزل", bt_palace:"قصر", bt_apartment_building:"عمارة سكنية", p_style:"الطراز المعماري", p_climate:"المنطقة المناخية", p_smart:"التقنيات الذكية (مفصولة بفاصلة)",
   lim_h:"حدود البلدية", lim_f:"أدنى ارتداد أمامي (م)", lim_b:"أدنى ارتداد خلفي (م)", lim_s:"أدنى ارتداد جانبي (م)", lim_c:"أقصى نسبة بناء (%)", lim_src:"مصدر هذه الحدود (النظام، المادة، البلدية)", lim_enforce:"ارفض أي تعديل يضيف مخالفة", proj_save:"احفظ تفاصيل المشروع", proj_saved:"حُفظت تفاصيل المشروع", plan_outdated:"تغيرت الارتدادات بعد توليد المخطط: ولّد البدائل من جديد ليتبعها المخطط.",
@@ -318,10 +326,11 @@ en: {
   i_wall:"Partition between", i_ext:"Exterior wall: it sets the building outline and cannot be moved", i_len:"Length", i_move:"Move (mm)", i_hint:"Or drag the partition with the mouse. A move regenerates walls, doors and windows and syncs the structure.",
   i_door:"Door", i_window:"Window", i_width:"Width (mm)", i_offset:"Position (mm from wall start)", i_apply:"Apply", i_delete:"Delete", i_room:"Room", i_clear:"Clear selection", i_done:"Edited",
   open_proj:"Open project", discard_q:"There are unsaved changes. Open another project without saving them?", opened:"Opened",
-  t_mep:"MEP", mep_note:"Electrical, plumbing, HVAC and insulation inputs from your own data (code and catalogues). No defaults: any missing input is named and its section is not computed. Results are preliminary estimates; nothing is routed, lengths are straight-line estimates.", mep_example:"Fill with synthetic values (testing only)", mep_run:"Compute", mep_apply:"Compute and add points to plan", mep_show:"Show on plan",
+  t_mep:"MEP", mep_note:"Electrical, plumbing, HVAC and insulation inputs from your own data (code and catalogues). No defaults: any missing input is named and its section is not computed. Results are preliminary estimates. With a routing section, ducts, drains, pipes, cable trays and diffusers are generated as undoable model elements and enter the clash check; without it lengths are straight-line estimates.", mep_example:"Fill with synthetic values (testing only)", mep_run:"Compute", mep_apply:"Compute and add points to plan", mep_show:"Show on plan",
   m_missing:"Missing inputs", m_circuits:"Electrical circuits", m_circuit:"Circuit", m_points:"Points", m_watts:"W", m_amps:"A", m_breaker:"Breaker (A)", m_cable:"Cable (mm²)", m_len:"Length (m)", m_vd:"Voltage drop %", m_total:"Total", m_demand:"Demand", m_main:"Main breaker (A)",
   m_plumb:"Plumbing", m_flow:"Flow (L/s)", m_pipe:"Pipe", m_dfu:"Drain fixture units", m_drain:"Drain (mm)", m_tank:"Tank (m³)", m_design:"Design flow (L/s)", m_hvac:"HVAC", m_load:"Load (W)", m_units:"Units", m_tons:"Tons of refrigeration", m_ins:"Insulation", m_scope:"Scope", m_area:"Area (m²)", m_u:"U", m_limit:"Limit", m_status:"Status", m_applied:"Added {c} points, removed {r}", m_pts:"Points in the model: {n}",
   export_pdf:"Export PDF",
+  t_str:"Structural schedules", str_note:"Column loads by tributary area, footings against the soil bearing value (from the structural inputs), tie beams, concrete and the bar bending schedule. Steel is scheduled from templates YOU give (diameters, counts, spacing, cover); the application does not design reinforcement. Preliminary: a licensed structural engineer must check it.", str_example:"Fill with synthetic values (testing only)", str_run:"Compute schedules", str_cols:"Columns", str_fnd:"Footings", str_tb:"Tie beams", str_conc:"Concrete (m³)", str_bbs:"Bar bending schedule", s_trib:"Tributary area (m²)", s_axial:"Axial load (kN)", s_req:"Required (m²)", s_prov:"Provided", s_status:"Status", s_span:"Span (mm)", s_clear:"Clear (mm)", s_size:"Section", s_vol:"Volume (m³)", s_mark:"Mark", s_dia:"Dia", s_num:"No.", s_cut:"Cut length (mm)", s_kg:"kg", s_soil:"Soil bearing (kPa)", s_csv_members:"Export members (CSV)", s_csv_conc:"Export concrete (CSV)", s_csv_bbs:"Export bar schedule (CSV)", m_btu:"Btu/hr", m_tons:"Tons", m_air:"Airflow (L/s)", m_kva:"kVA", m_board:"Board", m_boards:"Distribution boards", m_routes:"Generated routes", m_sys:"System", m_role:"Role", m_from:"From", m_to:"To", m_slope:"Slope %",
   t_bim:"BIM and clashes", bim_note:"Enter the ducts, pipes and drains (mm; heights above the level's floor top). The application does not route them. Their intersections with beams, columns and footings are tested on the real geometry, and the clashing elements turn red in the 3D view.", run_sys:"System", sys_duct:"HVAC duct", sys_pipe:"Pipe", sys_drain:"Drain", run_from:"From (x, y, z)", run_to:"To (x, y, z)", run_size:"Width x height (mm)", run_level:"Level (number)", run_add:"Add", run_none:"No ducts or pipes yet", clash_run:"Detect clashes", clash_h:"Clashes", clash_none:"No clash", clash_new:"New clashes: {n}", d_architectural:"Architectural", d_structural:"Structural", d_electrical:"Electrical", d_plumbing:"Plumbing", d_hvac:"HVAC", v_plan:"Plan", v_north:"North elevation", v_south:"South elevation", v_east:"East elevation", v_west:"West elevation", v_aa:"Section A-A", v_bb:"Section B-B", sec_at:"Section position (m)", p_parapet:"Roof parapet height (m)",
   t_sbc:"Project and code", sbc_note:"Project details and the municipality's limits (setbacks, plot coverage) are entered from the municipal regulations with their source. The code check is preliminary and does not replace the approving authority.", bt:"Building type", bt_villa:"Villa", bt_house:"House", bt_palace:"Palace", bt_apartment_building:"Apartment building", p_style:"Architectural style", p_climate:"Climate zone", p_smart:"Smart technology (comma separated)",
   lim_h:"Municipal limits", lim_f:"Minimum front setback (m)", lim_b:"Minimum rear setback (m)", lim_s:"Minimum side setback (m)", lim_c:"Maximum coverage (%)", lim_src:"Source of these limits (regulation, article, municipality)", lim_enforce:"Refuse any edit that adds a violation", proj_save:"Save project details", proj_saved:"Project details saved", plan_outdated:"The setbacks changed after the plan was generated: generate again so the plan follows them.",
@@ -347,7 +356,7 @@ function applyLang() {
   if (state.levels) setLevels(state.levels);
   $("to3d").textContent = (typeof V3 !== "undefined" && V3.on) ? t("to2d") : t("to3d");
   renderRooms(); renderWorkdays(); renderRates();
-  if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq();
+  if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr();
 }
 
 // ---------------------------------------------------------------- state and helpers
@@ -654,7 +663,11 @@ const MEP_EXAMPLE = () => {
       drain_table: [{ max_dfu: 3, dia_mm: 40 }, { max_dfu: 6, dia_mm: 50 }, { max_dfu: 20, dia_mm: 75 }, { max_dfu: 160, dia_mm: 100 }],
       persons: 6, litres_per_person_day: 200, storage_days: 1 },
     hvac: { indoor_c: 24, outdoor_c: 45, window_u: 3.0, window_shgc: 0.5, solar_w_m2: 400, person_w: 100, area_per_person_m2: 10, lights_w_m2: 10, equipment_w_m2: 5,
-      vent_l_s_per_m2: 1, safety_factor: 1.1, unit_sizes_w: [2500, 3500, 5000, 7000, 10500], roof_exposed: true }
+      vent_l_s_per_m2: 1, safety_factor: 1.1, unit_sizes_w: [2500, 3500, 5000, 7000, 10500], roof_exposed: true, cop: 3 },
+    routing: { ahu_room: panel, supply_delta_t_c: 10, duct_velocity_mps: 5, duct_height_mm: 300, ceiling_height_mm: 2600, return_offset_mm: 400,
+      drain_slope_pct: 1.5, drain_invert_mm: 400, stack_offset_mm: 1500,
+      tank: { kind: "ground", x_mm: -2000, y_mm: 1000, z_mm: 0 }, supply_z_mm: 600,
+      tray_z_mm: 2800, tray_width_mm: 300, tray_height_mm: 100 }
   };
 };
 $("mep-example").onclick = () => { $("mepin").value = JSON.stringify(MEP_EXAMPLE(), null, 2); };
@@ -672,20 +685,52 @@ function renderMep() {
   const miss = Object.entries(rep.missing || {});
   if (miss.length) h.push(`<h2 class="bad">${t("m_missing")}</h2>` + miss.map(([k, v]) => `<div class="bad"><b>${esc(k)}</b>: ${v.map(esc).join("، ")}</div>`).join(""));
   const e = rep.electrical;
-  if (e) h.push(`<h2>${t("m_circuits")}</h2><table><thead><tr><th>${t("m_circuit")}</th><th>${t("m_points")}</th><th>${t("m_watts")}</th><th>${t("m_amps")}</th><th>${t("m_breaker")}</th><th>${t("m_cable")}</th><th>${t("m_len")}</th><th>${t("m_vd")}</th></tr></thead><tbody>${e.circuits.map(c => `<tr><td>${esc(c.id)}</td><td class="num">${c.points}</td><td class="num">${f(c.watts, 0)}</td><td class="num">${f(c.current_a)}</td><td class="num">${c.breaker_a}</td><td class="num">${c.cable_mm2}</td><td class="num">${f(c.length_m)}</td><td class="num">${f(c.vdrop_pct)}</td></tr>`).join("")}</tbody></table>
-    <div class="note">${t("m_total")}: ${f(e.connected_w, 0)} W · ${t("m_demand")}: ${f(e.demand_w, 0)} W · ${f(e.main_current_a)} A · ${t("m_main")}: ${e.main_breaker_a}</div>`);
+  if (e) h.push(`<h2>${t("m_circuits")}</h2><table><thead><tr><th>${t("m_circuit")}</th><th>${t("m_board")}</th><th>${t("m_points")}</th><th>${t("m_watts")}</th><th>${t("m_amps")}</th><th>${t("m_breaker")}</th><th>${t("m_cable")}</th><th>${t("m_len")}</th><th>${t("m_vd")}</th></tr></thead><tbody>${e.circuits.map(c => `<tr><td>${esc(c.id)}</td><td>${esc(c.board)}</td><td class="num">${c.points}</td><td class="num">${f(c.watts, 0)}</td><td class="num">${f(c.current_a)}</td><td class="num">${c.breaker_a}</td><td class="num">${c.cable_mm2}</td><td class="num">${f(c.length_m)}</td><td class="num">${f(c.vdrop_pct)}</td></tr>`).join("")}</tbody></table>
+    <div class="note">${t("m_total")}: ${f(e.connected_w, 0)} W / ${f(e.connected_kva)} ${t("m_kva")} · ${t("m_demand")}: ${f(e.demand_w, 0)} W / ${f(e.demand_kva)} ${t("m_kva")} · ${f(e.main_current_a)} A · ${t("m_main")}: ${e.main_breaker_a}</div>
+    <div class="note">${t("m_boards")}: ${(e.boards || []).map(b => `${esc(b.room)}: ${b.circuits} · ${f(b.demand_kva)} ${t("m_kva")}`).join(" | ")}</div>`);
   const p = rep.plumbing;
   if (p) h.push(`<h2>${t("m_plumb")}</h2><table><thead><tr><th>${t("r_name")}</th><th>${t("m_flow")}</th><th>${t("m_pipe")}</th><th>${t("m_dfu")}</th><th>${t("m_drain")}</th></tr></thead><tbody>${p.rooms.map(x => `<tr><td>${esc(x.room)}</td><td class="num">${f(x.flow_lps)}</td><td>${esc(x.pipe)}</td><td class="num">${f(x.dfu, 1)}</td><td class="num">${x.drain_mm}</td></tr>`).join("")}</tbody></table>
     <div class="note">${t("m_design")}: ${f(p.design_flow_lps)} · ${t("m_pipe")}: ${esc(p.main_pipe)} · ${t("m_dfu")}: ${f(p.total_dfu, 1)} → ${p.main_drain_mm} mm${p.tank_m3 == null ? "" : " · " + t("m_tank") + ": " + f(p.tank_m3)}</div>`);
   const v = rep.hvac;
-  if (v) h.push(`<h2>${t("m_hvac")}</h2><table><thead><tr><th>${t("r_name")}</th><th>${t("m_load")}</th><th>${t("m_units")}</th></tr></thead><tbody>${v.rooms.map(x => `<tr><td>${esc(x.room)}</td><td class="num">${f(x.load_w, 0)}</td><td>${x.units} × ${x.unit_w} W</td></tr>`).join("")}</tbody></table>
-    <div class="note">${t("m_total")}: ${f(v.total_w, 0)} W · ${f(v.total_tons)} ${t("m_tons")}</div>`);
+  if (v) h.push(`<h2>${t("m_hvac")}</h2><table><thead><tr><th>${t("r_name")}</th><th>${t("m_load")}</th><th>${t("m_btu")}</th><th>${t("m_tons")}</th><th>${t("m_air")}</th><th>${t("m_units")}</th></tr></thead><tbody>${v.rooms.map(x => `<tr><td>${esc(x.room)}</td><td class="num">${f(x.load_w, 0)}</td><td class="num">${f(x.btu_hr, 0)}</td><td class="num">${f(x.tons)}</td><td class="num">${f(x.airflow_lps, 1)}</td><td>${x.units} × ${x.unit_w} W</td></tr>`).join("")}</tbody></table>
+    <div class="note">${t("m_total")}: ${f(v.total_w, 0)} W · ${f(v.total_btu_hr, 0)} ${t("m_btu")} · ${f(v.total_tons)} ${t("m_tons")}</div>`);
+  if ((rep.routes || []).length) h.push(`<h2>${t("m_routes")} (${rep.routes.length})</h2><table><thead><tr><th>${t("m_sys")}</th><th>${t("m_role")}</th><th>${t("r_name")}</th><th>${t("m_from")}</th><th>${t("m_to")}</th><th>${t("m_len")}</th><th>mm</th><th>${t("m_slope")}</th></tr></thead><tbody>${rep.routes.map(x => `<tr><td>${esc(x.system)}</td><td>${esc(x.role)}</td><td>${esc(x.room || "")}</td><td class="num" dir="ltr">${x.from.join(", ")}</td><td class="num" dir="ltr">${x.to.join(", ")}</td><td class="num">${f(x.length_m)}</td><td class="num">${esc(x.size_mm)}</td><td class="num">${x.slope_pct == null ? "" : f(x.slope_pct)}</td></tr>`).join("")}</tbody></table>`);
   if (rep.insulation && rep.insulation.length) h.push(`<h2>${t("m_ins")}</h2><table><thead><tr><th>${t("m_scope")}</th><th>${t("m_area")}</th><th>${t("m_u")}</th><th>${t("m_limit")}</th><th>${t("m_status")}</th></tr></thead><tbody>${rep.insulation.map(a => `<tr class="${a.status === "ok" || a.status === "no limit given" ? "" : "missing"}"><td>${esc(a.scope)}</td><td class="num">${f(a.area_m2)}</td><td class="num">${f(a.u_value, 3)}</td><td class="num">${f(a.u_limit, 2)}</td><td>${esc(a.status)}${a.missing.length ? ": " + a.missing.map(esc).join("، ") : ""}</td></tr>`).join("")}</tbody></table>`);
   if (rep.warnings.length) h.push(`<h2>${t("warnings")}</h2><ul class="clean">${rep.warnings.map(x => `<li class="warn">${esc(x)}</li>`).join("")}</ul>`);
   h.push(`<div class="note">${t("m_pts").replace("{n}", r.points)}</div>`);
   $("mepout").innerHTML = h.join("");
 }
 
+// ---------------------------------------------------------------- structural schedules
+const STR_EXAMPLE = () => ({
+  _label: "SYNTHETIC test values only: not design values. Replace every number with your project data.",
+  footing_thickness_mm: 500,
+  tie_beam: { width_mm: 250, span_depth_ratio: 12 },
+  rebar: { cover_mm: 40, anchorage_mm: 300, hook_mm: 100,
+    column: { bar_dia_mm: 16, count: 8, tie_dia_mm: 8, tie_spacing_mm: 200 },
+    footing: { bar_dia_mm: 12, spacing_mm: 150 },
+    beam: { top_dia_mm: 16, top_count: 2, bottom_dia_mm: 16, bottom_count: 3, stirrup_dia_mm: 8, stirrup_spacing_mm: 150 } }
+});
+$("str-example").onclick = () => { $("strin").value = JSON.stringify(STR_EXAMPLE(), null, 2); };
+const readStr = () => { const txt = $("strin").value.trim(); if (!txt) return {}; try { return JSON.parse(txt); } catch (e) { throw new Error("JSON: " + e.message); } };
+async function runStr() { state.str = await call("sizing", { inputs: readStr() }); renderStr(); refreshStatus(); }
+$("str-run").onclick = () => busy(runStr);
+for (const [id, key, name] of [["str-csv-m", "members_csv", "members.csv"], ["str-csv-c", "concrete_csv", "concrete.csv"], ["str-csv-b", "bbs_csv", "bar-schedule.csv"]]) {
+  $(id).onclick = () => busy(async () => { if (!state.str) await runStr(); const r = await call("export", { name, data: "\ufeff" + state.str[key] }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
+}
+function renderStr() {
+  const r = state.str; if (!r) return; const rep = r.report, f = (v, d = 2) => (v == null ? "" : Number(v).toFixed(d)), h = [];
+  const miss = Object.entries(rep.missing || {});
+  if (miss.length) h.push(`<h2 class="bad">${t("m_missing")}</h2>` + miss.map(([k, v]) => `<div class="bad"><b>${esc(k)}</b>: ${v.map(esc).join("، ")}</div>`).join(""));
+  h.push(`<div class="note">${t("s_soil")}: ${r.soil_kpa == null ? "—" : f(r.soil_kpa, 0)}</div>`);
+  if (rep.columns.length) h.push(`<h2>${t("str_cols")}</h2><table><thead><tr><th>${t("s_mark")}</th><th>ID</th><th>${t("s_size")}</th><th>${t("s_trib")}</th><th>${t("s_axial")}</th></tr></thead><tbody>${rep.columns.map(c => `<tr><td>${esc(c.name)}</td><td class="num" dir="ltr" title="${esc(c.id)}">${esc(c.id.slice(0, 8))}</td><td class="num">${esc(c.section)}</td><td class="num">${f(c.tributary_m2)}</td><td class="num">${f(c.axial_kn, 1)}</td></tr>`).join("")}</tbody></table>`);
+  if (rep.footings.length) h.push(`<h2>${t("str_fnd")}</h2><table><thead><tr><th>${t("s_mark")}</th><th>${t("str_cols")}</th><th>${t("s_prov")}</th><th>${t("s_axial")}</th><th>${t("s_req")}</th><th>${t("s_status")}</th></tr></thead><tbody>${rep.footings.map(x => `<tr class="${x.status === "undersized" ? "missing" : ""}"><td>${esc(x.name)}</td><td>${esc(x.column)}</td><td class="num">${esc(x.provided_mm)}</td><td class="num">${f(x.load_kn, 1)}</td><td class="num">${f(x.required_m2)}</td><td>${esc(x.status)}</td></tr>`).join("")}</tbody></table>`);
+  if (rep.tie_beams.length) h.push(`<h2>${t("str_tb")}</h2><table><thead><tr><th>${t("s_mark")}</th><th>${t("m_from")}</th><th>${t("m_to")}</th><th>${t("s_span")}</th><th>${t("s_clear")}</th><th>${t("s_size")}</th></tr></thead><tbody>${rep.tie_beams.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.from)}</td><td>${esc(x.to)}</td><td class="num">${x.span_mm}</td><td class="num">${x.clear_mm}</td><td class="num">${x.width_mm}×${x.depth_mm}</td></tr>`).join("")}</tbody></table>`);
+  if (rep.concrete.length) h.push(`<h2>${t("str_conc")}</h2><table><thead><tr><th>${t("s_mark")}</th><th>ID</th><th>${t("s_vol")}</th></tr></thead><tbody>${rep.concrete.map(x => `<tr title="${esc(x.basis)}"><td>${esc(x.element)}</td><td class="num" dir="ltr" title="${esc(x.id || "")}">${esc((x.id || "").slice(0, 8))}</td><td class="num">${f(x.volume_m3, 3)}</td></tr>`).join("")}</tbody></table><div class="note">${t("m_total")}: ${f(rep.concrete_total_m3, 3)} m³</div>`);
+  if (rep.bars.length) h.push(`<h2>${t("str_bbs")}</h2><table><thead><tr><th>${t("s_mark")}</th><th>${t("s_dia")}</th><th>${t("s_num")}</th><th>${t("s_cut")}</th><th>${t("s_kg")}</th></tr></thead><tbody>${rep.bars.map(b => `<tr title="${esc(b.role)}"><td>${esc(b.mark)}</td><td class="num">${b.dia_mm}</td><td class="num">${b.number}</td><td class="num">${b.cut_length_mm}</td><td class="num">${f(b.kg)}</td></tr>`).join("")}</tbody></table><div class="note">${t("m_total")}: ${f(rep.steel_total_kg)} kg</div>`);
+  if (rep.warnings.length) h.push(`<h2>${t("warnings")}</h2><ul class="clean">${rep.warnings.map(x => `<li class="warn">${esc(x)}</li>`).join("")}</ul>`);
+  $("strout").innerHTML = h.join("");
+}
 // ---------------------------------------------------------------- bill of quantities
 const BOQ_EXAMPLE = () => ({
   _label: "SYNTHETIC placeholders only: not real specifications, rates or consumption factors. Replace every value with your project data and its source.",
@@ -1054,6 +1099,7 @@ function applySettings(s) {
   $("mepin").value = s.mep && Object.keys(s.mep).length ? JSON.stringify(s.mep, null, 2) : "";
   $("showmep").checked = !!s.show_mep; state.mep = null; $("mepout").innerHTML = "";
   $("boqin").value = s.boq && Object.keys(s.boq).length ? JSON.stringify(s.boq, null, 2) : ""; state.boq = null; $("boqout").innerHTML = "";
+  $("strin").value = s.sizing && Object.keys(s.sizing).length ? JSON.stringify(s.sizing, null, 2) : ""; state.str = null; $("strout").innerHTML = "";
 }
 $("openproj").onclick = () => busy(async () => {
   const st = await call("status");
