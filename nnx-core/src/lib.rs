@@ -4,6 +4,7 @@
 //! [`Document`], which provides undo/redo. [`persist`] reads and writes `.nnx` files.
 
 pub mod boq;
+pub mod briefai;
 pub mod building;
 pub mod clash;
 pub mod command;
@@ -28,7 +29,9 @@ pub mod report;
 pub mod routing;
 pub mod rules;
 pub mod sbc;
+pub mod site;
 pub mod sizing;
+pub mod style;
 pub mod schedule;
 pub mod structural;
 pub mod typed;

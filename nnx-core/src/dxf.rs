@@ -44,7 +44,7 @@ pub struct DxfOut {
 }
 
 /// Layer name, AutoCAD colour index, line type.
-const LAYERS: [(&str, i32, &str); 29] = [
+const LAYERS: [(&str, i32, &str); 30] = [
     ("A-WALL-EXT", 7, "CONTINUOUS"),
     ("A-WALL-INT", 8, "CONTINUOUS"),
     ("A-DOOR", 3, "CONTINUOUS"),
@@ -74,6 +74,7 @@ const LAYERS: [(&str, i32, &str); 29] = [
     ("V-MEP", 4, "CONTINUOUS"),
     ("V-LEVEL", 5, "DASHED"),
     ("V-TEXT", 7, "CONTINUOUS"),
+    ("V-FACADE", 6, "CONTINUOUS"),
 ];
 const DIMS_LAYER: (&str, i32, &str) = ("A-DIMS", 2, "CONTINUOUS");
 
@@ -189,7 +190,9 @@ pub fn export_dxf(model: &Model, levels: &[Option<Id>], opts: &DxfOpts) -> Resul
 
 /// Layer of a view rectangle by its class.
 fn view_layer(class: &str) -> &'static str {
-    if class.ends_with(" cut") {
+    if class.starts_with("facade-") {
+        "V-FACADE"
+    } else if class.ends_with(" cut") {
         "V-CUT"
     } else if class.ends_with(" far") {
         "V-FAR"

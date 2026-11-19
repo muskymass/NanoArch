@@ -125,6 +125,21 @@ fn along(w: &Wall, s0: f64, s1: f64, z0: f64, z1: f64) -> ([f64; 3], [f64; 3]) {
     if w.horizontal() { ([s0, c - t / 2.0, z0], [s1, c + t / 2.0, z1]) } else { ([c - t / 2.0, s0, z0], [c + t / 2.0, s1, z1]) }
 }
 
+/// The scene with the facade solids of `style` added (`style::facade_boxes`); the model and the plain scene are unchanged.
+pub fn build_styled(model: &Model, style: Option<crate::style::Style>) -> Scene {
+    let mut scene = build(model);
+    if let Some(s) = style {
+        scene.boxes.extend(crate::style::facade_boxes(&scene, s));
+        for b in scene.boxes.iter().filter(|b| b.kind == "Facade") {
+            for i in 0..3 {
+                scene.min[i] = scene.min[i].min(b.min[i]);
+                scene.max[i] = scene.max[i].max(b.max[i]);
+            }
+        }
+    }
+    scene
+}
+
 pub fn build(model: &Model) -> Scene {
     let mut boxes: Vec<Box3> = Vec::new();
     let walls: Vec<(Id, Wall)> = model.elements.values().filter(|e| e.kind == Wall::KIND).filter_map(|e| Some((e.id, e.typed::<Wall>().ok()?))).collect();

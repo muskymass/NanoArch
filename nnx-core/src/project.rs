@@ -50,9 +50,13 @@ pub struct ProjectMeta {
     pub smart_tech: Vec<String>,
     /// Climate zone as named by the code the user works with; the climate-dependent rules read it.
     pub climate_zone: Option<String>,
-    /// The plot outline in metres. Only an axis-aligned rectangle is supported by the planner, so any other outline
-    /// is refused rather than silently replaced by its bounding box.
+    /// The plot outline in metres: any simple polygon. The planner draws rectangles, so the building is the largest rectangle in
+    /// the buildable polygon (see `site`); the brief's width and length are that rectangle when the outline is not a rectangle.
     pub plot_polygon_m: Option<Vec<[f64; 2]>>,
+    /// What each edge of the outline is (front street, side street, neighbour, plaza), its street width and any setback you entered.
+    pub plot_edges: Vec<crate::site::Edge>,
+    /// The setback rule set for the edges that carry no entered setback.
+    pub setback_rule: Option<crate::site::RuleSet>,
     /// Height of the roof parapet in metres, drawn on elevations and sections. Unset draws none (it is not defaulted).
     pub parapet_height_m: Option<f64>,
 }
@@ -142,9 +146,23 @@ pub struct NanoArchProject {
 }
 
 impl NanoArchProject {
-    /// Plot area in m2, from the entered width and length.
+    /// Plot area in m2: the outline's area when there is one, otherwise the entered width times length.
     pub fn plot_area_m2(&self) -> Option<f64> {
-        self.brief.as_ref().map(|b| b.width_m * b.length_m)
+        match &self.meta.plot_polygon_m {
+            Some(p) if p.len() >= 3 => Some(crate::site::signed_area(p).abs()),
+            _ => self.brief.as_ref().map(|b| b.width_m * b.length_m),
+        }
+    }
+
+    /// True when the plot is an outline that is not a rectangle.
+    pub fn plot_is_irregular(&self) -> bool {
+        self.meta.plot_polygon_m.as_ref().is_some_and(|p| p.len() >= 3 && rectangle_size(p).is_none())
+    }
+
+    /// The site description of the outline, for `site::analyse`.
+    pub fn site_input(&self) -> Option<crate::site::SiteInput> {
+        let polygon = self.meta.plot_polygon_m.clone()?;
+        Some(crate::site::SiteInput { polygon_m: polygon, edges: self.meta.plot_edges.clone(), rule: self.meta.setback_rule.unwrap_or_default(), floors: self.structure.floors })
     }
 
     /// Everything wrong with the project's own data. A project with errors is never stored.
@@ -173,8 +191,17 @@ impl NanoArchProject {
             return Err("the parapet height must be between 0 and 5 metres".into());
         }
         if let Some(poly) = &self.meta.plot_polygon_m {
-            let (w, l) = rectangle_size(poly).ok_or("the plot outline must be an axis-aligned rectangle: other outlines are not supported yet")?;
-            if let Some(b) = &self.brief
+            if poly.len() < 3 || poly.iter().flatten().any(|v| !v.is_finite()) {
+                return Err("the plot outline needs at least 3 vertices, each a pair of numbers".into());
+            }
+            if !crate::site::is_simple(poly) || crate::site::signed_area(poly).abs() < 1e-6 {
+                return Err("the plot outline crosses itself or has no area".into());
+            }
+            if !self.meta.plot_edges.is_empty() && self.meta.plot_edges.len() != poly.len() {
+                return Err(format!("the plot outline has {} edges but {} edge descriptions were given", poly.len(), self.meta.plot_edges.len()));
+            }
+            // A rectangle written as an outline must agree with the brief; any other shape sets the brief's building size itself.
+            if let (Some((w, l)), Some(b)) = (rectangle_size(poly), &self.brief)
                 && ((w - b.width_m).abs() > 0.001 || (l - b.length_m).abs() > 0.001)
             {
                 return Err(format!("the plot outline is {w} x {l} m but the brief says {} x {} m", b.width_m, b.length_m));

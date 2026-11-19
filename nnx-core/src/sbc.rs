@@ -144,6 +144,10 @@ fn setbacks(p: &NanoArchProject, pid: Id, r: &mut SbcReport) {
         r.skip("setback", "setbacks: the project has no brief", "الارتدادات: المشروع بلا برنامج معماري");
         return;
     };
+    if p.plot_is_irregular() {
+        r.skip("setback", "setbacks: the plot is not a rectangle, so every edge has its own setback from the site analysis (see the site plan); the front/rear/side limits do not apply", "الارتدادات: القطعة ليست مستطيلة، فلكل ضلع ارتداده من تحليل الموقع (انظر مخطط الموقع)؛ فلا تنطبق حدود الأمام والخلف والجانب");
+        return;
+    }
     let l = &p.limits;
     for (key, name_en, name_ar, entered, limit) in [
         ("setback.front", "front setback", "الارتداد الأمامي", b.setback_front_m, &l.min_setback_front_m),

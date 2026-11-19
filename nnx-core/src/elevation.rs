@@ -57,11 +57,13 @@ pub struct ViewOpts {
     pub margin_px: f64,
     /// Height of the roof parapet in metres. `None` draws none (it is not defaulted).
     pub parapet_m: Option<f64>,
+    /// The architectural style whose facade solids are drawn.
+    pub style: Option<crate::style::Style>,
 }
 
 impl Default for ViewOpts {
     fn default() -> Self {
-        Self { title: String::new(), px_per_m: 50.0, margin_px: 70.0, parapet_m: None }
+        Self { title: String::new(), px_per_m: 50.0, margin_px: 70.0, parapet_m: None, style: None }
     }
 }
 
@@ -106,6 +108,9 @@ const STYLE: &str = r##"<style>
  .column{fill:#b5451b;stroke:#7a2d10;stroke-width:.8} .column.far{fill:#e3a48d} .beam{fill:#d9822b;stroke:#8a4e12;stroke-width:.8} .beam.far{fill:#f0c590}
  .footing{fill:#8d8d8d;stroke:#444;stroke-width:.8} .duct{fill:#7fc4d4;stroke:#0b7285;stroke-width:.8} .pipe{fill:#8fd19e;stroke:#2b7a3d;stroke-width:.8} .drain{fill:#b9a07c;stroke:#6b4f2a;stroke-width:.8}
  .parapet{fill:#d6d1c6;stroke:#2b2b2b;stroke-width:1}
+ .facade-cap{fill:#cfc6b4;stroke:#2b2b2b;stroke-width:.8} .facade-merlon{fill:#c9bda6;stroke:#2b2b2b;stroke-width:.8} .facade-slit{fill:#3a342c;stroke:#111;stroke-width:.4}
+ .facade-cantilever{fill:#bfc5c9;stroke:#2b2b2b;stroke-width:1} .facade-curtain{fill:#bfe0f0;fill-opacity:.55;stroke:#2a6f97;stroke-width:.6} .facade-mullion{fill:#4a5a66}
+ .facade-plinth{fill:#b9ad96;stroke:#2b2b2b;stroke-width:.8} .facade-pilaster{fill:#e4dccb;stroke:#2b2b2b;stroke-width:.8} .facade-cornice{fill:#d9cfba;stroke:#2b2b2b;stroke-width:.8} .facade-reveal{fill:#555}
  .lvl{stroke:#1b6ca8;stroke-width:.8;stroke-dasharray:8 4} .lvltxt{font-size:11px;fill:#1b6ca8}
  .dim{stroke:#444;stroke-width:.8;fill:none} .dimtxt{font-size:11px;fill:#222;text-anchor:middle}
  .title{font-size:16px;font-weight:700;fill:#111} .note{font-size:10.5px;fill:#a33}
@@ -253,7 +258,8 @@ fn finish(mut c: Canvas, scene: &Scene, title: &str, subtitle: &str, h_range: (f
 fn top_of(scene: &Scene, parapet: Option<f64>) -> f64 {
     let slab_top = scene.boxes.iter().filter(|b| b.kind == "Slab").map(|b| b.max[2]).fold(f64::MIN, f64::max);
     let wall_top = scene.boxes.iter().filter(|b| b.kind == "Wall").map(|b| b.max[2]).fold(f64::MIN, f64::max);
-    slab_top.max(wall_top) + parapet.unwrap_or(0.0)
+    let facade_top = scene.boxes.iter().filter(|b| b.kind == "Facade").map(|b| b.max[2]).fold(f64::MIN, f64::max);
+    slab_top.max(wall_top).max(facade_top) + parapet.unwrap_or(0.0)
 }
 
 fn check_parapet(opts: &ViewOpts) -> Result<(), ViewError> {
@@ -296,7 +302,7 @@ pub fn elevation_shapes(model: &Model, side: Side, opts: &ViewOpts) -> Result<Vi
 
 fn elevation_build(model: &Model, side: Side, opts: &ViewOpts) -> Result<(String, ViewShapes), ViewError> {
     check_parapet(opts)?;
-    let scene = model3d::build(model);
+    let scene = model3d::build_styled(model, opts.style);
     let e = extent(&scene).ok_or(ViewError::Empty)?;
     let hr = h_range_side(&Box3 { id: String::new(), kind: "", class: String::new(), min: [e[0], e[1], 0.0], max: [e[2], e[3], 0.0], visual: false, level: None, discipline: "architectural" }, side);
     let top = top_of(&scene, opts.parapet_m);
@@ -315,6 +321,21 @@ fn elevation_build(model: &Model, side: Side, opts: &ViewOpts) -> Result<(String
     for b in facade.iter().filter(|b| b.kind != "Wall") {
         let (h0, h1) = h_range_side(b, side);
         c.rect(if b.kind == "Door" { "leaf" } else { "glass" }, Some(&b.id), h0, h1, b.min[2], b.max[2]);
+    }
+    // The style's solids of this side, in front of the walls and the openings.
+    let name = match side {
+        Side::South => "south",
+        Side::North => "north",
+        Side::East => "east",
+        Side::West => "west",
+    };
+    for b in scene.boxes.iter().filter(|b| b.kind == "Facade") {
+        if let Some((motif, s)) = crate::style::split_class(&b.class)
+            && s == name
+        {
+            let (h0, h1) = h_range_side(b, side);
+            c.rect(&format!("facade-{motif}"), Some(&b.id), h0, h1, b.min[2], b.max[2]);
+        }
     }
     if let Some(p) = opts.parapet_m {
         let roof = scene.boxes.iter().filter(|b| b.kind == "Slab").map(|b| b.max[2]).fold(f64::MIN, f64::max);
@@ -335,6 +356,7 @@ fn section_class(b: &Box3) -> Option<String> {
         "Window" => Some("glass".into()),
         "Door" => Some("leaf".into()),
         "MepRun" => Some(b.class.clone()),
+        "Facade" => crate::style::split_class(&b.class).map(|(motif, _)| format!("facade-{motif}")),
         _ => None,
     }
 }
@@ -350,7 +372,7 @@ pub fn section_shapes(model: &Model, cut: &Cut, opts: &ViewOpts) -> Result<ViewS
 
 fn section_build(model: &Model, cut: &Cut, opts: &ViewOpts) -> Result<(String, ViewShapes), ViewError> {
     check_parapet(opts)?;
-    let scene = model3d::build(model);
+    let scene = model3d::build_styled(model, opts.style);
     let e = extent(&scene).ok_or(ViewError::Empty)?;
     // Axis the plane is perpendicular to (1: y, 0: x); screen-right is +x looking north, +y looking west.
     let (axis, at, name) = match cut {
