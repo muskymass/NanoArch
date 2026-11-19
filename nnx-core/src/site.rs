@@ -474,6 +474,15 @@ pub fn analyse(input: &SiteInput) -> Result<SiteResult, Vec<String>> {
 }
 
 /// Rectangle plots: width along the front street, length into the plot, the front street on the south edge.
+/// A rectangular plot with the setbacks the user entered (front on the south edge, rear on the north, the sides on both).
+pub fn rectangle_with_setbacks(width_m: f64, length_m: f64, front_m: f64, back_m: f64, side_m: f64) -> SiteInput {
+    let mut i = rectangle(width_m, length_m);
+    for (e, v) in i.edges.iter_mut().zip([front_m, side_m, back_m, side_m]) {
+        e.setback_m = Some(v);
+    }
+    i
+}
+
 pub fn rectangle(width_m: f64, length_m: f64) -> SiteInput {
     let street = |kind| Edge { kind, ..Default::default() };
     SiteInput { polygon_m: vec![[0.0, 0.0], [width_m, 0.0], [width_m, length_m], [0.0, length_m]], edges: vec![street(EdgeKind::FrontStreet), street(EdgeKind::Neighbour), street(EdgeKind::Neighbour), street(EdgeKind::Neighbour)], rule: RuleSet::Manual, floors: None }
@@ -523,6 +532,20 @@ pub fn site_svg(r: &SiteResult, title: &str) -> String {
         let _ = writeln!(o, "<text class=\"t\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\">{}{} · {:.1} m</text>", tx(mx) + dx / norm * 26.0, ty(my) - dy / norm * 20.0, esc(kind), esc(&wtxt), len(a, b));
         let _ = writeln!(o, "<text class=\"sb\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\">{} m</text>", tx(mx) - dx / norm * 14.0, ty(my) + dy / norm * 14.0, r.setbacks_m[i]);
     }
+    // The dimensions of the building rectangle along its own edges (width along the street, then length), inside the footprint.
+    let c = &r.building.corners_m;
+    for (a, b, v) in [(c[0], c[1], r.building.width_m), (c[1], c[2], r.building.length_m)] {
+        let (mx, my) = ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0);
+        let (cx, cy) = ((c[0][0] + c[2][0]) / 2.0, (c[0][1] + c[2][1]) / 2.0);
+        let (dx, dy) = (cx - mx, cy - my);
+        let k = dx.hypot(dy).max(1e-9);
+        let _ = writeln!(o, "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\" style=\"font:600 12px sans-serif;fill:#1b5e20\">{v} m</text>", tx(mx) + dx / k * 14.0, ty(my) - dy / k * 14.0);
+    }
+    // North arrow (north is up in this drawing) and a 10 m scale bar.
+    let (nx, ny) = (w - 34.0, 52.0);
+    let _ = writeln!(o, "<g style=\"stroke:#222;fill:#222\"><polygon points=\"{nx:.0},{:.0} {:.0},{:.0} {nx:.0},{:.0} {:.0},{:.0}\" style=\"fill:#222\"/><polygon points=\"{nx:.0},{:.0} {:.0},{:.0} {nx:.0},{:.0}\" style=\"fill:#fff\"/><text x=\"{nx:.0}\" y=\"{:.0}\" text-anchor=\"middle\" style=\"font:700 13px sans-serif;stroke:none\">N</text></g>", ny - 18.0, nx - 9.0, ny + 14.0, ny + 6.0, nx + 9.0, ny + 14.0, ny - 18.0, nx + 9.0, ny + 14.0, ny + 6.0, ny - 24.0);
+    let bar = 10.0 * s;
+    let _ = writeln!(o, "<line x1=\"{:.1}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\" style=\"stroke:#222;stroke-width:3\"/><text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\" style=\"font:11px sans-serif;fill:#222\">10 m</text>", w - m - bar, h - 52.0, w - m, h - 52.0, w - m - bar / 2.0, h - 58.0);
     let _ = writeln!(o, "<text class=\"title\" x=\"{m}\" y=\"{:.0}\">{}</text>", h - 30.0, esc(title));
     let _ = writeln!(
         o,

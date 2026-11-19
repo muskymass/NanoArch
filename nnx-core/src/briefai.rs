@@ -26,6 +26,9 @@ pub struct DraftRoom {
     /// Display name (Arabic when the description is in Arabic).
     pub name: Option<String>,
     pub area_m2: Option<f64>,
+    /// `area_m2` is a target proposed by `suggested_area_m2`, not a figure from the client or the model.
+    #[serde(default)]
+    pub area_suggested: bool,
     /// 1 is the ground floor.
     pub floor: u32,
     /// Proposed by the model, not stated by the client.
@@ -51,6 +54,37 @@ pub struct BriefDraft {
     /// `keywords` or `ollama:<model>`.
     pub source: String,
 }
+
+// ------------------------------------------------------------------ suggested room areas
+
+/// A design target for a room of this function, in m², used when nobody gave an area. These are this application's own starting
+/// figures (a typical villa program), NOT code values: each one is above the SBC minimum for its type (`sbc::code_value`
+/// `room_min_area_m2.<func>`, checked by a test), so a plan built from them does not fail the minimum-area check, and the page
+/// marks them as suggested so they are reviewed.
+pub fn suggested_area_m2(func: &str) -> f64 {
+    match func {
+        "majlis" => 30.0,
+        "living" => 25.0,
+        "dining" => 18.0,
+        "kitchen" => 15.0,
+        "bedroom" => 16.0,
+        "bathroom" => 5.0,
+        _ => 10.0,
+    }
+}
+
+/// Gives every room without an area its suggested target and marks it. Returns how many were filled.
+pub fn suggest_areas(rooms: &mut [DraftRoom]) -> usize {
+    let mut n = 0;
+    for r in rooms.iter_mut().filter(|r| r.area_m2.is_none()) {
+        r.area_m2 = Some(suggested_area_m2(&r.func));
+        r.area_suggested = true;
+        n += 1;
+    }
+    n
+}
+
+const SUGGESTED_NOTE: &str = "rooms marked suggested have a starting target area from this application (each above the SBC minimum for its type), not a figure from the client: review them";
 
 // ------------------------------------------------------------------ text helpers
 
@@ -221,7 +255,7 @@ fn count_of(t: &str, singular: &[&str], dual: &[&str]) -> u32 {
 }
 
 fn room(func: &str, name: &str, floor: u32) -> DraftRoom {
-    DraftRoom { func: func.into(), name: Some(name.into()), area_m2: None, floor, assumed: false }
+    DraftRoom { func: func.into(), name: Some(name.into()), area_m2: None, area_suggested: false, floor, assumed: false }
 }
 
 /// What the text states, without any model.
@@ -284,6 +318,7 @@ pub fn from_keywords(text: &str) -> BriefDraft {
         rooms.push(room("bathroom", &if arabic { format!("حمام {}", i + 1) } else { format!("Bathroom {}", i + 1) }, 1));
     }
     d.rooms = rooms;
+    let suggested = suggest_areas(&mut d.rooms);
     // What was found, and what is left to the user.
     let mut found: Vec<String> = Vec::new();
     if let Some(b) = d.building_type {
@@ -309,8 +344,8 @@ pub fn from_keywords(text: &str) -> BriefDraft {
         }
     }
     d.notes.extend(found);
-    if !d.rooms.is_empty() && d.rooms.iter().any(|r| r.area_m2.is_none()) {
-        d.notes.push("the text does not give room areas: enter an area for every room before generating".into());
+    if suggested > 0 {
+        d.notes.push(format!("the text does not give room areas: {suggested} room(s) got a suggested target area. {SUGGESTED_NOTE}"));
     }
     if floors > 1 {
         d.notes.push("several floors need the stair's width, length and side: enter them".into());
@@ -414,8 +449,9 @@ pub fn from_model_json(v: &Value, model: &str) -> Result<BriefDraft, String> {
             continue;
         }
         let area = r.get("area_m2").and_then(Value::as_f64).filter(|a| a.is_finite() && *a > 0.0);
-        d.rooms.push(DraftRoom { func: func.into(), name: r.get("name").and_then(Value::as_str).map(str::to_string), area_m2: area, floor, assumed: r.get("assumed").and_then(Value::as_bool).unwrap_or(false) });
+        d.rooms.push(DraftRoom { func: func.into(), name: r.get("name").and_then(Value::as_str).map(str::to_string), area_m2: area, area_suggested: false, floor, assumed: r.get("assumed").and_then(Value::as_bool).unwrap_or(false) });
     }
+    suggest_areas(&mut d.rooms);
     Ok(d)
 }
 
@@ -471,8 +507,9 @@ pub fn reconcile(mut model: BriefDraft, text: &str) -> BriefDraft {
     if model.rooms.iter().any(|r| r.assumed) {
         model.notes.push("rooms marked assumed were proposed by the model, not stated by the client: review them".into());
     }
-    if model.rooms.iter().any(|r| r.area_m2.is_none()) {
-        model.notes.push("some rooms have no area: enter one for every room before generating".into());
+    suggest_areas(&mut model.rooms);
+    if model.rooms.iter().any(|r| r.area_suggested) {
+        model.notes.push(SUGGESTED_NOTE.into());
     }
     if model.floors.unwrap_or(1) > 1 {
         model.notes.push("several floors need the stair's width, length and side: enter them".into());

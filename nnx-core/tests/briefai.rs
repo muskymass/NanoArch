@@ -36,8 +36,8 @@ fn english_text_gives_the_same_kind_of_answer_with_size_rooms_and_bedrooms_upsta
     // Bedrooms of a two-floor building are put upstairs, and that is flagged as a proposal.
     assert!(d.rooms.iter().filter(|r| r.func == "bedroom").all(|r| r.floor == 2 && r.assumed));
     assert!(d.rooms.iter().filter(|r| r.func != "bedroom").all(|r| r.floor == 1 && !r.assumed));
-    assert!(d.rooms.iter().all(|r| r.area_m2.is_none()), "areas are not invented");
-    assert!(d.notes.iter().any(|n| n.contains("does not give room areas")));
+    assert!(d.rooms.iter().all(|r| r.area_m2.is_some() && r.area_suggested), "no client areas: every room carries a marked suggestion");
+    assert!(d.notes.iter().any(|n| n.contains("does not give room areas") && n.contains("suggested")));
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn the_models_answer_is_checked_field_by_field_and_bad_values_are_dropped_with_a
     let d = briefai::from_model_json(&v, "qwen").unwrap();
     assert_eq!((d.source.as_str(), d.floors, d.plot_area_m2, d.climate_zone), ("ollama:qwen", Some(2), Some(600.0), Some(1)));
     assert_eq!(d.rooms.len(), 3, "the unknown function and the third-floor room are dropped");
-    assert!(d.rooms.iter().any(|r| r.func == "kitchen" && r.area_m2.is_none()), "a negative area is dropped");
+    assert!(d.rooms.iter().any(|r| r.func == "kitchen" && r.area_m2 == Some(15.0) && r.area_suggested), "a negative area is dropped and replaced by the marked suggestion");
     let notes = d.notes.join(" | ");
     assert!(notes.contains("unknown function 'sauna'") && notes.contains("floor 3"), "{notes}");
     let bad = briefai::from_model_json(&json!({ "building_type": "castle", "style": "baroque", "city": "Atlantis", "floors": 99, "rooms": [] }), "m").unwrap();

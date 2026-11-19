@@ -32,6 +32,7 @@ pub mod sbc;
 pub mod site;
 pub mod sizing;
 pub mod style;
+pub mod templates;
 pub mod schedule;
 pub mod structural;
 pub mod typed;
