@@ -555,8 +555,10 @@ pub fn to_commands(plan: &Plan, spaces: &BTreeMap<String, Id>, level: Option<Id>
 // Windows
 // ---------------------------------------------------------------------------
 
-/// PLACEHOLDER design defaults, not code values; daylight and ventilation minimums
-/// come from the SBC rule pack once entered.
+/// PLACEHOLDER design defaults, not code values. `target_ratio` is where a code value enters: for each room function
+/// listed there, the windows of a daylight room are enlarged until glazed area / floor area reaches the ratio (the
+/// caller takes the ratio from the code table, see `sbc::daylight_targets`). Empty means no target, so the sizes
+/// below are used as they are.
 #[derive(Debug, Clone)]
 pub struct WindowOpts {
     pub width_mm: i64,
@@ -567,13 +569,18 @@ pub struct WindowOpts {
     pub min_width_mm: i64,
     /// Solid wall kept between a window and a door, a corner or another window.
     pub margin_mm: i64,
+    /// Room function -> minimum glazed area as a fraction of floor area.
+    pub target_ratio: BTreeMap<String, f64>,
 }
 
 impl Default for WindowOpts {
     fn default() -> Self {
-        Self { width_mm: 1500, wet_width_mm: 600, height_mm: 1200, sill_mm: 900, wet_sill_mm: 1500, min_width_mm: 600, margin_mm: 300 }
+        Self { width_mm: 1500, wet_width_mm: 600, height_mm: 1200, sill_mm: 900, wet_sill_mm: 1500, min_width_mm: 600, margin_mm: 300, target_ratio: BTreeMap::new() }
     }
 }
+
+/// Solid wall kept above a window (lintel), when a window has to grow taller to reach a glazing target.
+const LINTEL_MM: i64 = 300;
 
 #[derive(Debug, Clone)]
 pub struct WindowSpec {
@@ -595,20 +602,11 @@ pub struct WindowPlan {
     pub warnings: Vec<String>,
 }
 
-/// Places windows on exterior walls of rooms that need daylight (and a small high window
-/// in wet rooms), in the free stretches of wall left between doors and corners.
-pub fn place_windows(layout: &Layout, plan: &Plan, wall_opts: &WallOpts, opts: &WindowOpts) -> WindowPlan {
-    let rooms = &layout.rooms;
-    let mut wp = WindowPlan { glazing_ratio: vec![0.0; rooms.len()], ..Default::default() };
-    let mut got = vec![false; rooms.len()];
-
-    for (wi, w) in plan.walls.iter().enumerate().filter(|(_, w)| w.exterior) {
-        let room = w.rooms.0;
-        let wet = wall_opts.wet_funcs.contains(&rooms[room].func);
-        if !(rooms[room].needs_light || wet) {
-            continue;
-        }
-        let (target, sill) = if wet { (opts.wet_width_mm, opts.wet_sill_mm) } else { (opts.width_mm, opts.sill_mm) };
+/// The windows of one room on its exterior walls, in the free stretches left between doors and corners, each window
+/// `target` wide at most and `height` tall.
+fn windows_of_room(plan: &Plan, room: usize, sill: i64, target: i64, height: i64, opts: &WindowOpts) -> Vec<WindowSpec> {
+    let mut out = Vec::new();
+    for (wi, w) in plan.walls.iter().enumerate().filter(|(_, w)| w.exterior && w.rooms.0 == room) {
         let mut free = vec![(opts.margin_mm, w.length() - opts.margin_mm)];
         let subtract = |free: Vec<(i64, i64)>, lo: i64, hi: i64| -> Vec<(i64, i64)> {
             let mut out = Vec::new();
@@ -633,20 +631,64 @@ pub fn place_windows(layout: &Layout, plan: &Plan, wall_opts: &WallOpts, opts: &
                 break;
             }
             let centre = (a + b) / 2;
-            wp.windows.push(WindowSpec { wall: wi, offset: centre, width, height: opts.height_mm, sill, room });
-            wp.glazing_ratio[room] += (width * opts.height_mm) as f64 / 1e6 / rooms[room].area_m2;
-            got[room] = true;
+            out.push(WindowSpec { wall: wi, offset: centre, width, height, sill, room });
             free = subtract(free, centre - width / 2 - opts.margin_mm, centre + width / 2 + opts.margin_mm);
         }
     }
+    out
+}
+
+/// Places windows on exterior walls of rooms that need daylight (and a small high window
+/// in wet rooms), in the free stretches of wall left between doors and corners. A room whose function has a
+/// `target_ratio` gets the smallest windows (by area) that reach it; if its walls are too short for that, the largest
+/// that fit are used and the shortfall is reported.
+pub fn place_windows(layout: &Layout, plan: &Plan, wall_opts: &WallOpts, opts: &WindowOpts) -> WindowPlan {
+    let rooms = &layout.rooms;
+    let mut wp = WindowPlan { glazing_ratio: vec![0.0; rooms.len()], ..Default::default() };
+    let glazed = |ws: &[WindowSpec]| ws.iter().map(|w| (w.width * w.height) as f64 / 1e6).sum::<f64>();
+
+    for (room, r) in rooms.iter().enumerate() {
+        let wet = wall_opts.wet_funcs.contains(&r.func);
+        if !(r.needs_light || wet) || !plan.walls.iter().any(|w| w.exterior && w.rooms.0 == room) {
+            continue;
+        }
+        let (target, sill) = if wet { (opts.wet_width_mm, opts.wet_sill_mm) } else { (opts.width_mm, opts.sill_mm) };
+        let mut chosen = windows_of_room(plan, room, sill, target, opts.height_mm, opts);
+        if let Some(&ratio) = opts.target_ratio.get(&r.func).filter(|_| !wet) {
+            // A hair above the target, so rounding to whole millimetres cannot leave it just short.
+            let need = ratio * r.area_m2 * 1.002;
+            if glazed(&chosen) < need {
+                let max_h = (wall_opts.height_mm - sill - LINTEL_MM).max(opts.height_mm);
+                let mut sizes: Vec<(i64, i64)> = (opts.height_mm..=max_h).step_by(100).flat_map(|h| (opts.width_mm..=4000).step_by(100).map(move |w| (w, h))).collect();
+                sizes.sort_by_key(|(w, h)| (w * h, *h));
+                let mut best: Option<Vec<WindowSpec>> = None;
+                let mut largest: Vec<WindowSpec> = chosen.clone();
+                for (w, h) in sizes {
+                    let ws = windows_of_room(plan, room, sill, w, h, opts);
+                    if glazed(&ws) >= need {
+                        best = Some(ws);
+                        break;
+                    }
+                    if glazed(&ws) > glazed(&largest) {
+                        largest = ws;
+                    }
+                }
+                chosen = best.unwrap_or_else(|| {
+                    wp.warnings.push(format!("room '{}' cannot reach {:.0}% glazing: its exterior walls are too short for the windows it needs", r.key, ratio * 100.0));
+                    largest
+                });
+            }
+        }
+        wp.glazing_ratio[room] = glazed(&chosen) / r.area_m2;
+        wp.windows.extend(chosen);
+    }
     for (i, r) in rooms.iter().enumerate() {
-        if r.needs_light && !got[i] {
+        if r.needs_light && wp.glazing_ratio[i] == 0.0 {
             wp.warnings.push(format!("room '{}' needs daylight but has no window (no exterior wall space)", r.key));
         }
     }
     wp
 }
-
 /// Window creation commands (hosted by their wall) and `glazingRatio` on each space.
 /// Apply after the wall commands.
 pub fn window_commands(plan: &Plan, wp: &WindowPlan, spaces: &BTreeMap<String, Id>, level: Option<Id>) -> Vec<Command> {

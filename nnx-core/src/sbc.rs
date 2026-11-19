@@ -72,6 +72,11 @@ pub const CODE_VALUES: &[CodeValue] = &[
 pub const THERMAL_NOTE_EN: &str = "thermal U-limits: no value was read from SBC 602 itself (the file is not in the folder); the contractor guide quotes some with conflicting column labels. Enter the limits you rely on in the insulation inputs with their source.";
 pub const THERMAL_NOTE_AR: &str = "حدود العزل الحراري: لم تُقرأ قيمة من SBC 602 نفسه (الملف غير موجود في المجلد)، والدليل الاسترشادي يذكر بعضها بتسميات أعمدة متعارضة. أدخل الحدود التي تعتمد عليها في مدخلات العزل مع مصدرها.";
 
+/// Daylight targets for the window generator: room function -> glazed area as a fraction of floor area.
+pub fn daylight_targets() -> std::collections::BTreeMap<String, f64> {
+    CODE_VALUES.iter().filter_map(|v| v.id.strip_prefix("daylight_min_ratio.").map(|f| (f.to_string(), v.value))).collect()
+}
+
 pub fn code_value(id: &str) -> Option<&'static CodeValue> {
     CODE_VALUES.iter().find(|v| v.id == id)
 }

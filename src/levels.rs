@@ -326,7 +326,7 @@ pub fn assemble(b: &Building, plan: &BuildingPlan, base: &StructOpts, project: O
         let mut wo = walls::opts_from_adjacency(&plan.levels[l].brief.adjacency);
         wo.entry = l == 0;
         let wplan = walls::build(layout, plan.merged.envelope, plan.merged.entry, &wo);
-        let wp = walls::place_windows(layout, &wplan, &wo, &WindowOpts::default());
+        let wp = walls::place_windows(layout, &wplan, &wo, &WindowOpts { target_ratio: nnx_core::sbc::daylight_targets(), ..WindowOpts::default() });
         let space_cmds = layout::to_commands(layout, lid);
         let ids = walls::space_ids(&space_cmds);
         arch.extend(space_cmds);
