@@ -1,0 +1,959 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NanoArch</title>
+<style>
+:root{--bg:#f4f5f7;--panel:#fff;--ink:#1c1f24;--mute:#5d6572;--line:#dfe2e7;--accent:#1f5fae;--accent-ink:#fff;--warn:#a65b00;--bad:#b3261e;--ok:#1b7a43;--radius:8px}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#14171b;--panel:#1d2127;--ink:#e8eaee;--mute:#9aa3b0;--line:#2e343c;--accent:#5b9cf0;--accent-ink:#0b1320;--warn:#e0a24a;--bad:#f2837c;--ok:#5fcf8c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",Tahoma,Arial,sans-serif;height:100vh;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:16px;margin:0;font-weight:700}
+header .sub{color:var(--mute);font-size:12px}
+header .grow{flex:1}
+main{flex:1;display:grid;grid-template-columns:400px 1fr 420px;gap:12px;padding:12px;min-height:0}
+.col{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.scroll{overflow:auto;padding:12px;flex:1}
+h2{font-size:13px;margin:14px 0 8px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
+h2:first-child{margin-top:0}
+label{display:block;font-size:12px;color:var(--mute);margin:6px 0 2px}
+input,select,textarea,button{font:inherit;color:inherit}
+input,select,textarea{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
+input[type=checkbox]{width:auto}
+textarea{min-height:110px;font-family:Consolas,monospace;font-size:12px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+button{padding:7px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button:disabled{opacity:.5;cursor:not-allowed}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--line)}
+.note{font-size:12px;color:var(--mute);margin:4px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:4px 6px;border-bottom:1px solid var(--line);text-align:start;vertical-align:middle}
+th{color:var(--mute);font-weight:600;position:sticky;top:0;background:var(--panel)}
+td input,td select{padding:3px 5px;font-size:12px}
+td.num{font-variant-numeric:tabular-nums}
+.alts{display:flex;gap:8px;overflow-x:auto;padding:8px 12px;border-bottom:1px solid var(--line);min-height:112px}
+.alt{flex:0 0 auto;width:130px;border:2px solid var(--line);border-radius:6px;background:#fff;cursor:pointer;padding:2px;position:relative}
+.alt.sel{border-color:var(--accent)}
+.alt svg{width:100%;height:auto;display:block;max-height:118px}
+.alt .tag{position:absolute;top:2px;inset-inline-start:4px;font-size:10px;background:var(--accent);color:var(--accent-ink);border-radius:3px;padding:0 4px}
+#v3{flex:1;display:none;flex-direction:column;min-height:0;background:#f3f5f8}
+#v3 .tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:6px 10px;background:#fff;border-bottom:1px solid #ddd}
+#v3 .tools label{display:flex;gap:4px;align-items:center;margin:0}
+#gl{flex:1;width:100%;min-height:0;display:block;cursor:grab;touch-action:none}
+#viewer{flex:1;overflow:auto;padding:8px;background:#fff;display:flex;justify-content:center;align-items:flex-start}
+#viewer svg{width:100%;max-width:820px;height:auto;flex:0 0 auto}
+#viewer svg .wall.int,#viewer svg .door,#viewer svg .window,#viewer svg .room{cursor:pointer}
+#viewer svg .sel{stroke:#e6a100!important;stroke-width:4!important}
+#viewer svg g.sel .leaf,#viewer svg g.sel .glass{stroke:#e6a100!important;stroke-width:3!important}
+#inspector input{width:90px}
+#inspector .hint{color:var(--mute);font-size:12px}
+.rooms{table-layout:fixed}
+.rooms th,.rooms td{padding:3px 2px}
+.rooms th:nth-child(1){width:27%}.rooms th:nth-child(2){width:19%}.rooms th:nth-child(3){width:15%}.rooms th:nth-child(4){width:19%}.rooms th:nth-child(5){width:8%}.rooms th:nth-child(6){width:12%}
+.rooms select{padding:3px 1px;font-size:11px}
+.rooms input[type=number]{width:100%!important}
+.rooms button{padding:2px 6px}
+.empty{color:var(--mute);padding:32px;text-align:center}
+.tabs{display:flex;border-bottom:1px solid var(--line)}
+.tab{flex:1;padding:9px 6px;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;color:var(--mute)}
+.tab.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+.pane{display:none}.pane.on{display:block}
+.warn{color:var(--warn)}.bad{color:var(--bad)}.ok{color:var(--ok)}
+ul.clean{margin:0;padding-inline-start:18px}
+ul.clean li{margin:3px 0}
+.chk{display:flex;gap:10px;flex-wrap:wrap}.chk label{display:flex;gap:4px;align-items:center;margin:0;color:var(--ink)}
+.missing{background:color-mix(in srgb,var(--bad) 14%,transparent)}
+.gantt{overflow:auto;border:1px solid var(--line);border-radius:6px;background:#fff;margin-top:8px}
+.badge{display:inline-block;border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:11px;color:var(--mute)}
+#busy{position:fixed;inset:0;background:#0006;display:none;align-items:center;justify-content:center;color:#fff;font-size:16px;z-index:9}
+#busy.on{display:flex}
+#toast{position:fixed;bottom:16px;inset-inline-start:16px;background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:6px;opacity:0;transition:opacity .2s;z-index:10;max-width:60vw}
+#toast.on{opacity:1}
+@media (max-width:1200px){main{grid-template-columns:340px 1fr 340px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>NanoArch</h1><span class="sub" data-i="subtitle"></span>
+  <span class="grow"></span>
+  <span class="badge" data-i="prelim"></span>
+  <button id="lang">English</button>
+</header>
+<main>
+  <!-- ============ brief ============ -->
+  <section class="col">
+    <div class="scroll">
+      <h2 data-i="h_project"></h2>
+      <label data-i="title"></label><input id="title">
+      <div class="row"><div><label data-i="width"></label><input id="width" type="number" step="0.1" min="0"></div>
+      <div><label data-i="length"></label><input id="length" type="number" step="0.1" min="0"></div></div>
+      <div class="row3"><div><label data-i="sb_front"></label><input id="sbf" type="number" step="0.1" min="0" value="0"></div>
+      <div><label data-i="sb_back"></label><input id="sbb" type="number" step="0.1" min="0" value="0"></div>
+      <div><label data-i="sb_side"></label><input id="sbs" type="number" step="0.1" min="0" value="0"></div></div>
+      <div class="note" data-i="sb_note"></div>
+      <label data-i="entry"></label>
+      <select id="entry"><option value="south" data-i="south"></option><option value="north" data-i="north"></option><option value="east" data-i="east"></option><option value="west" data-i="west"></option></select>
+
+      <h2 data-i="h_rooms"></h2>
+      <table class="rooms"><thead><tr><th data-i="r_name"></th><th data-i="r_func"></th><th data-i="r_area"></th><th data-i="r_zone"></th><th data-i="r_floor"></th><th>☀</th><th></th></tr></thead><tbody id="rooms"></tbody></table>
+      <div class="bar" style="padding:8px 0;border:0"><button id="addroom" data-i="add_room"></button><button id="example" data-i="example"></button><button id="example2" data-i="example2"></button></div>
+
+      <h2 data-i="h_struct"></h2>
+      <div class="note" data-i="struct_note"></div>
+      <div class="row"><div><label data-i="dead"></label><input id="dead" type="number" step="0.1" min="0"></div>
+      <div><label data-i="live"></label><input id="live" type="number" step="0.1" min="0"></div></div>
+      <div class="row"><div><label data-i="bearing"></label><input id="bearing" type="number" step="1" min="0"></div>
+      <div><label data-i="floors"></label><input id="floors" type="number" step="1" min="1" value="1"></div></div>
+      <div class="note" data-i="stair_note"></div>
+      <div class="row"><div><label data-i="stair_w"></label><input id="stairw" type="number" step="0.1" min="0"></div>
+      <div><label data-i="stair_l"></label><input id="stairl" type="number" step="0.1" min="0"></div></div>
+      <label data-i="stair_side"></label><select id="stairside"><option value="west" data-i="west"></option><option value="east" data-i="east"></option></select>
+      <label data-i="maxspan"></label><input id="maxspan" type="number" step="100" min="0">
+    </div>
+    <div class="bar"><button id="generate" class="primary" style="flex:1" data-i="generate"></button></div>
+  </section>
+
+  <!-- ============ plan ============ -->
+  <section class="col">
+    <div class="bar">
+      <button id="openproj" data-i="open_proj"></button>
+      <button id="undo" disabled data-i="undo"></button><button id="redo" disabled data-i="redo"></button>
+      <label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="showstruct"><span data-i="show_struct"></span></label>
+      <button id="sync" disabled data-i="sync"></button>
+      <button id="to3d" disabled></button>
+      <span style="flex:1"></span>
+      <span id="savestate" class="badge"></span>
+      <button id="exportsvg" disabled data-i="export_svg"></button><button id="exportifc" disabled data-i="export_ifc"></button><button id="exportdxf" disabled data-i="export_dxf"></button><button id="exportdxfall" disabled style="display:none" data-i="export_dxf_all"></button><button id="exportpdf" disabled data-i="export_pdf"></button><button id="saveproj" disabled data-i="save_proj"></button>
+    </div>
+    <div class="alts" id="alts"><div class="empty" data-i="alts_empty"></div></div>
+    <div id="levelbar" class="bar" style="display:none;gap:6px;padding:6px 8px"></div>
+    <div id="inspector" class="bar" style="display:none"></div>
+    <div id="viewer"><div class="empty" data-i="viewer_empty"></div></div>
+    <div id="v3">
+      <div class="tools">
+        <label><input type="checkbox" id="v-slab"><span data-i="v_slab"></span></label>
+        <label><input type="checkbox" id="v-struct"><span data-i="v_struct"></span></label>
+        <label><input type="checkbox" id="v-floor"><span data-i="v_floor"></span></label>
+        <label><input type="checkbox" id="v-glass"><span data-i="v_glass"></span></label>
+        <label><input type="checkbox" id="v-mep"><span data-i="v_mep"></span></label>
+        <label id="v-level-wrap" style="display:none"><span data-i="v_level"></span> <select id="v-level"></select></label>
+        <button id="v-top" data-i="v_top"></button><button id="v-reset" data-i="v_reset"></button>
+        <span id="v3-info" class="note"></span>
+      </div>
+      <canvas id="gl"></canvas>
+      <div class="tools"><span class="note" data-i="v_hint"></span><span id="v3-pick" style="font-weight:600"></span></div>
+    </div>
+  </section>
+
+  <!-- ============ results ============ -->
+  <section class="col">
+    <div class="tabs">
+      <button class="tab on" data-tab="notes" data-i="t_notes"></button><button class="tab" data-tab="qto" data-i="t_qto"></button>
+      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button>
+    </div>
+    <div class="scroll">
+      <div class="pane" id="p-sketch">
+        <div class="note" data-i="sk_note"></div>
+        <div class="bar" style="padding:6px 0;border:0"><button id="sk-import" data-i="sk_import"></button><button id="sk-clear" disabled data-i="sk_clear"></button>
+          <span id="sk-pager" style="display:none"><button id="sk-prev">&lsaquo;</button> <span id="sk-pg"></span> <button id="sk-next">&rsaquo;</button></span></div>
+        <div id="sk-tools" style="display:none">
+          <div class="row"><div><label data-i="sk_known"></label><input id="sk-known" type="number" step="0.01" min="0.01"></div><div><label>&nbsp;</label><button id="sk-t-scale" data-i="sk_t_scale"></button></div></div>
+          <div class="bar" style="padding:6px 0;border:0;flex-wrap:wrap"><button id="sk-t-plot" data-i="sk_t_plot"></button><label style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" id="sk-swap"><span data-i="sk_swap"></span></label></div>
+          <div class="row"><div><label data-i="sk_name"></label><input id="sk-name"></div><div><label data-i="r_func"></label><select id="sk-func"></select></div><div><label data-i="sk_floor"></label><input id="sk-floor" type="number" min="1" step="1" value="1"></div></div>
+          <div class="bar" style="padding:6px 0;border:0;flex-wrap:wrap"><button id="sk-t-room" data-i="sk_t_room"></button><button id="sk-reset" data-i="sk_reset"></button><button id="sk-zin">+</button><button id="sk-zout">&minus;</button></div>
+        </div>
+        <div id="sk-status" class="note"></div>
+        <div id="sk-wrap" style="overflow:auto;max-height:62vh;border:1px solid #8886"><canvas id="sk-cv" style="width:100%;display:block;cursor:crosshair"></canvas></div>
+      </div>
+      <div class="pane on" id="p-notes"><div class="empty" data-i="notes_empty"></div></div>
+      <div class="pane" id="p-qto"><div class="empty" data-i="qto_empty"></div></div>
+      <div class="pane" id="p-sched">
+        <div class="note" data-i="sched_note"></div>
+        <div class="row"><div><label data-i="start"></label><input id="start" type="date"></div><div><label data-i="zones"></label><input id="zones" type="number" min="1" value="1"></div></div>
+        <label data-i="workdays"></label>
+        <div class="chk" id="wd"></div>
+        <div style="margin:6px 0"><button id="wd-sunthu" data-i="sun_thu"></button> <button id="wd-monfri" data-i="mon_fri"></button></div>
+        <label data-i="holidays"></label><input id="holidays" placeholder="2027-03-01, 2027-03-02">
+        <h2 data-i="h_rates"></h2>
+        <div class="note" data-i="rates_note"></div>
+        <button id="rates-example" data-i="rates_example"></button>
+        <table style="margin-top:8px"><thead><tr><th data-i="activity"></th><th data-i="rate"></th><th data-i="crews"></th><th data-i="source"></th></tr></thead><tbody id="rates"></tbody></table>
+        <div class="bar" style="padding:10px 0;border:0"><button id="runsched" class="primary" data-i="run_sched"></button><button id="exportsched" disabled data-i="export_csv"></button></div>
+        <div id="schedout"></div>
+      </div>
+      <div class="pane" id="p-mep">
+        <div class="note" data-i="mep_note"></div>
+        <textarea id="mepin" spellcheck="false" dir="ltr" style="min-height:220px;text-align:left"></textarea>
+        <div class="bar" style="padding:10px 0;border:0;flex-wrap:wrap;gap:6px">
+          <button id="mep-example" data-i="mep_example"></button>
+          <button id="mep-run" class="primary" data-i="mep_run"></button>
+          <button id="mep-apply" data-i="mep_apply"></button>
+          <label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="showmep"><span data-i="mep_show"></span></label>
+        </div>
+        <div id="mepout"></div>
+      </div>
+      <div class="pane" id="p-boq">
+        <div class="note" data-i="boq_note"></div>
+        <textarea id="boqin" spellcheck="false" dir="ltr" style="min-height:220px;text-align:left"></textarea>
+        <div class="bar" style="padding:10px 0;border:0;flex-wrap:wrap;gap:6px">
+          <button id="boq-example" data-i="boq_example"></button>
+          <button id="boq-run" class="primary" data-i="boq_run"></button>
+        </div>
+        <div class="bar" style="padding:0 0 10px;border:0;flex-wrap:wrap;gap:6px">
+          <button id="boq-doc" data-i="b_doc"></button><button id="boq-pdf" data-i="b_pdf"></button><button id="boq-xlsx" data-i="b_xlsx"></button><button id="boq-csv" data-i="b_csv"></button><button id="boq-mat" data-i="b_matcsv"></button><button id="boq-spec" data-i="b_speccsv"></button>
+        </div>
+        <div id="boqout"></div>
+      </div>
+      <div class="pane" id="p-rules">
+        <div class="note" data-i="rules_note"></div>
+        <textarea id="pack" spellcheck="false" dir="ltr" style="text-align:left"></textarea>
+        <div class="bar" style="padding:10px 0;border:0"><button id="runrules" class="primary" data-i="run_rules"></button></div>
+        <div id="rulesout"></div>
+      </div>
+    </div>
+  </section>
+</main>
+<div id="busy"><span data-i="working"></span></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- bridge to the application
+const pending = new Map(); let nextId = 1;
+window.__resolve = (id, res) => { const p = pending.get(id); if (!p) return; pending.delete(id); if (res.ok && res.data && res.data.levels && Array.isArray(res.data.levels.list)) setLevels(res.data.levels); res.ok ? p.resolve(res.data) : p.reject(new Error(res.error)); };
+const call = (cmd, args = {}) => new Promise((resolve, reject) => {
+  const id = nextId++; pending.set(id, { resolve, reject });
+  window.ipc.postMessage(JSON.stringify({ id, cmd, args }));
+});
+
+// ---------------------------------------------------------------- text
+const T = {
+ar: {
+  subtitle:"مصمم مخططات الفلل", prelim:"أولي — غير صالح للتنفيذ", h_project:"المشروع", title:"اسم المشروع", width:"عرض الأرض (م)", length:"عمق الأرض (م)",
+  sb_front:"ارتداد أمامي (م)", sb_back:"ارتداد خلفي (م)", sb_side:"ارتداد جانبي (م)", sb_note:"أدخل الارتدادات من اشتراطات البلدية؛ لا قيم افتراضية.",
+  entry:"جهة المدخل (الشارع)", south:"جنوب", north:"شمال", east:"شرق", west:"غرب", h_rooms:"الفراغات", r_name:"الاسم", r_func:"النوع", r_area:"م²", r_zone:"المنطقة",
+  add_room:"+ فراغ", example:"مثال تجريبي", h_struct:"مدخلات إنشائية", struct_note:"اتركها فارغة إن لم تتوفر: لن تُحسب الأحمال والقواعد وسيُنبَّه إلى ذلك.",
+  dead:"حمل ميت (kPa)", live:"حمل حي (kPa)", bearing:"تحمل التربة (kPa)", floors:"عدد الأدوار", maxspan:"أقصى بحر بين الأعمدة (مم)", generate:"ولّد البدائل",
+  undo:"تراجع", redo:"إعادة", show_struct:"إظهار الإنشائي", sync:"مزامنة الإنشائي", export_svg:"تصدير SVG", save_proj:"حفظ المشروع",
+  alts_empty:"ولّد بدائل التوزيع ثم اختر أحدها", viewer_empty:"لا مخطط بعد", t_notes:"ملاحظات", t_qto:"الكميات", t_sched:"الجدول", t_rules:"الكود",
+  notes_empty:"اختر بديلاً لعرض الملاحظات", qto_empty:"اختر بديلاً لعرض الكميات", sched_note:"الجدول يحتاج معدلات الإنتاج من بياناتك. لا قيم افتراضية، وغير المدخل يُرفض بالاسم.",
+  start:"تاريخ البدء", zones:"مناطق الصب", workdays:"أيام العمل (الاثنين أولاً)", sun_thu:"الأحد–الخميس", mon_fri:"الاثنين–الجمعة", holidays:"عطل (تواريخ مفصولة بفاصلة)",
+  h_rates:"معدلات الإنتاج", rates_note:"كمية لكل طاقم في اليوم، أو عدد أيام ثابت. اذكر المصدر لكل معدل.", rates_example:"املأ بقيم اصطناعية للتجربة فقط",
+  activity:"النشاط", rate:"المعدل / الأيام", crews:"طواقم", source:"المصدر", run_sched:"احسب الجدول", export_csv:"تصدير CSV", rules_note:"الصق حزمة قواعد بصيغة JSON (قيم الكود من النص المعتمد). تُفحص على النموذج الحالي.", run_rules:"افحص",
+  working:"جارٍ العمل…", cheapest:"الأفضل", cost:"التكلفة", reserve:"ممرات", warnings:"تنبيهات", none:"لا شيء", rooms:"الفراغات", target:"المستهدف", actual:"الفعلي",
+  qty:"الكمية", unit:"الوحدة", el:"عناصر", code:"البند", missing:"معدلات ناقصة", days:"يوم عمل", finish:"الانتهاء", saved:"تم الحفظ", cancelled:"أُلغي", error:"خطأ",
+  checked:"فُحص", findings:"مخالفات", skipped:"قواعد لم تُفحص", func:{majlis:"مجلس",living:"صالة",dining:"طعام",kitchen:"مطبخ",bedroom:"نوم",bathroom:"حمام",other:"أخرى"},
+  zone:{public:"عام",private:"خاص",service:"خدمات"}, days7:["اثنين","ثلاثاء","أربعاء","خميس","جمعة","سبت","أحد"], pick_days:"اختر أيام العمل", sync_done:"المزامنة: جديد {c}، محذوف {r}، بلا تغيير {u}",
+  unsaved:"غير محفوظ", saved_state:"محفوظ", assump_h:"افتراضات التصميم (قيم مؤقتة)", assump_note:"هذه قيم افتراضية استعملتها المحركات لأنك لم تحدد غيرها. ليست قيماً نظامية؛ استبدلها بقيم مشروعك أو SBC.",
+  i_wall:"حاجز بين", i_ext:"جدار خارجي: يحدد حدود المبنى ولا يُنقل", i_len:"الطول", i_move:"انقل (مم)", i_hint:"أو اسحب الحاجز بالفأرة. النقل يعيد توليد الجدران والأبواب والنوافذ ويزامن الإنشائي.",
+  i_door:"باب", i_window:"نافذة", i_width:"العرض (مم)", i_offset:"الموضع (مم من بداية الجدار)", i_apply:"طبّق", i_delete:"احذف", i_room:"فراغ", i_clear:"إلغاء التحديد", i_done:"تم التعديل",
+  open_proj:"فتح مشروع", discard_q:"يوجد عمل غير محفوظ. هل تفتح مشروعاً آخر دون حفظه؟", opened:"تم الفتح",
+  t_mep:"الكهروميكانيكا", mep_note:"مدخلات الكهرباء والسباكة والتكييف والعزل من بياناتك (الكود والكتالوجات). لا قيم افتراضية: أي مدخل ناقص يُذكر باسمه ولا يُحسب القسم. النتائج أولية وتقديرية، والمسارات لا تُرسم: الأطوال مقدَّرة بخط مستقيم.", mep_example:"املأ بقيم اصطناعية (للاختبار فقط)", mep_run:"احسب", mep_apply:"احسب وأضف النقاط للمخطط", mep_show:"إظهار على المخطط",
+  m_missing:"مدخلات ناقصة", m_circuits:"الدوائر الكهربائية", m_circuit:"الدائرة", m_points:"نقاط", m_watts:"واط", m_amps:"أمبير", m_breaker:"القاطع (A)", m_cable:"الكابل (مم²)", m_len:"الطول (م)", m_vd:"هبوط الجهد %", m_total:"المجموع", m_demand:"الطلب", m_main:"القاطع الرئيسي (A)",
+  m_plumb:"السباكة", m_flow:"التدفق (L/s)", m_pipe:"الأنبوب", m_dfu:"وحدات التصريف", m_drain:"المصرف (مم)", m_tank:"الخزان (م³)", m_design:"تدفق التصميم (L/s)", m_hvac:"التكييف", m_load:"الحمل (W)", m_units:"الوحدات", m_tons:"طن تبريد", m_ins:"العزل", m_scope:"النطاق", m_area:"المساحة (م²)", m_u:"U", m_limit:"الحد", m_status:"الحالة", m_applied:"أُضيفت {c} نقطة وأُزيلت {r}", m_pts:"النقاط في النموذج: {n}",
+  export_pdf:"تصدير PDF",
+  export_dxf:"تصدير DXF", export_dxf_all:"DXF كل الأدوار", dxf_done:"DXF: {n} كياناً على {l} طبقة. الأبعاد بالمليمتر والتصدير أولي.",
+  export_ifc:"تصدير IFC", ifc_done:"IFC: {n} عنصراً (جدران {w}، أبواب {d}، نوافذ {x}، فراغات {s}). الأبعاد بالمليمتر والتصدير أولي.",
+  r_floor:"الدور", example2:"مثال بدورين", stair_note:"عدد الأدوار أكبر من 1: تُرسم الأدوار فعلاً ويلزم إدخال الدرج (لا قيم افتراضية). أعطِ كل فراغ رقم دوره (1 أرضي)؛ دور بلا فراغات يكرر الذي تحته. يُرسم عمود الدرج (البئر) فقط، لا الدرجات.", stair_w:"عرض الدرج (م)", stair_l:"طول الدرج (م)", stair_side:"جهة الدرج", lv_ground:"الأرضي", lv_n:"الدور {n}", lv_all:"كل الأدوار", v_level:"الأدوار",
+  to3d:"3D", to2d:"المخطط 2D", v_slab:"السقف", v_struct:"الإنشائي", v_floor:"الأرضيات", v_glass:"الزجاج", v_mep:"نقاط MEP", v_top:"من أعلى", v_reset:"إعادة الضبط", v_solids:"مجسم", v_visual:"سماكة بصرية فقط: لا عمق مصمَّم", v_hint:"اسحب للدوران، Shift أو الزر الأيمن للتحريك، العجلة للتقريب، انقر لتحديد عنصر.",
+  t_boq:"BOQ", boq_note:"وثيقة تنفيذ وتسعير: الكميات تُقاس من النموذج (حصر الكميات)، وأنت تُدخل المواصفة والسعر ومصدرهما، ومعاملات استهلاك المواد (إسمنت، رمل، حديد، طوب...)، والنسب الإضافية. لا قيم افتراضية: البند بلا سعر يُذكر باسمه ولا يدخل الإجمالي ويُوسَم الإجمالي «جزئي». حديد التسليح لا يُحسب إلا بمعاملاتك (كغ لكل م³) لأن البرنامج لا يصمم التسليح. المفاتيح: رمز البند أو بادئة تنتهي بـ *.", boq_example:"املأ بقيم اصطناعية (للاختبار فقط)", boq_run:"احسب BOQ",
+  b_doc:"تصدير الوثيقة (HTML للطباعة)", b_xlsx:"تصدير Excel", t_sketch:"الرسم الأولي", sk_note:"استورد صورة أو PDF لمخطط أولي، ثم عيّن المقياس بنقطتين على بُعد معروف، وحدّد حدود الأرض والغرف بنقطتين لكل منها (زاويتان متقابلتان). تُنقل الأبعاد والمساحات المقاسة إلى النموذج. هذا قياس يدوي منك وليس تعرفاً آلياً، فراجع كل رقم.", sk_import:"استيراد رسم (صورة / PDF)", sk_clear:"إزالة الرسم", sk_known:"الطول الحقيقي بين النقطتين (م)", sk_t_scale:"1) تعيين المقياس", sk_t_plot:"2) حدود الأرض", sk_t_room:"3) إضافة غرفة", sk_swap:"تبديل العرض والطول", sk_name:"اسم الغرفة", sk_floor:"الدور", sk_reset:"مسح العلامات",
+  sk_loaded:"تم تحميل {name}", sk_pick_scale:"انقر نقطتين على بُعد تعرف طوله الحقيقي", sk_pick_p1:"انقر الزاوية الأولى", sk_pick_p2:"انقر الزاوية المقابلة", sk_need_scale:"عيّن المقياس أولاً", sk_known_bad:"أدخل الطول الحقيقي بين النقطتين أولاً", sk_scale_set:"المقياس: 1 م = {px} بكسل", sk_plot_set:"الأرض {w} × {l} م (العرض × الطول)", sk_room_added:"أضيفت غرفة بمساحة {a} م²", sk_small:"المساحة أقل من 1 م²: أعد التحديد", sk_page:"صفحة", sk_alt:"من الرسم", sk_busy_pdf:"جارٍ عرض الـ PDF…", b_pdf:"تصدير BOQ (PDF)", b_csv:"تصدير BOQ (CSV)", b_matcsv:"تصدير المواد (CSV)", b_speccsv:"تصدير المواصفات (CSV)",
+  b_complete:"إجمالي كامل", b_partial:"إجمالي جزئي", b_priced:"بند مسعَّر", b_subtotal:"المجموع الفرعي", b_total:"الإجمالي", b_no_rate:"بنود بلا سعر", b_no_spec:"بنود بلا مواصفة", b_no_fac:"بنود بلا معاملات مواد", b_no_src:"أرقام بلا مصدر", b_ref:"مرجعي",
+  b_boq:"جدول الكميات والأسعار", b_no:"رقم", b_desc:"الوصف", b_rate:"السعر", b_amount:"المبلغ", b_materials:"قائمة المواد", b_material:"المادة", b_spec:"المواصفة", b_specs:"جدول المواصفات والكميات", b_no_materials:"لا معاملات استهلاك مُدخلة، فلا قائمة مواد.", m_cleared:"عُدّل المخطط وأُزيلت {n} نقطة كهروميكانيكية: أعد الحساب لوضعها من جديد (التراجع يعيدها)",
+},
+en: {
+  subtitle:"Villa plan designer", prelim:"Preliminary - not for construction", h_project:"Project", title:"Project name", width:"Plot width (m)", length:"Plot depth (m)",
+  sb_front:"Front setback (m)", sb_back:"Rear setback (m)", sb_side:"Side setback (m)", sb_note:"Enter setbacks from the municipality's requirements; no defaults.",
+  entry:"Entrance side (street)", south:"South", north:"North", east:"East", west:"West", h_rooms:"Rooms", r_name:"Name", r_func:"Type", r_area:"m²", r_zone:"Zone",
+  add_room:"+ Room", example:"Synthetic example", h_struct:"Structural inputs", struct_note:"Leave blank if unknown: loads and footings are then not computed, and you are told.",
+  dead:"Dead load (kPa)", live:"Live load (kPa)", bearing:"Soil bearing (kPa)", floors:"Floors", maxspan:"Max column span (mm)", generate:"Generate alternatives",
+  undo:"Undo", redo:"Redo", show_struct:"Show structure", sync:"Sync structure", export_svg:"Export SVG", save_proj:"Save project",
+  alts_empty:"Generate layout alternatives, then pick one", viewer_empty:"No plan yet", t_notes:"Notes", t_qto:"Quantities", t_sched:"Schedule", t_rules:"Code",
+  notes_empty:"Pick an alternative to see notes", qto_empty:"Pick an alternative to see quantities", sched_note:"The schedule needs production rates from your own data. No defaults; any missing one is refused by name.",
+  start:"Start date", zones:"Pour zones", workdays:"Working days (Monday first)", sun_thu:"Sun–Thu", mon_fri:"Mon–Fri", holidays:"Holidays (comma-separated dates)",
+  h_rates:"Production rates", rates_note:"Quantity per crew per day, or fixed days. State the source of each.", rates_example:"Fill with synthetic values (testing only)",
+  activity:"Activity", rate:"Rate / days", crews:"Crews", source:"Source", run_sched:"Compute schedule", export_csv:"Export CSV", rules_note:"Paste a rule pack (JSON; code values from the official text). It runs on the current model.", run_rules:"Check",
+  working:"Working…", cheapest:"Best", cost:"Cost", reserve:"Hall", warnings:"Warnings", none:"None", rooms:"Rooms", target:"Target", actual:"Actual",
+  qty:"Quantity", unit:"Unit", el:"Elements", code:"Item", missing:"Missing rates", days:"working days", finish:"Finish", saved:"Saved", cancelled:"Cancelled", error:"Error",
+  checked:"Checked", findings:"Findings", skipped:"Rules not run", func:{majlis:"Majlis",living:"Living",dining:"Dining",kitchen:"Kitchen",bedroom:"Bedroom",bathroom:"Bathroom",other:"Other"},
+  zone:{public:"Public",private:"Private",service:"Service"}, days7:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], pick_days:"Choose the working days", sync_done:"Sync: created {c}, removed {r}, unchanged {u}",
+  unsaved:"Unsaved", saved_state:"Saved", assump_h:"Design assumptions (placeholders)", assump_note:"Defaults the engines used because you gave no value. They are not code values; replace them with your project or SBC values.",
+  i_wall:"Partition between", i_ext:"Exterior wall: it sets the building outline and cannot be moved", i_len:"Length", i_move:"Move (mm)", i_hint:"Or drag the partition with the mouse. A move regenerates walls, doors and windows and syncs the structure.",
+  i_door:"Door", i_window:"Window", i_width:"Width (mm)", i_offset:"Position (mm from wall start)", i_apply:"Apply", i_delete:"Delete", i_room:"Room", i_clear:"Clear selection", i_done:"Edited",
+  open_proj:"Open project", discard_q:"There are unsaved changes. Open another project without saving them?", opened:"Opened",
+  t_mep:"MEP", mep_note:"Electrical, plumbing, HVAC and insulation inputs from your own data (code and catalogues). No defaults: any missing input is named and its section is not computed. Results are preliminary estimates; nothing is routed, lengths are straight-line estimates.", mep_example:"Fill with synthetic values (testing only)", mep_run:"Compute", mep_apply:"Compute and add points to plan", mep_show:"Show on plan",
+  m_missing:"Missing inputs", m_circuits:"Electrical circuits", m_circuit:"Circuit", m_points:"Points", m_watts:"W", m_amps:"A", m_breaker:"Breaker (A)", m_cable:"Cable (mm²)", m_len:"Length (m)", m_vd:"Voltage drop %", m_total:"Total", m_demand:"Demand", m_main:"Main breaker (A)",
+  m_plumb:"Plumbing", m_flow:"Flow (L/s)", m_pipe:"Pipe", m_dfu:"Drain fixture units", m_drain:"Drain (mm)", m_tank:"Tank (m³)", m_design:"Design flow (L/s)", m_hvac:"HVAC", m_load:"Load (W)", m_units:"Units", m_tons:"Tons of refrigeration", m_ins:"Insulation", m_scope:"Scope", m_area:"Area (m²)", m_u:"U", m_limit:"Limit", m_status:"Status", m_applied:"Added {c} points, removed {r}", m_pts:"Points in the model: {n}",
+  export_pdf:"Export PDF",
+  export_dxf:"Export DXF", export_dxf_all:"DXF all levels", dxf_done:"DXF: {n} entities on {l} layers. Millimetres; preliminary export.",
+  export_ifc:"Export IFC", ifc_done:"IFC: {n} products (walls {w}, doors {d}, windows {x}, spaces {s}). Millimetres; preliminary export.",
+  r_floor:"Floor", example2:"Two-floor example", stair_note:"Floors above 1 draw real levels and need the stair (no defaults). Give each room its floor number (1 is the ground floor); a floor with no rooms repeats the one below. Only the stair shaft is drawn, not the treads.", stair_w:"Stair width (m)", stair_l:"Stair length (m)", stair_side:"Stair side", lv_ground:"Ground", lv_n:"Floor {n}", lv_all:"All levels", v_level:"Levels",
+  to3d:"3D", to2d:"2D plan", v_slab:"Roof slab", v_struct:"Structure", v_floor:"Floors", v_glass:"Glass", v_mep:"MEP points", v_top:"Top view", v_reset:"Reset", v_solids:"solids", v_visual:"visual thickness only: no designed depth", v_hint:"Drag to orbit, Shift or right button to pan, wheel to zoom, click to select an element.",
+  t_boq:"BOQ", boq_note:"Execution and pricing document: quantities are measured from the model (quantity take-off); you enter each item's specification and rate with their sources, the consumption of each material (cement, sand, steel, blocks ...) and the mark-ups. No defaults: an item without a rate is named, left out of the total, and the total is marked PARTIAL. Reinforcement is counted only through your factors (kg per m³) because the application does not design it. Keys: an item code or a prefix ending in *.", boq_example:"Fill with synthetic values (testing only)", boq_run:"Compute BOQ",
+  b_doc:"Export document (printable HTML)", b_xlsx:"Export Excel", t_sketch:"Draft sketch", sk_note:"Import an image or PDF of a draft plan, set the scale with two points on a known length, then mark the plot and each room with two opposite corners. The measured sizes and areas go into the model. This is your manual measuring, not automatic recognition: check every number.", sk_import:"Import sketch (image / PDF)", sk_clear:"Remove sketch", sk_known:"Real length between the two points (m)", sk_t_scale:"1) Set the scale", sk_t_plot:"2) Plot boundary", sk_t_room:"3) Add a room", sk_swap:"Swap width and length", sk_name:"Room name", sk_floor:"Floor", sk_reset:"Clear marks",
+  sk_loaded:"Loaded {name}", sk_pick_scale:"Click two points whose real distance you know", sk_pick_p1:"Click the first corner", sk_pick_p2:"Click the opposite corner", sk_need_scale:"Set the scale first", sk_known_bad:"Enter the real length between the points first", sk_scale_set:"Scale: 1 m = {px} px", sk_plot_set:"Plot {w} x {l} m (width x length)", sk_room_added:"Room added: {a} m²", sk_small:"Area under 1 m²: mark it again", sk_page:"Page", sk_alt:"From sketch", sk_busy_pdf:"Rendering the PDF…", b_pdf:"Export BOQ (PDF)", b_csv:"Export BOQ (CSV)", b_matcsv:"Export materials (CSV)", b_speccsv:"Export specifications (CSV)",
+  b_complete:"Complete total", b_partial:"PARTIAL total", b_priced:"items priced", b_subtotal:"Subtotal", b_total:"Total", b_no_rate:"Items without a rate", b_no_spec:"Items without a specification", b_no_fac:"Items without material factors", b_no_src:"Figures without a source", b_ref:"ref.",
+  b_boq:"Bill of quantities", b_no:"No.", b_desc:"Description", b_rate:"Rate", b_amount:"Amount", b_materials:"Material list", b_material:"Material", b_spec:"Specification", b_specs:"Specification and quantity schedule", b_no_materials:"No consumption factors entered, so no material list.", m_cleared:"Plan edited and {n} MEP points removed: compute again to place them (undo brings them back)",
+}};
+let lang = "ar";
+const t = k => T[lang][k] ?? k;
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function applyLang() {
+  document.documentElement.lang = lang; document.documentElement.dir = lang === "ar" ? "rtl" : "ltr";
+  document.querySelectorAll("[data-i]").forEach(e => e.textContent = t(e.dataset.i));
+  $("lang").textContent = lang === "ar" ? "English" : "العربية";
+  if (state.levels) setLevels(state.levels);
+  $("to3d").textContent = (typeof V3 !== "undefined" && V3.on) ? t("to2d") : t("to3d");
+  renderRooms(); renderWorkdays(); renderRates();
+  if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq();
+}
+
+// ---------------------------------------------------------------- state and helpers
+const state = { rooms: [{ key: "r1", name: "", func: "living", area: 30, zone: "public", light: true }], alts: [], sel: -1, notes: null, rooms_out: null, qto: null, sched: null, keys: [], rates: {} };
+const FUNCS = ["majlis", "living", "dining", "kitchen", "bedroom", "bathroom", "other"], ZONES = ["public", "private", "service"];
+function toast(m) { const e = $("toast"); e.textContent = m; e.classList.add("on"); clearTimeout(toast.h); toast.h = setTimeout(() => e.classList.remove("on"), 3200); }
+async function busy(fn) {
+  $("busy").classList.add("on"); await new Promise(r => setTimeout(r, 40));
+  try { return await fn(); } catch (e) { toast(t("error") + ": " + e.message); } finally { $("busy").classList.remove("on"); }
+}
+const num = id => { const v = $(id).value.trim(); return v === "" ? null : Number(v); };
+
+// ---------------------------------------------------------------- rooms form
+function renderRooms() {
+  const tb = $("rooms"); tb.innerHTML = "";
+  state.rooms.forEach((r, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td><input value="${esc(r.name)}" data-f="name" placeholder="${esc(r.key)}"></td>
+      <td><select data-f="func">${FUNCS.map(f => `<option value="${f}" ${f === r.func ? "selected" : ""}>${t("func")[f]}</option>`).join("")}</select></td>
+      <td><input type="number" step="0.5" min="1" value="${r.area}" data-f="area" style="width:54px"></td>
+      <td><select data-f="zone">${ZONES.map(z => `<option value="${z}" ${z === r.zone ? "selected" : ""}>${t("zone")[z]}</option>`).join("")}</select></td>
+      <td><input type="number" step="1" min="1" value="${r.floor || 1}" data-f="floor" style="width:40px;padding:4px 2px;text-align:center"></td>
+      <td><input type="checkbox" ${r.light ? "checked" : ""} data-f="light"></td>
+      <td><button data-del="${i}" title="x">×</button></td>`;
+    tr.querySelectorAll("[data-f]").forEach(el => el.addEventListener("change", () => {
+      const f = el.dataset.f; r[f] = f === "light" ? el.checked : (f === "area" || f === "floor") ? Number(el.value) : el.value;
+    }));
+    tr.querySelector("[data-del]").addEventListener("click", () => { state.rooms.splice(i, 1); renderRooms(); });
+    tb.appendChild(tr);
+  });
+}
+$("addroom").onclick = () => { state.rooms.push({ key: "r" + (Date.now() % 100000), name: "", func: "bedroom", area: 15, zone: "private", light: true, floor: 1 }); renderRooms(); };
+$("example").onclick = () => {
+  const r = (key, name, func, area, zone, light) => ({ key, name, func, area, zone, light });
+  state.rooms = [r("majlis", "المجلس", "majlis", 36, "public", true), r("living", "الصالة", "living", 30, "public", true), r("dining", "الطعام", "dining", 24, "public", true), r("kitchen", "المطبخ", "kitchen", 20, "service", true),
+    r("master", "الماستر", "bedroom", 28, "private", true), r("bed1", "غرفة 1", "bedroom", 20, "private", true), r("bed2", "غرفة 2", "bedroom", 20, "private", true), r("bed3", "غرفة 3", "bedroom", 20, "private", true),
+    r("bath1", "حمام 1", "bathroom", 6, "service", false), r("bath2", "حمام 2", "bathroom", 6, "service", false), r("bath3", "حمام 3", "bathroom", 6, "service", false)];
+  $("title").value = "مشروع تجريبي (أرقام اصطناعية)"; $("width").value = 18; $("length").value = 22; $("sbf").value = 2; $("sbb").value = 2; $("sbs").value = 2;
+  $("floors").value = 1; $("stairw").value = ""; $("stairl").value = "";
+  renderRooms();
+};
+$("example2").onclick = () => {
+  const r = (key, name, func, area, zone, light, floor) => ({ key, name, func, area, zone, light, floor });
+  state.rooms = [r("majlis", "المجلس", "majlis", 36, "public", true, 1), r("living", "الصالة", "living", 30, "public", true, 1), r("dining", "الطعام", "dining", 24, "public", true, 1), r("kitchen", "المطبخ", "kitchen", 20, "service", true, 1), r("bath1", "حمام 1", "bathroom", 6, "service", false, 1),
+    r("master", "الماستر", "bedroom", 28, "private", true, 2), r("bed1", "غرفة 1", "bedroom", 20, "private", true, 2), r("bed2", "غرفة 2", "bedroom", 20, "private", true, 2), r("bath2", "حمام 2", "bathroom", 6, "service", false, 2), r("bath3", "حمام 3", "bathroom", 6, "service", false, 2)];
+  $("title").value = "مشروع بدورين (أرقام اصطناعية)"; $("width").value = 18; $("length").value = 22; $("sbf").value = 2; $("sbb").value = 2; $("sbs").value = 2;
+  $("floors").value = 2; $("stairw").value = 2.5; $("stairl").value = 5; $("stairside").value = "west";
+  renderRooms();
+};
+const structInputs = () => ({ dead_kpa: num("dead"), live_kpa: num("live"), bearing_kpa: num("bearing"), floors: num("floors") || 1, max_span_mm: num("maxspan"), show_structure: $("showstruct").checked });
+
+
+// ---------------------------------------------------------------- draft sketch (image / PDF) to trace over
+const SK = { base: null, ppm: null, tool: null, pts: [], marks: [], zoom: 1, pdf: null, page: 1, name: "" };
+const b64bytes = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
+const skMsg = (k, o = {}) => { let m = t(k); for (const [a, v] of Object.entries(o)) m = m.replace("{" + a + "}", v); $("sk-status").textContent = m; };
+$("sk-func").innerHTML = FUNCS.map(f => `<option value="${f}">${t("func")[f]}</option>`).join("");
+const ZONE_OF = { majlis: "public", living: "public", dining: "public", bedroom: "private" };
+function skDraw() {
+  const cv = $("sk-cv"), c = cv.getContext("2d"), b = SK.base;
+  if (!b) { c.clearRect(0, 0, cv.width, cv.height); return; }
+  cv.width = b.width; cv.height = b.height; c.drawImage(b, 0, 0);
+  const lw = Math.max(2, b.width / 500), dot = p => { c.beginPath(); c.arc(p.x, p.y, lw * 2.2, 0, 7); c.fill(); };
+  c.lineWidth = lw; c.font = `${lw * 7}px Segoe UI, sans-serif`;
+  for (const m of SK.marks) {
+    c.strokeStyle = c.fillStyle = m.color;
+    if (m.kind === "scale") { c.beginPath(); c.moveTo(m.a.x, m.a.y); c.lineTo(m.b.x, m.b.y); c.stroke(); dot(m.a); dot(m.b); }
+    else { c.strokeRect(Math.min(m.a.x, m.b.x), Math.min(m.a.y, m.b.y), Math.abs(m.a.x - m.b.x), Math.abs(m.a.y - m.b.y)); if (m.label) c.fillText(m.label, Math.min(m.a.x, m.b.x) + lw * 2, Math.min(m.a.y, m.b.y) + lw * 8); }
+  }
+  c.fillStyle = "#e91e63"; SK.pts.forEach(dot);
+  cv.style.width = (SK.zoom * 100) + "%";
+}
+function skSetBase(canvas, name) {
+  SK.base = canvas; SK.ppm = null; SK.marks = []; SK.pts = []; SK.tool = null; SK.name = name;
+  $("sk-tools").style.display = ""; $("sk-clear").disabled = false; skDraw(); skMsg("sk_loaded", { name });
+}
+async function skLoadImage(p) {
+  const url = URL.createObjectURL(new Blob([b64bytes(p.b64)], { type: p.mime }));
+  const img = new Image();
+  await new Promise((ok, no) => { img.onload = ok; img.onerror = () => no(new Error("the image cannot be read")); img.src = url; });
+  const cv = document.createElement("canvas"); cv.width = img.naturalWidth; cv.height = img.naturalHeight; cv.getContext("2d").drawImage(img, 0, 0); URL.revokeObjectURL(url);
+  SK.pdf = null; $("sk-pager").style.display = "none"; skSetBase(cv, p.name);
+}
+async function skPdfLib() {
+  if (window.pdfjsLib) return window.pdfjsLib;
+  const r = await call("sketch_pdfjs"), blob = s => URL.createObjectURL(new Blob([s], { type: "text/javascript" }));
+  await new Promise((ok, no) => { const sc = document.createElement("script"); sc.src = blob(r.lib); sc.onload = ok; sc.onerror = () => no(new Error("the PDF engine failed to load")); document.head.appendChild(sc); });
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = blob(r.worker); return window.pdfjsLib;
+}
+async function skShowPage(n) {
+  const page = await SK.pdf.getPage(n), v1 = page.getViewport({ scale: 1 }), scale = Math.min(4, 2400 / Math.max(v1.width, v1.height)), vp = page.getViewport({ scale });
+  const cv = document.createElement("canvas"); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+  const c = cv.getContext("2d"); c.fillStyle = "#fff"; c.fillRect(0, 0, cv.width, cv.height);
+  await page.render({ canvasContext: c, viewport: vp }).promise;
+  SK.page = n; $("sk-pg").textContent = `${t("sk_page")} ${n} / ${SK.pdf.numPages}`; $("sk-pager").style.display = SK.pdf.numPages > 1 ? "" : "none";
+  skSetBase(cv, SK.name);
+}
+async function skLoadPdf(p) {
+  skMsg("sk_busy_pdf"); const lib = await skPdfLib();
+  SK.name = p.name; SK.pdf = await lib.getDocument({ data: b64bytes(p.b64) }).promise; await skShowPage(1);
+}
+$("sk-import").onclick = () => busy(async () => { const r = (await call("pick_sketch")).picked; if (!r) return; if (r.kind === "pdf") await skLoadPdf(r); else await skLoadImage(r); });
+$("sk-prev").onclick = () => busy(() => SK.page > 1 ? skShowPage(SK.page - 1) : 0);
+$("sk-next").onclick = () => busy(() => SK.pdf && SK.page < SK.pdf.numPages ? skShowPage(SK.page + 1) : 0);
+$("sk-clear").onclick = () => { SK.base = null; SK.ppm = null; SK.marks = []; SK.pts = []; SK.pdf = null; SK.tool = null; $("sk-tools").style.display = "none"; $("sk-pager").style.display = "none"; $("sk-clear").disabled = true; $("sk-status").textContent = ""; skDraw(); };
+$("sk-reset").onclick = () => { SK.marks = []; SK.pts = []; SK.tool = null; skDraw(); };
+$("sk-zin").onclick = () => { SK.zoom = Math.min(5, SK.zoom * 1.25); skDraw(); };
+$("sk-zout").onclick = () => { SK.zoom = Math.max(0.2, SK.zoom / 1.25); skDraw(); };
+function skTool(tool) {
+  if (tool !== "scale" && !SK.ppm) { skMsg("sk_need_scale"); return; }
+  if (tool === "scale" && !(num("sk-known") > 0)) { skMsg("sk_known_bad"); return; }
+  SK.tool = tool; SK.pts = []; skDraw(); skMsg(tool === "scale" ? "sk_pick_scale" : "sk_pick_p1");
+}
+$("sk-t-scale").onclick = () => skTool("scale"); $("sk-t-plot").onclick = () => skTool("plot"); $("sk-t-room").onclick = () => skTool("room");
+
+// Rooms marked on the sketch, in the frame the engine uses: millimetres, origin at the south-west corner of the
+// buildable area (plot minus setbacks), y up. The top of the image is north and the front setback is the south side.
+function skPlacement() {
+  const plot = SK.marks.find(m => m.kind === "plot");
+  if (!SK.base || !SK.ppm || !plot || $("sk-swap").checked) return null;
+  const mm = v => v / SK.ppm * 1000, left = Math.min(plot.a.x, plot.b.x), bottom = Math.max(plot.a.y, plot.b.y);
+  const sx = (num("sbs") || 0) * 1000, sy = (num("sbf") || 0) * 1000, out = {};
+  for (const m of SK.marks) {
+    if (m.kind !== "room" || !state.rooms.some(r => r.key === m.key)) continue;
+    out[m.key] = { x: mm(Math.min(m.a.x, m.b.x) - left) - sx, y: mm(bottom - Math.max(m.a.y, m.b.y)) - sy, w: mm(Math.abs(m.a.x - m.b.x)), h: mm(Math.abs(m.a.y - m.b.y)) };
+  }
+  return Object.keys(out).length ? out : null;
+}
+$("sk-cv").addEventListener("click", ev => {
+  if (!SK.base || !SK.tool) return;
+  const r = $("sk-cv").getBoundingClientRect(), p = { x: (ev.clientX - r.left) * SK.base.width / r.width, y: (ev.clientY - r.top) * SK.base.height / r.height };
+  SK.pts.push(p);
+  if (SK.pts.length < 2) { skDraw(); skMsg(SK.tool === "scale" ? "sk_pick_scale" : "sk_pick_p2"); return; }
+  const [a, b] = SK.pts, dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y); SK.pts = [];
+  if (SK.tool === "scale") {
+    const d = Math.hypot(dx, dy); if (d < 2) { skDraw(); return; }
+    SK.ppm = d / num("sk-known"); SK.marks = SK.marks.filter(m => m.kind !== "scale"); SK.marks.push({ kind: "scale", a, b, color: "#e91e63" }); SK.tool = null; skDraw(); skMsg("sk_scale_set", { px: SK.ppm.toFixed(1) });
+  } else if (SK.tool === "plot") {
+    let w = dx / SK.ppm, l = dy / SK.ppm; if ($("sk-swap").checked) [w, l] = [l, w];
+    $("width").value = w.toFixed(2); $("length").value = l.toFixed(2);
+    SK.marks = SK.marks.filter(m => m.kind !== "plot"); SK.marks.push({ kind: "plot", a, b, color: "#2e7d32", label: "" }); SK.tool = null; skDraw(); skMsg("sk_plot_set", { w: w.toFixed(2), l: l.toFixed(2) });
+  } else {
+    const area = Math.round(dx * dy / (SK.ppm * SK.ppm) * 10) / 10; if (area < 1) { skDraw(); skMsg("sk_small"); return; }
+    const func = $("sk-func").value, name = $("sk-name").value.trim(), key = "r" + (Date.now() % 100000);
+    state.rooms.push({ key, name, func, area, zone: ZONE_OF[func] || "service", light: func !== "bathroom", floor: Number($("sk-floor").value) || 1 });
+    renderRooms(); SK.marks.push({ kind: "room", key, a, b, color: "#1565c0", label: `${name || t("func")[func]} ${area}` }); skDraw(); skMsg("sk_room_added", { a: area }); $("sk-name").value = "";
+  }
+});
+
+// ---------------------------------------------------------------- generate and choose
+$("generate").onclick = () => busy(async () => {
+  const w = num("width"), l = num("length");
+  if (!w || !l) throw new Error(lang === "ar" ? "أدخل أبعاد الأرض" : "Enter the plot size");
+  const rooms = state.rooms.map((r, i) => ({ key: r.key || "r" + i, name: r.name, func: r.func, area: r.area, zone: r.zone, light: r.light, floor: r.floor || 1 }));
+  const brief = { title: $("title").value, width_m: w, length_m: l, setback_front_m: num("sbf") || 0, setback_back_m: num("sbb") || 0, setback_side_m: num("sbs") || 0, entry: $("entry").value, rooms };
+  if (num("stairw") && num("stairl")) brief.stair = { width_m: num("stairw"), length_m: num("stairl"), side: $("stairside").value };
+  const res = await call("generate", { brief, struct: structInputs(), placement: skPlacement() });
+  state.alts = res.alternatives; state.sel = -1; state.qto = null; state.sched = null; state.rooms_out = null; state.notes = null;
+  renderAlts(); $("viewer").innerHTML = `<div class="empty">${t("alts_empty")}</div>`; setPlanButtons(false);
+  await choose(0);
+});
+function renderAlts() {
+  $("alts").innerHTML = state.alts.map((a, i) => `<div class="alt ${i === state.sel ? "sel" : ""}" data-n="${i}" title="${t("cost")} ${a.cost}">${i === 0 ? `<span class="tag">${a.from_sketch ? t("sk_alt") : t("cheapest")}</span>` : (i === 1 && state.alts[0].from_sketch ? `<span class="tag">${t("cheapest")}</span>` : "")}${a.svg}</div>`).join("");
+  $("alts").querySelectorAll(".alt").forEach(e => e.onclick = () => busy(() => choose(Number(e.dataset.n))));
+}
+async function choose(i) {
+  const res = await call("select", { index: i, struct: structInputs() });
+  state.sel = i; showPlan(res.svg); state.notes = res.warnings; state.rooms_out = res.rooms; state.qto = null; state.sched = null;
+  renderAlts(); renderNotes(); setPlanButtons(true); $("p-qto").innerHTML = `<div class="empty">${t("working")}</div>`; $("schedout").innerHTML = "";
+  loadQto(); refreshStatus();
+}
+function setPlanButtons(on) { ["undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportpdf", "saveproj", "to3d"].forEach(id => $(id).disabled = !on); }
+
+// ---------------------------------------------------------------- toolbar
+// The generated SVG text is kept as is, so an export is the real file and not the browser's re-serialisation.
+const levelLabel = i => i === 0 ? t("lv_ground") : t("lv_n").replace("{n}", i);
+function setLevels(l) {
+  state.levels = l; const bar = $("levelbar"), list = (l && l.list) || [];
+  $("exportdxfall").style.display = list.length > 1 ? "" : "none";
+  if (list.length < 2) { bar.style.display = "none"; bar.innerHTML = ""; return; }
+  bar.style.display = "flex";
+  bar.innerHTML = list.map(x => `<button class="${x.index === l.current ? "primary" : ""}" data-lv="${x.index}">${levelLabel(x.index)}</button>`).join("");
+  bar.querySelectorAll("[data-lv]").forEach(b => b.onclick = () => busy(async () => { const r = await call("level", { index: Number(b.dataset.lv) }); showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } }));
+}
+const showPlan = svg => { state.svgText = svg || ""; $("viewer").innerHTML = svg || `<div class="empty">${t("viewer_empty")}</div>`; clearSel(); if (V3.on) refresh3d(false); };
+$("showstruct").onchange = () => busy(async () => { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); });
+for (const k of ["undo", "redo"]) $(k).onclick = () => busy(async () => { const r = await call(k); showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } await refreshStatus(); });
+$("sync").onclick = () => busy(async () => { const r = await call("sync"); showPlan(r.svg); refreshStatus(); toast(t("sync_done").replace("{c}", r.created).replace("{r}", r.removed).replace("{u}", r.unchanged)); });
+$("exportsvg").onclick = () => busy(async () => { const r = await call("export", { name: "plan.svg", data: '<?xml version="1.0" encoding="UTF-8"?>\n' + (state.svgText || "") }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
+$("saveproj").onclick = () => busy(async () => { const r = await call("save_project"); refreshStatus(); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
+$("lang").onclick = () => { lang = lang === "ar" ? "en" : "ar"; applyLang(); };
+document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "p-" + b.dataset.tab));
+});
+
+// ---------------------------------------------------------------- notes and quantities
+async function refreshStatus() {
+  try {
+    const s = await call("status"), b = $("savestate");
+    b.textContent = !s.has_doc ? "" : s.dirty ? t("unsaved") : t("saved_state");
+    b.className = "badge" + (s.dirty ? " warn" : "");
+  } catch (e) { /* the badge is informational */ }
+}
+function assumptionsHtml() {
+  const a = state.assumptions; if (!a) return "";
+  return `<details style="margin-top:14px"><summary><b>${t("assump_h")}</b></summary><div class="note">${t("assump_note")}</div>
+    <table><tbody>${a.map(r => `<tr><td>${esc(lang === "ar" ? r.ar : r.en)}</td><td class="num">${r.value} ${esc(r.unit)}</td></tr>`).join("")}</tbody></table></details>`;
+}
+function renderNotes() {
+  const w = state.notes || [], rooms = state.rooms_out || [];
+  $("p-notes").innerHTML = `<h2>${t("warnings")}</h2>${w.length ? `<ul class="clean">${w.map(x => `<li class="warn">${esc(x)}</li>`).join("")}</ul>` : `<div class="ok">${t("none")}</div>`}
+    <h2>${t("rooms")}</h2><table><thead><tr><th>${t("r_name")}</th><th>${t("target")}</th><th>${t("actual")}</th></tr></thead><tbody>${rooms.map(r => `<tr><td>${esc(r.name)}</td><td class="num">${r.target.toFixed(1)}</td><td class="num">${r.area.toFixed(1)}</td></tr>`).join("")}</tbody></table>${assumptionsHtml()}`;
+}
+async function loadQto() { try { state.qto = await call("qto"); renderQto(); } catch (e) { $("p-qto").innerHTML = `<div class="bad">${esc(e.message)}</div>`; } }
+function renderQto() {
+  const q = state.qto;
+  $("p-qto").innerHTML = `<div class="bar" style="padding:0 0 8px;border:0"><button id="expqto">${t("export_csv")}</button></div>
+    <table><thead><tr><th>${t("code")}</th><th>${t("qty")}</th><th>${t("unit")}</th><th>${t("el")}</th></tr></thead><tbody>${q.items.map(i => `<tr title="${esc(i.description)}"><td>${esc(i.code)}</td><td class="num">${i.quantity.toFixed(2)}</td><td>${i.unit}</td><td class="num">${i.sources}</td></tr>`).join("")}</tbody></table>
+    <h2>${t("warnings")}</h2><ul class="clean">${q.warnings.map(x => `<li class="warn">${esc(x)}</li>`).join("")}</ul>`;
+  $("expqto").onclick = () => busy(async () => { const r = await call("export", { name: "quantities.csv", data: q.csv }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
+}
+
+// ---------------------------------------------------------------- schedule
+function renderWorkdays() {
+  const wd = $("wd"), keep = [...wd.querySelectorAll("input")].map(i => i.checked);
+  wd.innerHTML = t("days7").map((d, i) => `<label><input type="checkbox" data-d="${i}" ${keep[i] ? "checked" : ""}>${d}</label>`).join("");
+}
+const setDays = a => $("wd").querySelectorAll("input").forEach((c, i) => c.checked = a[i]);
+$("wd-sunthu").onclick = () => setDays([true, true, true, true, false, false, true]);
+$("wd-monfri").onclick = () => setDays([true, true, true, true, true, false, false]);
+async function loadKeys() { if (!state.keys.length) { state.keys = await call("template_keys"); } renderRates(); }
+function renderRates() {
+  const tb = $("rates"); if (!tb) return;
+  tb.innerHTML = state.keys.map(k => { const r = state.rates[k.key] || {};
+    return `<tr data-k="${k.key}"><td>${esc(k.key)}</td><td><input type="number" step="any" min="0" data-f="v" value="${r.v ?? ""}" placeholder="${k.fixed ? "days" : "qty/crew/day"}" style="width:90px"></td><td><input type="number" min="1" data-f="crews" value="${r.crews ?? 1}" style="width:50px"></td><td><input data-f="source" value="${esc(r.source ?? "")}"></td></tr>`; }).join("");
+  tb.querySelectorAll("tr").forEach(tr => tr.querySelectorAll("input").forEach(inp => inp.onchange = () => {
+    const k = tr.dataset.k, o = state.rates[k] ||= {}; o[inp.dataset.f] = inp.dataset.f === "source" ? inp.value : inp.value === "" ? null : Number(inp.value); }));
+}
+$("rates-example").onclick = async () => { await loadKeys(); state.keys.forEach(k => state.rates[k.key] = { v: k.fixed ? 3 : 40, crews: 1, source: "synthetic - testing only" }); renderRates(); };
+$("runsched").onclick = () => busy(async () => {
+  await loadKeys();
+  const wd = [...$("wd").querySelectorAll("input")].map(c => c.checked);
+  if (!wd.some(Boolean)) throw new Error(t("pick_days"));
+  const rates = {};
+  state.keys.forEach(k => { const o = state.rates[k.key]; if (o && o.v != null && o.v !== "") rates[k.key] = { [k.fixed ? "fixed_days" : "per_crew_day"]: o.v, crews: o.crews || 1, source: o.source || "" }; });
+  const holidays = $("holidays").value.split(/[,\s]+/).filter(Boolean);
+  const r = await call("schedule", { rates, start: $("start").value, workdays: wd, holidays, zones: Number($("zones").value) || 1 });
+  state.sched = r; renderSched();
+});
+function renderSched() {
+  const r = state.sched, out = $("schedout");
+  $("exportsched").disabled = !(r && r.ok);
+  document.querySelectorAll("#rates tr").forEach(tr => tr.classList.toggle("missing", !!(r && !r.ok && r.missing.includes(tr.dataset.k))));
+  if (!r) { out.innerHTML = ""; return; }
+  if (!r.ok) { out.innerHTML = `<h2 class="bad">${t("missing")} (${r.missing.length})</h2><div class="bad">${r.missing.map(esc).join("، ")}</div>`; return; }
+  out.innerHTML = `<h2>${r.project_days} ${t("days")} · ${t("finish")} ${r.finish}</h2><div class="gantt">${r.svg}</div>${r.warnings.length ? `<h2>${t("warnings")}</h2><ul class="clean">${r.warnings.map(x => `<li class="warn">${esc(x)}</li>`).join("")}</ul>` : ""}`;
+}
+$("exportsched").onclick = () => busy(async () => { const r = await call("export", { name: "schedule.csv", data: state.sched.csv }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
+document.querySelector('[data-tab="sched"]').addEventListener("click", loadKeys);
+
+// ---------------------------------------------------------------- PDF export (A3 sheets, printed by the web engine)
+$("exportpdf").onclick = () => busy(async () => {
+  const r = await call("pdf_html", { lang });
+  const s = await call("save_pdf", { html: r.html, name: r.name });
+  toast(s.saved ? t("saved") + ": " + s.saved : t("cancelled"));
+});
+
+// ---------------------------------------------------------------- DXF export
+const exportDxf = all => busy(async () => {
+  const r = await call("export_dxf", { all }); state.dxf = r;
+  const total = Object.values(r.counts).reduce((a, b) => a + b, 0);
+  const s = await call("export", { name: all ? "plan-all-levels.dxf" : "plan.dxf", data: r.dxf });
+  toast(s.saved ? t("dxf_done").replace("{n}", total).replace("{l}", Object.keys(r.counts).length) : t("cancelled"));
+});
+$("exportdxf").onclick = () => exportDxf(false);
+$("exportdxfall").onclick = () => exportDxf(true);
+
+// ---------------------------------------------------------------- IFC export
+$("exportifc").onclick = () => busy(async () => {
+  const r = await call("export_ifc"); state.ifc = r;
+  const c = r.counts, total = Object.values(c).reduce((a, b) => a + b, 0);
+  const s = await call("export", { name: "model.ifc", data: r.ifc });
+  toast(s.saved ? t("ifc_done").replace("{n}", total).replace("{w}", c.IfcWall || 0).replace("{d}", c.IfcDoor || 0).replace("{x}", c.IfcWindow || 0).replace("{s}", c.IfcSpace || 0) : t("cancelled"));
+});
+
+// ---------------------------------------------------------------- MEP and insulation
+const MEP_EXAMPLE = () => {
+  const panel = (state.rooms[0] || {}).key || "r1";
+  return {
+    _label: "SYNTHETIC test values only - not code values. Replace every number with your project data.",
+    insulation: { assemblies: {
+      wall: { rsi: 0.13, rse: 0.04, layers: [{ material: "plaster", thickness_mm: 20, lambda: 0.7 }, { material: "block", thickness_mm: 200, lambda: 1.0 }, { material: "eps", thickness_mm: 50, lambda: 0.04, kind: "insulation" }] },
+      roof: { rsi: 0.1, rse: 0.04, layers: [{ material: "concrete", thickness_mm: 150, lambda: 1.5 }, { material: "eps", thickness_mm: 60, lambda: 0.04, kind: "insulation" }] },
+      wet_floor: { layers: [{ material: "membrane", thickness_mm: 2, kind: "membrane" }] } },
+      u_limits: { wall: 0.5, roof: 0.3 }, wet_upturn_mm: 300 },
+    electrical: { voltage_v: 230, power_factor: 0.95, three_phase: false, lights_per_m2: 0.5, light_w: 10, sockets_per_m: 0.4, socket_w: 200, demand_factor: 0.6,
+      max_light_points: 12, max_socket_points: 8, breaker_margin: 1.25, breaker_sizes_a: [6, 10, 16, 20, 32, 40, 63],
+      cables: [{ amps: 10, mm2: 1.5 }, { amps: 16, mm2: 2.5 }, { amps: 25, mm2: 4 }, { amps: 32, mm2: 6 }, { amps: 50, mm2: 10 }],
+      resistivity: 0.0175, max_vdrop_pct: 3, panel_room: panel, route_factor: 1.3 },
+    plumbing: { catalog: { wc: { flow_lps: 0.1, dfu: 4 }, basin: { flow_lps: 0.1, dfu: 1 }, shower: { flow_lps: 0.15, dfu: 2 }, sink: { flow_lps: 0.15, dfu: 2 } },
+      fixtures_by_func: { bathroom: { wc: 1, basin: 1, shower: 1 }, kitchen: { sink: 1 } }, simultaneity: 0.4, max_velocity_mps: 2,
+      pipes: [{ name: "DN15", inner_mm: 13 }, { name: "DN20", inner_mm: 18 }, { name: "DN25", inner_mm: 23 }, { name: "DN32", inner_mm: 30 }],
+      drain_table: [{ max_dfu: 3, dia_mm: 40 }, { max_dfu: 6, dia_mm: 50 }, { max_dfu: 20, dia_mm: 75 }, { max_dfu: 160, dia_mm: 100 }],
+      persons: 6, litres_per_person_day: 200, storage_days: 1 },
+    hvac: { indoor_c: 24, outdoor_c: 45, window_u: 3.0, window_shgc: 0.5, solar_w_m2: 400, person_w: 100, area_per_person_m2: 10, lights_w_m2: 10, equipment_w_m2: 5,
+      vent_l_s_per_m2: 1, safety_factor: 1.1, unit_sizes_w: [2500, 3500, 5000, 7000, 10500], roof_exposed: true }
+  };
+};
+$("mep-example").onclick = () => { $("mepin").value = JSON.stringify(MEP_EXAMPLE(), null, 2); };
+const readMep = () => { const txt = $("mepin").value.trim(); if (!txt) return {}; try { return JSON.parse(txt); } catch (e) { throw new Error("JSON: " + e.message); } };
+async function runMep(apply) {
+  const r = await call("mep", { inputs: readMep(), apply, show: $("showmep").checked });
+  state.mep = r; renderMep(); showPlan(r.svg);
+  if (apply) { state.qto = null; state.sched = null; refreshStatus(); loadQto(); if (r.applied) toast(t("m_applied").replace("{c}", r.applied.created).replace("{r}", r.applied.removed)); }
+}
+$("mep-run").onclick = () => busy(() => runMep(false));
+$("mep-apply").onclick = () => busy(async () => { $("showmep").checked = true; await runMep(true); });
+$("showmep").onchange = () => busy(() => runMep(false));
+function renderMep() {
+  const r = state.mep; if (!r) return; const rep = r.report, f = (v, d = 2) => (v == null ? "" : Number(v).toFixed(d)), h = [];
+  const miss = Object.entries(rep.missing || {});
+  if (miss.length) h.push(`<h2 class="bad">${t("m_missing")}</h2>` + miss.map(([k, v]) => `<div class="bad"><b>${esc(k)}</b>: ${v.map(esc).join("، ")}</div>`).join(""));
+  const e = rep.electrical;
+  if (e) h.push(`<h2>${t("m_circuits")}</h2><table><thead><tr><th>${t("m_circuit")}</th><th>${t("m_points")}</th><th>${t("m_watts")}</th><th>${t("m_amps")}</th><th>${t("m_breaker")}</th><th>${t("m_cable")}</th><th>${t("m_len")}</th><th>${t("m_vd")}</th></tr></thead><tbody>${e.circuits.map(c => `<tr><td>${esc(c.id)}</td><td class="num">${c.points}</td><td class="num">${f(c.watts, 0)}</td><td class="num">${f(c.current_a)}</td><td class="num">${c.breaker_a}</td><td class="num">${c.cable_mm2}</td><td class="num">${f(c.length_m)}</td><td class="num">${f(c.vdrop_pct)}</td></tr>`).join("")}</tbody></table>
+    <div class="note">${t("m_total")}: ${f(e.connected_w, 0)} W · ${t("m_demand")}: ${f(e.demand_w, 0)} W · ${f(e.main_current_a)} A · ${t("m_main")}: ${e.main_breaker_a}</div>`);
+  const p = rep.plumbing;
+  if (p) h.push(`<h2>${t("m_plumb")}</h2><table><thead><tr><th>${t("r_name")}</th><th>${t("m_flow")}</th><th>${t("m_pipe")}</th><th>${t("m_dfu")}</th><th>${t("m_drain")}</th></tr></thead><tbody>${p.rooms.map(x => `<tr><td>${esc(x.room)}</td><td class="num">${f(x.flow_lps)}</td><td>${esc(x.pipe)}</td><td class="num">${f(x.dfu, 1)}</td><td class="num">${x.drain_mm}</td></tr>`).join("")}</tbody></table>
+    <div class="note">${t("m_design")}: ${f(p.design_flow_lps)} · ${t("m_pipe")}: ${esc(p.main_pipe)} · ${t("m_dfu")}: ${f(p.total_dfu, 1)} → ${p.main_drain_mm} mm${p.tank_m3 == null ? "" : " · " + t("m_tank") + ": " + f(p.tank_m3)}</div>`);
+  const v = rep.hvac;
+  if (v) h.push(`<h2>${t("m_hvac")}</h2><table><thead><tr><th>${t("r_name")}</th><th>${t("m_load")}</th><th>${t("m_units")}</th></tr></thead><tbody>${v.rooms.map(x => `<tr><td>${esc(x.room)}</td><td class="num">${f(x.load_w, 0)}</td><td>${x.units} × ${x.unit_w} W</td></tr>`).join("")}</tbody></table>
+    <div class="note">${t("m_total")}: ${f(v.total_w, 0)} W · ${f(v.total_tons)} ${t("m_tons")}</div>`);
+  if (rep.insulation && rep.insulation.length) h.push(`<h2>${t("m_ins")}</h2><table><thead><tr><th>${t("m_scope")}</th><th>${t("m_area")}</th><th>${t("m_u")}</th><th>${t("m_limit")}</th><th>${t("m_status")}</th></tr></thead><tbody>${rep.insulation.map(a => `<tr class="${a.status === "ok" || a.status === "no limit given" ? "" : "missing"}"><td>${esc(a.scope)}</td><td class="num">${f(a.area_m2)}</td><td class="num">${f(a.u_value, 3)}</td><td class="num">${f(a.u_limit, 2)}</td><td>${esc(a.status)}${a.missing.length ? ": " + a.missing.map(esc).join("، ") : ""}</td></tr>`).join("")}</tbody></table>`);
+  if (rep.warnings.length) h.push(`<h2>${t("warnings")}</h2><ul class="clean">${rep.warnings.map(x => `<li class="warn">${esc(x)}</li>`).join("")}</ul>`);
+  h.push(`<div class="note">${t("m_pts").replace("{n}", r.points)}</div>`);
+  $("mepout").innerHTML = h.join("");
+}
+
+// ---------------------------------------------------------------- bill of quantities
+const BOQ_EXAMPLE = () => ({
+  _label: "SYNTHETIC placeholders only: not real specifications, rates or consumption factors. Replace every value with your project data and its source.",
+  project: { name: $("title").value || "Project", client: "", location: "", date: "", prepared_by: "", currency: "XXX" },
+  items: {
+    "SLAB.VOL": { spec: "SYNTHETIC concrete spec", spec_source: "synthetic", rate: 100, rate_source: "synthetic", waste_pct: 3 },
+    "BEAM.VOL": { spec: "SYNTHETIC concrete spec", spec_source: "synthetic", rate: 100, rate_source: "synthetic", waste_pct: 3 },
+    "COLUMN.VOL": { spec: "SYNTHETIC concrete spec", spec_source: "synthetic", rate: 100, rate_source: "synthetic", waste_pct: 3 },
+    "WALL.EXT.AREA": { spec: "SYNTHETIC block wall spec", spec_source: "synthetic", rate: 20, rate_source: "synthetic", waste_pct: 5 },
+    "WALL.INT.AREA": { spec: "SYNTHETIC block wall spec", spec_source: "synthetic", rate: 15, rate_source: "synthetic", waste_pct: 5 },
+    "FLOOR.AREA.*": { spec: "SYNTHETIC floor finish spec", spec_source: "synthetic", rate: 30, rate_source: "synthetic" },
+    "CEILING.AREA.*": { spec: "SYNTHETIC ceiling spec", spec_source: "synthetic", rate: 12, rate_source: "synthetic" },
+    "SKIRTING.*": { spec: "SYNTHETIC skirting spec", spec_source: "synthetic", rate: 4, rate_source: "synthetic" },
+    "DOOR.*": { spec: "SYNTHETIC door spec", spec_source: "synthetic", rate: 250, rate_source: "synthetic" },
+    "WINDOW.*": { spec: "SYNTHETIC window spec", spec_source: "synthetic", rate: 300, rate_source: "synthetic" },
+    "INS.*": { spec: "SYNTHETIC insulation spec", spec_source: "synthetic", rate: 8, rate_source: "synthetic" },
+    "MEP.*": { spec: "SYNTHETIC MEP point spec", spec_source: "synthetic", rate: 20, rate_source: "synthetic" }
+  },
+  materials: {
+    "SLAB.VOL": [{ material: "cement", unit: "bag", per_unit: 7, source: "synthetic" }, { material: "sand", unit: "m3", per_unit: 0.45, source: "synthetic" }, { material: "gravel", unit: "m3", per_unit: 0.9, source: "synthetic" }, { material: "reinforcement steel", unit: "kg", per_unit: 100, source: "synthetic" }],
+    "BEAM.VOL": [{ material: "cement", unit: "bag", per_unit: 7, source: "synthetic" }, { material: "sand", unit: "m3", per_unit: 0.45, source: "synthetic" }, { material: "gravel", unit: "m3", per_unit: 0.9, source: "synthetic" }, { material: "reinforcement steel", unit: "kg", per_unit: 120, source: "synthetic" }],
+    "COLUMN.VOL": [{ material: "cement", unit: "bag", per_unit: 7, source: "synthetic" }, { material: "sand", unit: "m3", per_unit: 0.45, source: "synthetic" }, { material: "gravel", unit: "m3", per_unit: 0.9, source: "synthetic" }, { material: "reinforcement steel", unit: "kg", per_unit: 150, source: "synthetic" }],
+    "WALL.EXT.AREA": [{ material: "block", unit: "nr", per_unit: 12.5, source: "synthetic" }, { material: "mortar", unit: "m3", per_unit: 0.02, source: "synthetic" }],
+    "WALL.INT.AREA": [{ material: "block", unit: "nr", per_unit: 12.5, source: "synthetic" }, { material: "mortar", unit: "m3", per_unit: 0.02, source: "synthetic" }]
+  },
+  material_data: {
+    "cement": { spec: "SYNTHETIC cement spec", spec_source: "synthetic", rate: 1, rate_source: "synthetic" },
+    "sand": { spec: "SYNTHETIC sand spec", rate: 1, rate_source: "synthetic" },
+    "gravel": { spec: "SYNTHETIC gravel spec", rate: 1, rate_source: "synthetic" },
+    "reinforcement steel": { spec: "SYNTHETIC steel spec", rate: 1, rate_source: "synthetic" },
+    "block": { spec: "SYNTHETIC block spec", rate: 1, rate_source: "synthetic" },
+    "mortar": { spec: "SYNTHETIC mortar spec", rate: 1, rate_source: "synthetic" }
+  },
+  markups: [{ name: "Overheads and profit", pct: 10, source: "synthetic" }, { name: "VAT", pct: 15, source: "synthetic" }]
+});
+$("boq-example").onclick = () => { $("boqin").value = JSON.stringify(BOQ_EXAMPLE(), null, 2); };
+const readBoq = () => { const txt = $("boqin").value.trim(); if (!txt) return {}; try { return JSON.parse(txt); } catch (e) { throw new Error("JSON: " + e.message); } };
+async function runBoq() { state.boq = await call("boq", { inputs: readBoq(), lang }); renderBoq(); }
+$("boq-run").onclick = () => busy(runBoq);
+const saveBoq = (name, key) => busy(async () => { await runBoq(); const r = await call("export", { name, data: state.boq[key] }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
+$("boq-csv").onclick = () => saveBoq("boq.csv", "boq_csv");
+$("boq-mat").onclick = () => saveBoq("materials.csv", "materials_csv");
+$("boq-spec").onclick = () => saveBoq("specifications.csv", "specs_csv");
+$("boq-doc").onclick = () => saveBoq("boq.html", "html");
+$("boq-xlsx").onclick = () => busy(async () => { await runBoq(); const r = await call("export", { name: "boq.xlsx", b64: state.boq.xlsx_b64 }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
+$("boq-pdf").onclick = () => busy(async () => { await runBoq(); const s = await call("save_pdf", { html: state.boq.html, name: "boq.pdf", size: "A4" }); toast(s.saved ? t("saved") + ": " + s.saved : t("cancelled")); });
+function renderBoq() {
+  const b = state.boq; if (!b) return; const r = b.report, f = (v, d = 2) => (v == null ? "" : Number(v).toFixed(d)), h = [], cur = esc(r.project.currency || "");
+  h.push(`<h2 class="${r.complete ? "" : "bad"}">${r.complete ? t("b_complete") : t("b_partial")}: ${r.priced} / ${r.priced + r.unpriced} ${t("b_priced")}</h2>`);
+  h.push(`<table><tbody><tr><td>${t("b_subtotal")}</td><td class="num">${f(r.subtotal)} ${cur}</td></tr>${r.markups.map(m => `<tr><td>${esc(m.name)} (${m.pct}%)</td><td class="num">${f(m.amount)}</td></tr>`).join("")}<tr><td><b>${t("b_total")}</b></td><td class="num"><b>${f(r.total)} ${cur}</b></td></tr></tbody></table>`);
+  if (r.warnings.length) h.push(`<ul class="clean">${r.warnings.map(x => `<li class="warn">${esc(x)}</li>`).join("")}</ul>`);
+  const m = r.missing, list = (title, a) => a.length ? `<details><summary class="warn">${title} (${a.length})</summary><div class="note">${a.map(esc).join("، ")}</div></details>` : "";
+  h.push(list(t("b_no_rate"), m.no_rate) + list(t("b_no_spec"), m.no_spec) + list(t("b_no_fac"), m.no_material_factors) + list(t("b_no_src"), m.no_source));
+  let last = "", rows = "";
+  for (const x of r.rows) { if (x.section !== last) { rows += `<tr class="sec"><td colspan="6"><b>${esc(x.section)}</b></td></tr>`; last = x.section; }
+    rows += `<tr class="${!x.reference_only && x.amount == null ? "missing" : ""}" title="${esc(x.code)}"><td>${x.no}</td><td>${esc(x.description)}<br><small>${esc(x.spec || "")}</small></td><td>${x.unit}</td><td class="num">${f(x.quantity)}</td><td class="num">${f(x.rate)}</td><td class="num">${x.reference_only ? t("b_ref") : f(x.amount)}</td></tr>`; }
+  h.push(`<h2>${t("b_boq")}</h2><table><thead><tr><th>${t("b_no")}</th><th>${t("b_desc")}</th><th>${t("unit")}</th><th>${t("qty")}</th><th>${t("b_rate")}</th><th>${t("b_amount")}</th></tr></thead><tbody>${rows}</tbody></table>`);
+  h.push(`<h2>${t("b_materials")}</h2>` + (r.materials.length ? `<table><thead><tr><th>${t("b_material")}</th><th>${t("unit")}</th><th>${t("qty")}</th><th>${t("b_spec")}</th></tr></thead><tbody>${r.materials.map(x => `<tr title="${esc(x.used_in.join(", "))}"><td>${esc(x.material)}</td><td>${esc(x.unit)}</td><td class="num">${f(x.quantity)}</td><td>${esc(x.spec || "—")}</td></tr>`).join("")}</tbody></table>` : `<div class="note">${t("b_no_materials")}</div>`));
+  h.push(`<h2>${t("b_specs")}</h2><table><thead><tr><th>${t("b_desc")}</th><th>${t("b_spec")}</th><th>${t("source")}</th><th>${t("unit")}</th><th>${t("qty")}</th></tr></thead><tbody>${r.specs.map(x => `<tr class="${x.spec ? "" : "missing"}"><td>${esc(x.description)}<br><small>${esc(x.code)}</small></td><td>${esc(x.spec || "—")}</td><td>${esc(x.source || "—")}</td><td>${x.unit}</td><td class="num">${f(x.quantity)}</td></tr>`).join("")}</tbody></table>`);
+  $("boqout").innerHTML = h.join("");
+}
+
+// ---------------------------------------------------------------- 3D view (WebGL, no external library)
+// The geometry comes from the model (command "model3d"); every solid names its element, so a click on it is a click on the model.
+const V3 = { on: false, gl: null, prog: null, boxes: [], sel: null, yaw: -0.8, pitch: 0.55, dist: 30, target: [0, 0, 1.5], show: { slab: false, struct: true, floor: true, glass: true, mep: true }, buf: null, drag: null, size: [1, 1] };
+const FLOOR_COL = { stair: [0.78, 0.78, 0.86], hall: [0.9, 0.88, 0.8], bedroom: [0.81, 0.89, 0.95], bathroom: [0.74, 0.88, 0.85], kitchen: [0.95, 0.89, 0.72], majlis: [0.91, 0.83, 0.93], living: [0.94, 0.85, 0.78], dining: [0.91, 0.88, 0.75] };
+const MEP_COL = { light: [0.95, 0.72, 0.02], socket: [0.1, 0.42, 0.66], panel: [0.42, 0.1, 0.6], fixture: [0.16, 0.62, 0.56], ac_indoor: [0.04, 0.45, 0.52] };
+function colorOf(b) {
+  switch (b.kind) {
+    case "Wall": return b.class === "ext" ? [0.85, 0.82, 0.77, 1] : [0.93, 0.91, 0.87, 1];
+    case "Slab": return [0.6, 0.63, 0.65, 1];
+    case "Column": return [0.71, 0.27, 0.1, 1];
+    case "Beam": return [0.79, 0.45, 0.24, 1];
+    case "Footing": return [0.48, 0.42, 0.36, 1];
+    case "Door": return [0.54, 0.35, 0.17, 1];
+    case "Window": return [0.31, 0.59, 0.78, 0.38];
+    case "Space": return [...(FLOOR_COL[b.class] || [0.87, 0.87, 0.87]), 1];
+    default: return [...(MEP_COL[b.class] || [0.3, 0.3, 0.3]), 1];
+  }
+}
+const visible3 = b => (V3.maxLevel == null || b.level == null || b.level <= V3.maxLevel) && (b.kind === "Slab" ? V3.show.slab : (b.kind === "Column" || b.kind === "Beam" || b.kind === "Footing") ? V3.show.struct : b.kind === "Space" ? V3.show.floor : b.kind === "Window" ? V3.show.glass : b.kind === "MepPoint" ? V3.show.mep : true);
+function pushBox(out, b, col) {
+  const [x0, y0, z0] = b.min, [x1, y1, z1] = b.max, f = [
+    [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [0, 0, -1]], [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [0, 0, 1]],
+    [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], [0, -1, 0]], [[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1], [0, 1, 0]],
+    [[x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [x0, y0, z1], [-1, 0, 0]], [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1], [1, 0, 0]]];
+  for (const [a, b2, c, d, n] of f) for (const v of [a, b2, c, a, c, d]) out.push(v[0], v[1], v[2], n[0], n[1], n[2], col[0], col[1], col[2], col[3]);
+}
+function build3() {
+  if (!V3.gl) return;
+  const op = [], tr = [];
+  for (const b of V3.boxes) {
+    if (!visible3(b)) continue;
+    let c = colorOf(b);
+    if (V3.sel && b.id === V3.sel) c = [0.9, 0.63, 0, c[3] < 1 ? 0.6 : 1];
+    pushBox(c[3] < 1 ? tr : op, b, c);
+  }
+  const gl = V3.gl;
+  const up = (buf, arr) => { gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW); };
+  up(V3.buf.op, op); up(V3.buf.tr, tr); V3.buf.nOp = op.length / 10; V3.buf.nTr = tr.length / 10;
+}
+const m4 = {
+  persp(fy, a, n, f) { const t = 1 / Math.tan(fy / 2); return [t / a, 0, 0, 0, 0, t, 0, 0, 0, 0, (f + n) / (n - f), -1, 0, 0, 2 * f * n / (n - f), 0]; },
+  look(e, c, u) {
+    const sub = (a, b) => a.map((v, i) => v - b[i]), cr = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]], nm = a => { const l = Math.hypot(...a); return a.map(v => v / l); }, dt = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const z = nm(sub(e, c)), x = nm(cr(u, z)), y = cr(z, x);
+    return [x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, -dt(x, e), -dt(y, e), -dt(z, e), 1];
+  },
+  mul(a, b) { const o = new Array(16).fill(0); for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) for (let k = 0; k < 4; k++) o[j * 4 + i] += a[k * 4 + i] * b[j * 4 + k]; return o; }
+};
+function eye3() { const cp = Math.cos(V3.pitch); return [V3.target[0] + V3.dist * cp * Math.cos(V3.yaw), V3.target[1] + V3.dist * cp * Math.sin(V3.yaw), V3.target[2] + V3.dist * Math.sin(V3.pitch)]; }
+function draw3() {
+  const gl = V3.gl; if (!gl || !V3.on) return;
+  const cv = $("gl"), dpr = window.devicePixelRatio || 1, w = Math.max(2, Math.round(cv.clientWidth * dpr)), h = Math.max(2, Math.round(cv.clientHeight * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  V3.size = [w, h]; gl.viewport(0, 0, w, h);
+  gl.clearColor(0.95, 0.96, 0.98, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  const mvp = m4.mul(m4.persp(0.8, w / h, 0.1, 600), m4.look(eye3(), V3.target, [0, 0, 1]));
+  gl.useProgram(V3.prog); gl.uniformMatrix4fv(V3.u.m, false, new Float32Array(mvp)); gl.uniform3f(V3.u.l, -0.4, -0.55, 0.75);
+  const bind = buf => { gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.vertexAttribPointer(V3.a.p, 3, gl.FLOAT, false, 40, 0); gl.vertexAttribPointer(V3.a.n, 3, gl.FLOAT, false, 40, 12); gl.vertexAttribPointer(V3.a.c, 4, gl.FLOAT, false, 40, 24); };
+  gl.enable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.depthMask(true);
+  if (V3.buf.nOp) { bind(V3.buf.op); gl.drawArrays(gl.TRIANGLES, 0, V3.buf.nOp); }
+  if (V3.buf.nTr) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false); bind(V3.buf.tr); gl.drawArrays(gl.TRIANGLES, 0, V3.buf.nTr); gl.depthMask(true); }
+}
+function init3() {
+  if (V3.gl) return true;
+  const gl = $("gl").getContext("webgl", { antialias: true }); if (!gl) { toast("WebGL is not available"); return false; }
+  const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
+  const pr = gl.createProgram();
+  gl.attachShader(pr, sh(gl.VERTEX_SHADER, "attribute vec3 p;attribute vec3 n;attribute vec4 c;uniform mat4 m;varying vec4 vc;varying vec3 vn;void main(){gl_Position=m*vec4(p,1.0);vn=n;vc=c;}"));
+  gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, "precision mediump float;varying vec4 vc;varying vec3 vn;uniform vec3 l;void main(){float d=max(dot(normalize(vn),normalize(l)),0.0);float k=0.5+0.5*d;gl_FragColor=vec4(vc.rgb*k,vc.a);}"));
+  gl.linkProgram(pr);
+  V3.gl = gl; V3.prog = pr; V3.a = { p: gl.getAttribLocation(pr, "p"), n: gl.getAttribLocation(pr, "n"), c: gl.getAttribLocation(pr, "c") }; V3.u = { m: gl.getUniformLocation(pr, "m"), l: gl.getUniformLocation(pr, "l") };
+  for (const a of Object.values(V3.a)) gl.enableVertexAttribArray(a);
+  V3.buf = { op: gl.createBuffer(), tr: gl.createBuffer(), nOp: 0, nTr: 0 };
+  return true;
+}
+function fit3(sc) {
+  const lo = sc.min, hi = sc.max; V3.target = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+  V3.dist = 1.4 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / (2 * Math.tan(0.4)) + 2;
+}
+async function refresh3d(refit) {
+  if (!V3.on || !init3()) return;
+  try { const sc = await call("model3d"); V3.boxes = sc.boxes; V3.scene = sc;
+    { const w = $("v-level-wrap"), sel = $("v-level"), ls = sc.levels || []; w.style.display = ls.length > 1 ? "" : "none";
+      sel.innerHTML = `<option value="all">${t("lv_all")}</option>` + ls.map(l => `<option value="${l.index}">${levelLabel(l.index)}</option>`).join("");
+      if (ls.length < 2 || (V3.maxLevel != null && V3.maxLevel >= ls.length)) V3.maxLevel = null;
+      sel.value = V3.maxLevel == null ? "all" : String(V3.maxLevel); } if (refit) fit3(sc); build3(); draw3(); $("v3-info").textContent = `${V3.boxes.length} ${t("v_solids")}`; }
+  catch (e) { V3.boxes = []; V3.buf.nOp = V3.buf.nTr = 0; draw3(); $("v3-info").textContent = t("viewer_empty"); }
+}
+function setView3(on) {
+  V3.on = on; $("v3").style.display = on ? "flex" : "none"; $("viewer").style.display = on ? "none" : "flex"; $("to3d").textContent = on ? t("to2d") : t("to3d");
+  if (on) refresh3d(true);
+}
+$("to3d").onclick = () => setView3(!V3.on);
+for (const [id, key] of [["v-slab", "slab"], ["v-struct", "struct"], ["v-floor", "floor"], ["v-glass", "glass"], ["v-mep", "mep"]]) { $(id).checked = V3.show[key]; $(id).onchange = () => { V3.show[key] = $(id).checked; build3(); draw3(); }; }
+$("v-level").onchange = () => { const v = $("v-level").value; V3.maxLevel = v === "all" ? null : Number(v); build3(); draw3(); };
+$("v-reset").onclick = () => { V3.yaw = -0.8; V3.pitch = 0.55; if (V3.scene) fit3(V3.scene); V3.sel = null; build3(); draw3(); $("v3-pick").textContent = ""; };
+$("v-top").onclick = () => { V3.yaw = -Math.PI / 2; V3.pitch = 1.5; draw3(); };
+function ray3(ev) {
+  const cv = $("gl"), r = cv.getBoundingClientRect(), nx = ((ev.clientX - r.left) / r.width) * 2 - 1, ny = 1 - ((ev.clientY - r.top) / r.height) * 2, e = eye3();
+  const f = V3.target.map((v, i) => v - e[i]), fl = Math.hypot(...f), fn = f.map(v => v / fl);
+  const rt0 = [fn[1], -fn[0], 0], rl = Math.hypot(...rt0), rt = rt0.map(v => v / rl);
+  const up = [rt[1] * fn[2] - rt[2] * fn[1], rt[2] * fn[0] - rt[0] * fn[2], rt[0] * fn[1] - rt[1] * fn[0]], th = Math.tan(0.4), asp = r.width / r.height;
+  return { o: e, d: fn.map((v, i) => v + rt[i] * nx * th * asp + up[i] * ny * th) };
+}
+function pick3(ev) {
+  const { o, d } = ray3(ev); let best = null, bt = Infinity;
+  for (const b of V3.boxes) {
+    if (!visible3(b)) continue;
+    let t0 = -Infinity, t1 = Infinity;
+    for (let i = 0; i < 3; i++) { if (Math.abs(d[i]) < 1e-12) { if (o[i] < b.min[i] || o[i] > b.max[i]) { t0 = Infinity; break; } continue; } let a = (b.min[i] - o[i]) / d[i], c = (b.max[i] - o[i]) / d[i]; if (a > c) [a, c] = [c, a]; t0 = Math.max(t0, a); t1 = Math.min(t1, c); }
+    if (t0 <= t1 && t1 > 0 && t0 < bt) { bt = Math.max(t0, 0); best = b; }
+  }
+  return best;
+}
+const gl3 = $("gl");
+gl3.addEventListener("mousedown", e => { V3.drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey, moved: 0 }; });
+window.addEventListener("mouseup", async e => {
+  const d = V3.drag; V3.drag = null; if (!d || !V3.on || d.moved > 4 || e.target !== gl3) return;
+  const b = pick3(e); V3.sel = b ? b.id : null; build3(); draw3();
+  if (!b) { $("v3-pick").textContent = ""; return; }
+  $("v3-pick").textContent = `${b.kind}${b.class ? " / " + b.class : ""}${b.visual ? " (" + t("v_visual") + ")" : ""} · ${b.id}`;
+});
+window.addEventListener("mousemove", e => {
+  const d = V3.drag; if (!d) return; const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY; d.moved += Math.abs(dx) + Math.abs(dy);
+  if (d.pan) { const k = V3.dist * 0.0016, c = Math.cos(V3.yaw), s = Math.sin(V3.yaw); V3.target[0] += (s * dx - c * dy * Math.sin(V3.pitch)) * k; V3.target[1] += (-c * dx - s * dy * Math.sin(V3.pitch)) * k; }
+  else { V3.yaw -= dx * 0.007; V3.pitch = Math.max(-0.1, Math.min(1.5, V3.pitch + dy * 0.007)); }
+  draw3();
+});
+gl3.addEventListener("wheel", e => { e.preventDefault(); V3.dist = Math.max(2, Math.min(300, V3.dist * Math.exp(e.deltaY * 0.001))); draw3(); }, { passive: false });
+gl3.addEventListener("contextmenu", e => e.preventDefault());
+window.addEventListener("resize", () => draw3());
+
+// ---------------------------------------------------------------- code rules
+$("runrules").onclick = () => busy(async () => {
+  const r = await call("check_rules", { pack: $("pack").value });
+  $("rulesout").innerHTML = `<h2>${t("checked")}: ${r.checked}</h2><div class="note">${r.layers.map(esc).join(" → ")}</div>
+    <h2>${t("findings")} (${r.findings.length})</h2><ul class="clean">${r.findings.map(f => `<li class="${f.severity === "error" ? "bad" : "warn"}">${esc(f.rule)} [${esc(f.clause)}] ${esc(f.message)}</li>`).join("") || `<li class="ok">${t("none")}</li>`}</ul>
+    <h2>${t("skipped")} (${r.skipped.length})</h2><ul class="clean">${r.skipped.map(s => `<li class="warn">${esc(s.rule)}: ${esc(s.reason)}</li>`).join("")}</ul>`;
+});
+
+// ---------------------------------------------------------------- editing the plan
+// Every edit is a command to the application; the plan is redrawn from the model afterwards.
+const PX_PER_MM = 0.05; // the plan is drawn at 50 px per metre (DrawOpts::default)
+function clearSel() { const i = $("inspector"); if (i) { i.style.display = "none"; i.innerHTML = ""; } document.querySelectorAll("#viewer .sel").forEach(e => e.classList.remove("sel")); }
+async function afterEdit(r) {
+  showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); }
+  state.qto = null; state.sched = null; state.mep = null; state.boq = null; if ($("mepout")) $("mepout").innerHTML = ""; if ($("boqout")) $("boqout").innerHTML = ""; refreshStatus(); loadQto();
+  toast(r.mep_cleared ? t("m_cleared").replace("{n}", r.mep_cleared) : t("i_done"));
+}
+async function selectElement(el) {
+  const info = await call("describe", { id: el.dataset.id });
+  document.querySelectorAll("#viewer .sel").forEach(e => e.classList.remove("sel")); el.classList.add("sel");
+  const box = $("inspector"); box.style.display = "flex";
+  const clear = `<button id="i-clear">${t("i_clear")}</button>`;
+  if (info.kind === "Wall") {
+    box.innerHTML = info.movable
+      ? `<b>${t("i_wall")} ${esc(info.rooms[0])} / ${esc(info.rooms[1])}</b> <span>${t("i_len")} ${info.length}</span>
+         <label style="margin:0">${t("i_move")}</label><input id="i-delta" type="number" step="50" value="100">
+         <button id="i-minus">−</button><button id="i-plus">+</button> ${clear}<span class="hint">${t("i_hint")}</span>`
+      : `<b>${t("i_ext")}</b> ${clear}`;
+    if (info.movable) { const d = () => Number($("i-delta").value) || 0; $("i-minus").onclick = () => busy(async () => afterEdit(await call("move_partition", { wall: info.id, delta_mm: -d() }))); $("i-plus").onclick = () => busy(async () => afterEdit(await call("move_partition", { wall: info.id, delta_mm: d() }))); }
+  } else if (info.kind === "Door" || info.kind === "Window") {
+    box.innerHTML = `<b>${t(info.kind === "Door" ? "i_door" : "i_window")}</b> <label style="margin:0">${t("i_width")}</label><input id="i-w" type="number" step="50" value="${info.width}">
+      <label style="margin:0">${t("i_offset")}</label><input id="i-o" type="number" step="50" value="${info.offset}"> <span class="hint">/ ${info.wall_length}</span>
+      <button id="i-apply" class="primary">${t("i_apply")}</button><button id="i-del">${t("i_delete")}</button> ${clear}`;
+    $("i-apply").onclick = () => busy(async () => { const r = await call("set_opening", { id: info.id, width: Number($("i-w").value), offset: Number($("i-o").value) }); await afterEdit(r); const again = document.querySelector(`#viewer [data-id="${info.id}"]`); if (again) selectElement(again); });
+    $("i-del").onclick = () => busy(async () => afterEdit(await call("delete_opening", { id: info.id })));
+  } else {
+    box.innerHTML = `<b>${t("i_room")}</b> ${esc(info.key)} · ${info.area} m² (${info.w} × ${info.h}) ${clear}`;
+  }
+  $("i-clear").onclick = clearSel;
+}
+// Doors, windows and partitions are only a few pixels thick on screen, so a pointer near them counts as on them.
+function nearRect(e, rect, pad) { const b = rect.getBoundingClientRect(); return e.clientX >= b.left - pad && e.clientX <= b.right + pad && e.clientY >= b.top - pad && e.clientY <= b.bottom + pad; }
+function pickOpening(e) { return [...document.querySelectorAll("#viewer g.door, #viewer g.window")].find(g => { const c = g.querySelector("rect.cut"); return c && nearRect(e, c, 8); }); }
+function pickPartition(e) {
+  const direct = e.target.closest("rect.wall.int[data-id]"); if (direct) return direct;
+  return [...document.querySelectorAll("#viewer rect.wall.int[data-id]")].find(r => nearRect(e, r, 5));
+}
+const drag = { el: null, x: 0, y: 0, moved: false, horizontal: false };
+$("viewer").addEventListener("mousedown", e => {
+  const el = pickOpening(e) ? null : pickPartition(e);
+  if (!el || e.button !== 0) return;
+  e.preventDefault();
+  const b = el.getBoundingClientRect();
+  Object.assign(drag, { el, x: e.clientX, y: e.clientY, moved: false, horizontal: b.width > b.height });
+});
+document.addEventListener("mousemove", e => {
+  if (!drag.el) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+  drag.moved = true;
+  const svg = drag.el.ownerSVGElement, k = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
+  drag.el.style.transform = drag.horizontal ? `translate(0px, ${dy / k}px)` : `translate(${dx / k}px, 0px)`;
+});
+document.addEventListener("mouseup", e => {
+  if (!drag.el) return;
+  const el = drag.el; drag.el = null;
+  if (!drag.moved) return; // a plain click is handled below
+  const svg = el.ownerSVGElement, k = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
+  // Screen up is model +y; screen right is model +x. Snap to 50 mm.
+  const raw = drag.horizontal ? -(e.clientY - drag.y) / k / PX_PER_MM : (e.clientX - drag.x) / k / PX_PER_MM;
+  const delta = Math.round(raw / 50) * 50;
+  el.style.transform = "";
+  if (delta === 0) return;
+  busy(async () => afterEdit(await call("move_partition", { wall: el.dataset.id, delta_mm: delta })));
+});
+$("viewer").addEventListener("click", e => {
+  if (drag.moved) { drag.moved = false; return; }
+  const el = pickOpening(e) || pickPartition(e) || e.target.closest("[data-id]");
+  if (el && el.ownerSVGElement) busy(async () => selectElement(el));
+});
+
+// ---------------------------------------------------------------- open a saved project
+function applySettings(s) {
+  const b = s.brief || {}, st = s.structure || {};
+  $("title").value = b.title ?? s.title ?? "";
+  for (const [id, k] of [["width", "width_m"], ["length", "length_m"], ["sbf", "setback_front_m"], ["sbb", "setback_back_m"], ["sbs", "setback_side_m"]]) $(id).value = b[k] ?? "";
+  $("entry").value = b.entry || "south";
+  if (Array.isArray(b.rooms)) { state.rooms = b.rooms.map(x => ({ key: x.key, name: x.name || "", func: x.func, area: x.area, zone: x.zone, light: !!x.light, floor: x.floor || 1 })); renderRooms(); }
+  $("stairw").value = (b.stair || {}).width_m ?? ""; $("stairl").value = (b.stair || {}).length_m ?? ""; $("stairside").value = (b.stair || {}).side || "west";
+  for (const [id, k] of [["dead", "dead_kpa"], ["live", "live_kpa"], ["bearing", "bearing_kpa"], ["floors", "floors"], ["maxspan", "max_span_mm"]]) $(id).value = st[k] ?? "";
+  $("showstruct").checked = !!s.show_structure;
+  $("mepin").value = s.mep && Object.keys(s.mep).length ? JSON.stringify(s.mep, null, 2) : "";
+  $("showmep").checked = !!s.show_mep; state.mep = null; $("mepout").innerHTML = "";
+  $("boqin").value = s.boq && Object.keys(s.boq).length ? JSON.stringify(s.boq, null, 2) : ""; state.boq = null; $("boqout").innerHTML = "";
+}
+$("openproj").onclick = () => busy(async () => {
+  const st = await call("status");
+  if (st.dirty && !confirm(t("discard_q"))) return;
+  const r = await call("open_project");
+  if (!r.opened) return;
+  applySettings(r.settings || {});
+  state.alts = []; state.sel = -1; state.qto = null; state.sched = null;
+  $("alts").innerHTML = `<div class="empty">${t("alts_empty")}</div>`;
+  showPlan(r.svg); state.notes = r.warnings; state.rooms_out = r.rooms;
+  renderNotes(); setPlanButtons(true); refreshStatus(); loadQto(); toast(t("opened") + ": " + r.opened);
+});
+
+applyLang();
+call("assumptions").then(a => { state.assumptions = a; if (state.rooms_out) renderNotes(); });
+</script>
+</body>
+</html>

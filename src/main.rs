@@ -1,0 +1,350 @@
+//! NanoArch: Windows desktop shell. A native window (tao) hosting the interface (WebView2 via wry).
+//! The interface sends `{id, cmd, args}` messages. Each runs on its own worker thread so the window never
+//! freezes during generation or a file dialog; `backend::App` answers; the reply returns through the event loop.
+
+#![cfg_attr(not(test), windows_subsystem = "windows")]
+
+mod backend;
+mod editing;
+mod levels;
+
+use serde_json::{Value, json};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
+use tao::dpi::LogicalSize;
+use tao::event::{Event, WindowEvent};
+use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
+use tao::window::{Window, WindowBuilder};
+use wry::{PageLoadEvent, WebView, WebViewBuilder};
+
+const HTML: &str = include_str!("../assets/index.html");
+
+/// Messages to the event loop (the only thread that may touch windows and web views).
+enum Ui {
+    /// Script to run in the main page (the reply to a command).
+    Js(String),
+    /// Print this HTML document to a PDF at `path`, then answer message `id`.
+    Pdf { id: u64, html: String, path: PathBuf, size_mm: (f64, f64) },
+    /// The document of printer `n` has finished loading: print it now.
+    PrintNow(usize),
+    /// Printer `n` is done; `error` is `None` on success.
+    PdfDone { n: usize, error: Option<String> },
+}
+
+/// A hidden window holding the document being printed.
+struct Printer {
+    _window: Window,
+    webview: WebView,
+    id: u64,
+    path: PathBuf,
+    html_file: PathBuf,
+    /// Page size in millimetres (width, height).
+    size_mm: (f64, f64),
+    /// Printing has been requested (the page-load event can fire more than once).
+    started: bool,
+}
+
+type Shared = Arc<Mutex<backend::App>>;
+
+/// The application state, even if a worker thread panicked while holding it.
+fn lock(app: &Shared) -> MutexGuard<'_, backend::App> {
+    app.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Runs one message and returns the JavaScript that delivers the result to the page.
+fn respond(app: &Shared, body: &str) -> String {
+    let msg: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let id = msg.get("id").and_then(Value::as_u64).unwrap_or(0);
+    let cmd = msg.get("cmd").and_then(Value::as_str).unwrap_or("");
+    let args = msg.get("args").cloned().unwrap_or(Value::Null);
+    let result = match cmd {
+        "export" => export(&args),
+        "save_project" => save_project(app),
+        "open_project" => open_project(app),
+        "pick_sketch" => pick_sketch(),
+        "sketch_pdfjs" => Ok(json!({ "lib": PDFJS, "worker": PDFJS_WORKER })),
+        // The lock is held only while the engines run, never while a dialog is open.
+        _ => lock(app).handle(cmd, &args),
+    };
+    let payload = match result {
+        Ok(data) => json!({ "ok": true, "data": data }),
+        Err(error) => json!({ "ok": false, "error": error }),
+    };
+    format!("window.__resolve({id}, {payload});")
+}
+
+/// Where an export goes. Normally the user picks it in a Save dialog. Setting the environment variable
+/// `NANOARCH_EXPORT_DIR` skips the dialog and saves into that folder: a seam for automated end-to-end tests of the
+/// real application (a dialog cannot be driven from outside).
+fn pick_save_path(name: &str) -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("NANOARCH_EXPORT_DIR") {
+        return Some(Path::new(&dir).join(name));
+    }
+    rfd::FileDialog::new().set_file_name(name).save_file()
+}
+
+/// Asks where to save a text export (CSV, SVG) and writes it. `saved` is null if the user cancels.
+fn export(args: &Value) -> Result<Value, String> {
+    let name = args.get("name").and_then(Value::as_str).unwrap_or("export.txt");
+    // Text goes in `data`; a binary file (xlsx) goes in `b64`.
+    let bytes: Vec<u8> = match (args.get("data").and_then(Value::as_str), args.get("b64").and_then(Value::as_str)) {
+        (Some(d), _) => d.as_bytes().to_vec(),
+        (None, Some(b)) => nnx_core::xlsx::base64_decode(b).map_err(|e| format!("export: {e}"))?,
+        _ => return Err("nothing to export".into()),
+    };
+    match pick_save_path(name) {
+        Some(path) => {
+            std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+            Ok(json!({ "saved": path.display().to_string() }))
+        }
+        None => Ok(json!({ "saved": null })),
+    }
+}
+
+/// pdf.js (Apache-2.0, see assets/vendor/pdfjs-LICENSE.txt) draws a PDF sketch onto a canvas. It is large, so the page
+/// asks for it only when a PDF is imported.
+const PDFJS: &str = include_str!("../assets/vendor/pdf.min.js");
+const PDFJS_WORKER: &str = include_str!("../assets/vendor/pdf.worker.min.js");
+const SKETCH_MAX_BYTES: u64 = 40 * 1024 * 1024;
+
+/// (kind, mime) of a sketch file by extension, or None if it is not a supported type.
+fn sketch_kind(path: &Path) -> Option<(&'static str, &'static str)> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "pdf" => Some(("pdf", "application/pdf")),
+        "png" => Some(("image", "image/png")),
+        "jpg" | "jpeg" => Some(("image", "image/jpeg")),
+        "bmp" => Some(("image", "image/bmp")),
+        "webp" => Some(("image", "image/webp")),
+        _ => None,
+    }
+}
+
+/// Lets the user pick a draft drawing (image or PDF) and returns its bytes for the page to draw. The sketch is only
+/// a reference to trace over, so nothing is stored in the project. `NANOARCH_SKETCH_FILE` skips the dialog (test seam).
+fn pick_sketch() -> Result<Value, String> {
+    let path = match std::env::var_os("NANOARCH_SKETCH_FILE") {
+        Some(p) => Some(PathBuf::from(p)),
+        None => rfd::FileDialog::new().add_filter("Sketch (png, jpg, bmp, webp, pdf)", &["png", "jpg", "jpeg", "bmp", "webp", "pdf"]).pick_file(),
+    };
+    let Some(path) = path else { return Ok(json!({ "picked": null })) };
+    let (kind, mime) = sketch_kind(&path).ok_or("unsupported file type: use png, jpg, bmp, webp or pdf")?;
+    let size = std::fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?.len();
+    if size > SKETCH_MAX_BYTES {
+        return Err(format!("the file is {} MB; the limit is {} MB", size / 1_048_576, SKETCH_MAX_BYTES / 1_048_576));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    Ok(json!({ "picked": { "name": name, "kind": kind, "mime": mime, "b64": nnx_core::xlsx::base64_encode(&bytes) } }))
+}
+
+/// Saves the open plan as `.nnx`, then records that state as saved so the close warning goes away.
+fn save_project(app: &Shared) -> Result<Value, String> {
+    let (model, settings) = {
+        let guard = lock(app);
+        (guard.model()?.clone(), guard.settings())
+    };
+    match rfd::FileDialog::new().set_file_name("project.nnx").add_filter("NanoArch project", &["nnx"]).save_file() {
+        Some(path) => {
+            nnx_core::persist::save_with_settings(&model, &settings, &path).map_err(|e| e.to_string())?;
+            lock(app).mark_saved();
+            Ok(json!({ "saved": path.display().to_string() }))
+        }
+        None => Ok(json!({ "saved": null })),
+    }
+}
+
+/// Opens a saved `.nnx` project, replacing the current plan. The page is told to ask first if there are
+/// unsaved changes (it checks `status`), so this only reads the file.
+fn open_project(app: &Shared) -> Result<Value, String> {
+    let Some(path) = rfd::FileDialog::new().add_filter("NanoArch project", &["nnx"]).pick_file() else {
+        return Ok(json!({ "opened": null }));
+    };
+    let (model, settings) = nnx_core::persist::load_with_settings(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut result = lock(app).open(model, &settings)?;
+    result["opened"] = json!(path.display().to_string());
+    Ok(result)
+}
+
+fn confirm_discard() -> bool {
+    rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Warning)
+        .set_title("NanoArch")
+        .set_description("There are unsaved changes. Close without saving?\nيوجد عمل غير محفوظ. هل تغلق دون حفظ؟")
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show()
+        == rfd::MessageDialogResult::Yes
+}
+
+/// Asks where to save the PDF (on a worker thread), then hands the document to the event loop to print.
+fn start_pdf(msg: &Value, proxy: &EventLoopProxy<Ui>) {
+    let id = msg.get("id").and_then(Value::as_u64).unwrap_or(0);
+    let args = msg.get("args").cloned().unwrap_or(Value::Null);
+    let reply = |payload: Value| {
+        let _ = proxy.send_event(Ui::Js(format!("window.__resolve({id}, {payload});")));
+    };
+    let Some(html) = args.get("html").and_then(Value::as_str) else {
+        return reply(json!({ "ok": false, "error": "nothing to print" }));
+    };
+    match pick_save_path(args.get("name").and_then(Value::as_str).unwrap_or("plan.pdf")) {
+        Some(path) => {
+            // A3 for plan sheets (the default), A4 for documents such as the bill of quantities.
+            let size_mm = if args.get("size").and_then(Value::as_str) == Some("A4") { (210.0, 297.0) } else { (297.0, 420.0) };
+            let _ = proxy.send_event(Ui::Pdf { id, html: html.to_string(), path, size_mm });
+        }
+        None => reply(json!({ "ok": true, "data": { "saved": null } })),
+    }
+}
+
+/// A hidden window that loads the document from a temporary file (a web view cannot take a large page as a string).
+fn open_printer(target: &EventLoopWindowTarget<Ui>, proxy: &EventLoopProxy<Ui>, n: usize, id: u64, html: &str, path: PathBuf, size_mm: (f64, f64)) -> Result<Printer, String> {
+    let html_file = std::env::temp_dir().join(format!("nanoarch-print-{}-{n}.html", std::process::id()));
+    std::fs::write(&html_file, html).map_err(|e| e.to_string())?;
+    let window = WindowBuilder::new().with_title("NanoArch print").with_visible(false).with_inner_size(LogicalSize::new(1200.0, 900.0)).build(target).map_err(|e| e.to_string())?;
+    let p = proxy.clone();
+    let url = format!("file:///{}", html_file.display().to_string().replace('\\', "/"));
+    let webview = WebViewBuilder::new()
+        .with_url(&url)
+        .with_on_page_load_handler(move |event, _| {
+            if matches!(event, PageLoadEvent::Finished) {
+                let _ = p.send_event(Ui::PrintNow(n));
+            }
+        })
+        .build(&window)
+        .map_err(|e| e.to_string())?;
+    Ok(Printer { _window: window, webview, id, path, html_file, size_mm, started: false })
+}
+
+/// Prints the loaded document to `path` with WebView2 on a portrait page of `size_mm`. `done` is called once, when
+/// the PDF is written or has failed.
+#[cfg(windows)]
+fn print_to_pdf(webview: &WebView, path: &Path, size_mm: (f64, f64), done: impl FnOnce(Result<(), String>) + 'static) -> Result<(), String> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT, ICoreWebView2, ICoreWebView2Environment6, ICoreWebView2PrintSettings, ICoreWebView2_7};
+    use webview2_com::PrintToPdfCompletedHandler;
+    use windows::core::{HSTRING, Interface};
+    use wry::WebViewExtWindows;
+    let core: ICoreWebView2 = webview.webview();
+    let core7: ICoreWebView2_7 = core.cast().map_err(|e| format!("this WebView2 runtime cannot print to PDF: {e}"))?;
+    // Portrait page of the requested size with 12 mm margins and backgrounds: the web engine ignores the CSS page size.
+    // If the runtime is too old for print settings, its default page is used instead.
+    let settings: Option<ICoreWebView2PrintSettings> = webview.environment().cast::<ICoreWebView2Environment6>().ok().and_then(|env| unsafe { env.CreatePrintSettings() }.ok()).and_then(|s| {
+        let a3 = (|| unsafe {
+            s.SetOrientation(COREWEBVIEW2_PRINT_ORIENTATION_PORTRAIT)?;
+            s.SetPageWidth(size_mm.0 / 25.4)?;
+            s.SetPageHeight(size_mm.1 / 25.4)?;
+            for set in [ICoreWebView2PrintSettings::SetMarginTop, ICoreWebView2PrintSettings::SetMarginBottom, ICoreWebView2PrintSettings::SetMarginLeft, ICoreWebView2PrintSettings::SetMarginRight] {
+                set(&s, 12.0 / 25.4)?;
+            }
+            s.SetShouldPrintBackgrounds(true)?;
+            Ok::<(), windows::core::Error>(())
+        })();
+        a3.ok().map(|()| s)
+    });
+    let handler = PrintToPdfCompletedHandler::create(Box::new(move |error, ok| {
+        done(match error {
+            Err(e) => Err(e.to_string()),
+            Ok(()) if ok => Ok(()),
+            Ok(()) => Err("printing to PDF failed".to_string()),
+        });
+        Ok(())
+    }));
+    unsafe { core7.PrintToPdf(&HSTRING::from(path.as_os_str()), settings.as_ref(), &handler) }.map_err(|e| e.to_string())
+}
+
+#[cfg(not(windows))]
+fn print_to_pdf(_: &WebView, _: &Path, _: (f64, f64), done: impl FnOnce(Result<(), String>) + 'static) -> Result<(), String> {
+    done(Err("PDF export needs Windows".into()));
+    Ok(())
+}
+
+fn main() {
+    let event_loop = EventLoopBuilder::<Ui>::with_user_event().build();
+    let proxy = event_loop.create_proxy();
+    let ui_proxy = proxy.clone();
+    let window = WindowBuilder::new()
+        .with_title("NanoArch - NanoNexus")
+        .with_inner_size(LogicalSize::new(1440.0, 900.0))
+        .build(&event_loop)
+        .expect("window");
+
+    let app: Shared = Arc::new(Mutex::new(backend::App::default()));
+    let handler_app = Arc::clone(&app);
+    let webview = WebViewBuilder::new()
+        .with_html(HTML)
+        .with_ipc_handler(move |req| {
+            let body = req.body().clone();
+            let (app, proxy) = (Arc::clone(&handler_app), proxy.clone());
+            std::thread::spawn(move || {
+                let msg: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                if msg.get("cmd").and_then(Value::as_str) == Some("save_pdf") {
+                    start_pdf(&msg, &proxy);
+                } else {
+                    let _ = proxy.send_event(Ui::Js(respond(&app, &body)));
+                }
+            });
+        })
+        .build(&window)
+        .expect("webview (is the WebView2 runtime installed?)");
+
+    let mut printers: Vec<Option<Printer>> = Vec::new();
+    event_loop.run(move |event, target, flow| {
+        *flow = ControlFlow::Wait;
+        match event {
+            Event::UserEvent(Ui::Js(js)) => {
+                let _ = webview.evaluate_script(&js);
+            }
+            Event::UserEvent(Ui::Pdf { id, html, path, size_mm }) => match open_printer(target, &ui_proxy, printers.len(), id, &html, path, size_mm) {
+                Ok(p) => printers.push(Some(p)),
+                Err(e) => {
+                    let _ = webview.evaluate_script(&format!("window.__resolve({id}, {});", json!({ "ok": false, "error": e })));
+                }
+            },
+            Event::UserEvent(Ui::PrintNow(n)) => {
+                if let Some(Some(p)) = printers.get_mut(n).filter(|p| p.as_ref().is_some_and(|p| !p.started)) {
+                    p.started = true;
+                    let proxy = ui_proxy.clone();
+                    if let Err(e) = print_to_pdf(&p.webview, &p.path, p.size_mm, move |r| {
+                        let _ = proxy.send_event(Ui::PdfDone { n, error: r.err() });
+                    }) {
+                        let _ = ui_proxy.send_event(Ui::PdfDone { n, error: Some(e) });
+                    }
+                }
+            }
+            Event::UserEvent(Ui::PdfDone { n, error }) => {
+                if let Some(p) = printers.get_mut(n).and_then(Option::take) {
+                    let payload = match error {
+                        None => json!({ "ok": true, "data": { "saved": p.path.display().to_string() } }),
+                        Some(e) => json!({ "ok": false, "error": e }),
+                    };
+                    let _ = webview.evaluate_script(&format!("window.__resolve({}, {payload});", p.id));
+                    let _ = std::fs::remove_file(&p.html_file);
+                }
+            }
+            // Close at once when nothing is unsaved; otherwise only if the user confirms.
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } if !lock(&app).is_dirty() || confirm_discard() => {
+                *flow = ControlFlow::Exit;
+            }
+            _ => {}
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sketch_types_are_recognised_by_extension_only_when_supported() {
+        let k = |n: &str| sketch_kind(Path::new(n));
+        assert_eq!(k("a.PDF"), Some(("pdf", "application/pdf")));
+        assert_eq!(k("plan.jpeg"), Some(("image", "image/jpeg")));
+        assert_eq!(k("x.png"), Some(("image", "image/png")));
+        assert_eq!(k("x.dwg"), None);
+        assert_eq!(k("noext"), None);
+    }
+
+    #[test]
+    fn the_pdf_engine_is_bundled_and_looks_like_pdfjs() {
+        assert!(PDFJS.contains("pdfjsLib") && PDFJS.len() > 100_000);
+        assert!(PDFJS_WORKER.len() > 500_000);
+    }
+}

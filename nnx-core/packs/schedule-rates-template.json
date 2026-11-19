@@ -1,0 +1,140 @@
+{
+  "note": "Enter your own production rates (quantity per crew per working day) and fixed durations, with the source of each. Nothing here is a default.",
+  "rates": {
+    "mobilise": {
+      "fixed_days": null,
+      "crews": 1,
+      "source": ""
+    },
+    "set_out": {
+      "fixed_days": null,
+      "crews": 1,
+      "source": ""
+    },
+    "excavate": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "footing_form": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "footing_steel": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "footing_pour": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "footing_cure": {
+      "fixed_days": null,
+      "crews": 1,
+      "source": ""
+    },
+    "backfill": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "column_form": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "column_steel": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "column_pour": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "slab_form": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "slab_steel": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "mep_embed": {
+      "fixed_days": null,
+      "crews": 1,
+      "source": ""
+    },
+    "slab_pour": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "slab_cure": {
+      "fixed_days": null,
+      "crews": 1,
+      "source": ""
+    },
+    "strip_form": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "blockwork": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "mep_first_fix": {
+      "fixed_days": null,
+      "crews": 1,
+      "source": ""
+    },
+    "plaster": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "doors_windows": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "ceiling": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "paint": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "floor_finish": {
+      "per_crew_day": null,
+      "crews": 1,
+      "source": ""
+    },
+    "mep_second_fix": {
+      "fixed_days": null,
+      "crews": 1,
+      "source": ""
+    },
+    "testing": {
+      "fixed_days": null,
+      "crews": 1,
+      "source": ""
+    },
+    "handover": {
+      "fixed_days": null,
+      "crews": 1,
+      "source": ""
+    }
+  }
+}

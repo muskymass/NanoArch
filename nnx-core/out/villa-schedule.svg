@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1006 760" width="1006" height="760" font-family="Segoe UI, Tahoma, Arial, sans-serif">
+<style>.bg{fill:#fff} .t{font-size:11px;fill:#222} .h{font-size:15px;font-weight:700;fill:#111} .s{font-size:11px;fill:#555}
+.bar{fill:#3a6ea5} .bar.critical{fill:#c0392b} .ms{fill:#555} .ms.critical{fill:#c0392b} .grid{stroke:#e2e2e2;stroke-width:1} .tick{font-size:9px;fill:#666}</style>
+<rect class="bg" width="1006" height="760"/>
+<text class="h" x="12" y="22">Villa - construction schedule (synthetic rates)</text>
+<text class="s" x="12" y="40">116 working days, finish 2027-04-25. Red = critical path.</text>
+<line class="grid" x1="270.0" y1="62.0" x2="270.0" y2="736.0"/>
+<text class="tick" x="270.0" y="58.0">2026-11-15</text>
+<line class="grid" x1="390.0" y1="62.0" x2="390.0" y2="736.0"/>
+<text class="tick" x="390.0" y="58.0">2026-12-13</text>
+<line class="grid" x1="510.0" y1="62.0" x2="510.0" y2="736.0"/>
+<text class="tick" x="510.0" y="58.0">2027-01-10</text>
+<line class="grid" x1="630.0" y1="62.0" x2="630.0" y2="736.0"/>
+<text class="tick" x="630.0" y="58.0">2027-02-07</text>
+<line class="grid" x1="750.0" y1="62.0" x2="750.0" y2="736.0"/>
+<text class="tick" x="750.0" y="58.0">2027-03-07</text>
+<line class="grid" x1="870.0" y1="62.0" x2="870.0" y2="736.0"/>
+<text class="tick" x="870.0" y="58.0">2027-04-04</text>
+<text class="t" x="12" y="83.0">T01 Site mobilisation</text>
+<rect class="bar critical" data-task="T01" x="270.0" y="73.0" width="18.0" height="14.0"/>
+<text class="t" x="12" y="103.0">T02 Setting out</text>
+<rect class="bar critical" data-task="T02" x="288.0" y="93.0" width="18.0" height="14.0"/>
+<text class="t" x="12" y="123.0">T03 Excavation for footings</text>
+<rect class="bar critical" data-task="T03" x="306.0" y="113.0" width="6.0" height="14.0"/>
+<text class="t" x="12" y="143.0">T04 Footing formwork</text>
+<rect class="bar critical" data-task="T04" x="312.0" y="133.0" width="6.0" height="14.0"/>
+<text class="t" x="12" y="163.0">T05 Footing reinforcement</text>
+<rect class="bar critical" data-task="T05" x="318.0" y="153.0" width="6.0" height="14.0"/>
+<text class="t" x="12" y="183.0">T06 Footing concrete pour</text>
+<rect class="bar critical" data-task="T06" x="324.0" y="173.0" width="6.0" height="14.0"/>
+<text class="t" x="12" y="203.0">T07 Footing curing</text>
+<rect class="bar critical" data-task="T07" x="330.0" y="193.0" width="18.0" height="14.0"/>
+<text class="t" x="12" y="223.0">T08 Backfill around footings</text>
+<rect class="bar critical" data-task="T08" x="348.0" y="213.0" width="6.0" height="14.0"/>
+<text class="t" x="12" y="243.0">T09 Column formwork (zone 1)</text>
+<rect class="bar critical" data-task="T09" x="354.0" y="233.0" width="12.0" height="14.0"/>
+<text class="t" x="12" y="263.0">T10 Column formwork (zone 2)</text>
+<rect class="bar" data-task="T10" x="366.0" y="253.0" width="12.0" height="14.0"/>
+<text class="t" x="12" y="283.0">T11 Column reinforcement (zone 1)</text>
+<rect class="bar critical" data-task="T11" x="366.0" y="273.0" width="6.0" height="14.0"/>
+<text class="t" x="12" y="303.0">T12 Column reinforcement (zone 2)</text>
+<rect class="bar" data-task="T12" x="378.0" y="293.0" width="6.0" height="14.0"/>
+<text class="t" x="12" y="323.0">T13 Column concrete pour (zone 1)</text>
+<rect class="bar critical" data-task="T13" x="372.0" y="313.0" width="6.0" height="14.0"/>
+<text class="t" x="12" y="343.0">T14 Column concrete pour (zone 2)</text>
+<rect class="bar" data-task="T14" x="384.0" y="333.0" width="6.0" height="14.0"/>
+<text class="t" x="12" y="363.0">T15 Slab and beam formwork (zone 1)</text>
+<rect class="bar critical" data-task="T15" x="378.0" y="353.0" width="30.0" height="14.0"/>
+<text class="t" x="12" y="383.0">T16 Slab and beam formwork (zone 2)</text>
+<rect class="bar critical" data-task="T16" x="408.0" y="373.0" width="30.0" height="14.0"/>
+<text class="t" x="12" y="403.0">T17 Slab and beam reinforcement (zone 1)</text>
+<rect class="bar" data-task="T17" x="408.0" y="393.0" width="24.0" height="14.0"/>
+<text class="t" x="12" y="423.0">T18 Slab and beam reinforcement (zone 2)</text>
+<rect class="bar critical" data-task="T18" x="438.0" y="413.0" width="24.0" height="14.0"/>
+<text class="t" x="12" y="443.0">T19 Embedded electrical and plumbing</text>
+<rect class="bar critical" data-task="T19" x="462.0" y="433.0" width="18.0" height="14.0"/>
+<text class="t" x="12" y="463.0">T20 Slab and beam concrete pour (zone 1)</text>
+<rect class="bar critical" data-task="T20" x="480.0" y="453.0" width="6.0" height="14.0"/>
+<text class="t" x="12" y="483.0">T21 Slab and beam concrete pour (zone 2)</text>
+<rect class="bar critical" data-task="T21" x="486.0" y="473.0" width="6.0" height="14.0"/>
+<text class="t" x="12" y="503.0">T22 Slab curing</text>
+<rect class="bar critical" data-task="T22" x="492.0" y="493.0" width="18.0" height="14.0"/>
+<text class="t" x="12" y="523.0">T23 Formwork stripping</text>
+<rect class="bar critical" data-task="T23" x="510.0" y="513.0" width="42.0" height="14.0"/>
+<text class="t" x="12" y="543.0">T24 Blockwork</text>
+<rect class="bar critical" data-task="T24" x="552.0" y="533.0" width="60.0" height="14.0"/>
+<text class="t" x="12" y="563.0">T25 First-fix electrical and plumbing</text>
+<rect class="bar critical" data-task="T25" x="612.0" y="553.0" width="18.0" height="14.0"/>
+<text class="t" x="12" y="583.0">T26 Plastering</text>
+<rect class="bar critical" data-task="T26" x="630.0" y="573.0" width="114.0" height="14.0"/>
+<text class="t" x="12" y="603.0">T27 Doors and windows</text>
+<rect class="bar" data-task="T27" x="744.0" y="593.0" width="6.0" height="14.0"/>
+<text class="t" x="12" y="623.0">T28 Ceilings</text>
+<rect class="bar critical" data-task="T28" x="744.0" y="613.0" width="36.0" height="14.0"/>
+<text class="t" x="12" y="643.0">T29 Painting</text>
+<rect class="bar critical" data-task="T29" x="780.0" y="633.0" width="114.0" height="14.0"/>
+<text class="t" x="12" y="663.0">T30 Floor finishes</text>
+<rect class="bar critical" data-task="T30" x="894.0" y="653.0" width="36.0" height="14.0"/>
+<text class="t" x="12" y="683.0">T31 Second-fix and fixtures</text>
+<rect class="bar" data-task="T31" x="894.0" y="673.0" width="18.0" height="14.0"/>
+<text class="t" x="12" y="703.0">T32 Testing and commissioning</text>
+<rect class="bar critical" data-task="T32" x="930.0" y="693.0" width="18.0" height="14.0"/>
+<text class="t" x="12" y="723.0">T33 Snagging and handover</text>
+<rect class="bar critical" data-task="T33" x="948.0" y="713.0" width="18.0" height="14.0"/>
+</svg>

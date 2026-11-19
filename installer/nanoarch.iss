@@ -1,0 +1,78 @@
+; NanoArch installer (Inno Setup 6). Build:
+;   ISCC.exe /DExeSrc="<path to nanoarch-app.exe>" installer\nanoarch.iss
+; Installs per user (no administrator rights) unless the user chooses "for all users".
+; The installer is NOT code-signed, so Windows SmartScreen will warn on first run.
+
+#define AppName "NanoArch"
+#define AppVersion "0.1.0"
+#define AppPublisher "NanoNexus"
+#ifndef ExeSrc
+  #error Pass the built executable: /DExeSrc="C:\path\to\nanoarch-app.exe"
+#endif
+
+[Setup]
+AppId={{B6E2C1F4-6A0B-4B6E-9B7A-3A1F0D9C5E21}
+AppName={#AppName}
+AppVersion={#AppVersion}
+AppVerName={#AppName} {#AppVersion}
+AppPublisher={#AppPublisher}
+DefaultDirName={autopf}\{#AppName}
+DefaultGroupName={#AppName}
+DisableProgramGroupPage=yes
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+OutputDir=..\dist
+OutputBaseFilename=NanoArch-Setup-{#AppVersion}
+SetupIconFile=nanoarch.ico
+UninstallDisplayIcon={app}\nanoarch.ico
+UninstallDisplayName={#AppName}
+Compression=lzma2
+SolidCompression=yes
+WizardStyle=modern
+VersionInfoVersion={#AppVersion}
+VersionInfoCompany={#AppPublisher}
+VersionInfoDescription={#AppName} setup
+
+[Languages]
+Name: "arabic"; MessagesFile: "compiler:Languages\Arabic.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+[Files]
+Source: "{#ExeSrc}"; DestDir: "{app}"; DestName: "NanoArch.exe"; Flags: ignoreversion
+Source: "nanoarch.ico"; DestDir: "{app}"; Flags: ignoreversion
+; Empty templates to fill in: a code rule pack (every value null) and production rates (every value null).
+Source: "..\nnx-core\packs\*.json"; DestDir: "{app}\templates"; Flags: ignoreversion
+
+[Icons]
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\NanoArch.exe"; IconFilename: "{app}\nanoarch.ico"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\NanoArch.exe"; IconFilename: "{app}\nanoarch.ico"; Tasks: desktopicon
+
+[Run]
+Filename: "{app}\NanoArch.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+// NanoArch shows its interface with the Microsoft Edge WebView2 runtime (installed with Windows 11
+// and with Microsoft Edge). If it is missing, say so instead of installing something unasked.
+function WebView2Installed: Boolean;
+var
+  v: String;
+begin
+  Result :=
+    (RegQueryStringValue(HKLM32, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', v) and (v <> '') and (v <> '0.0.0.0')) or
+    (RegQueryStringValue(HKCU, 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', v) and (v <> '') and (v <> '0.0.0.0'));
+end;
+
+function InitializeSetup: Boolean;
+begin
+  Result := True;
+  if not WebView2Installed then
+    if MsgBox('The Microsoft Edge WebView2 runtime was not found. NanoArch needs it to display its interface.' + #13#10 +
+              'Install it from https://developer.microsoft.com/microsoft-edge/webview2/ and then run NanoArch.' + #13#10#13#10 +
+              'Continue installing anyway?', mbConfirmation, MB_YESNO) = IDNO then
+      Result := False;
+end;

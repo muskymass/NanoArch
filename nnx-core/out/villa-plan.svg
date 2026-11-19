@@ -1,0 +1,279 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880.0 1190.0" width="880" height="1190" font-family="Segoe UI, Tahoma, Arial, sans-serif">
+<style>
+ .bg{fill:#fff} .room{fill:#fafaf7;stroke:none} .room.wet{fill:#e6f0f7}
+ .wall{fill:#2b2b2b} .wall.int{fill:#4a4a4a} .cut{fill:#fff}
+ .leaf{stroke:#111;stroke-width:1.2;fill:none} .swing{stroke:#777;stroke-width:.8;fill:none;stroke-dasharray:3 2}
+ .glass{stroke:#2a6f97;stroke-width:1;fill:none} .frame{stroke:#111;stroke-width:1;fill:none}
+ .name{font-size:13px;font-weight:600;fill:#111;text-anchor:middle} .meta{font-size:10.5px;fill:#555;text-anchor:middle}
+ .dim{stroke:#444;stroke-width:.8;fill:none} .dimtxt{font-size:11px;fill:#222;text-anchor:middle}
+.beam{stroke:#b5451b;stroke-width:1.4;stroke-dasharray:7 4;fill:none} .column{fill:#b5451b} .gridref{font-size:9px;fill:#b5451b;text-anchor:middle}
+ .title{font-size:16px;font-weight:700;fill:#111} .note{font-size:10.5px;fill:#a33}
+</style>
+<rect class="bg" width="880.0" height="1190.0"/>
+<rect class="room" data-id="01a1e8a5-163f-7666-8fdf-d65a68c7654e" x="423.5" y="744.5" width="366.5" height="245.5"/>
+<rect class="room" data-id="01a1e8a5-163f-7666-8fdf-d65b06deae73" x="423.5" y="363.0" width="366.5" height="204.5"/>
+<rect class="room" data-id="01a1e8a5-163f-7666-8fdf-d65caba3c9cd" x="90.0" y="690.0" width="200.0" height="300.0"/>
+<rect class="room" data-id="01a1e8a5-163f-7666-8fdf-d65d947d52ee" x="90.0" y="440.0" width="200.0" height="250.0"/>
+<rect class="room" data-id="01a1e8a5-163f-7666-8fdf-d65eec2c5d26" x="90.0" y="90.0" width="200.0" height="350.0"/>
+<rect class="room" data-id="01a1e8a5-163f-7666-8fdf-d65fb759f89c" x="607.0" y="90.0" width="183.0" height="273.0"/>
+<rect class="room" data-id="01a1e8a5-163f-7666-8fdf-d6601674f587" x="508.0" y="567.5" width="282.0" height="177.0"/>
+<rect class="room" data-id="01a1e8a5-163f-7666-8fdf-d6615de8510f" x="423.5" y="90.0" width="183.5" height="273.0"/>
+<rect class="room wet" data-id="01a1e8a5-163f-7666-8fdf-d662c46966bc" x="290.0" y="90.0" width="133.5" height="112.5"/>
+<rect class="room wet" data-id="01a1e8a5-163f-7666-8fdf-d66313dee6a0" x="290.0" y="202.5" width="133.5" height="112.5"/>
+<rect class="room wet" data-id="01a1e8a5-163f-7666-8fdf-d664f3017f87" x="423.5" y="567.5" width="84.5" height="177.0"/>
+<rect class="room" data-id="01a1e8a5-163f-7666-8fdf-d66560ead4b4" x="290.0" y="315.0" width="133.5" height="675.0"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d635ecfd7152" x="90.0" y="690.0" width="15.0" height="300.0"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d63621ebad71" x="90.0" y="440.0" width="15.0" height="250.0"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d637813342e1" x="90.0" y="90.0" width="15.0" height="350.0"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d638158cb363" x="286.2" y="690.0" width="7.5" height="300.0"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d6398fb188b1" x="286.2" y="440.0" width="7.5" height="250.0"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d63aea465544" x="286.2" y="315.0" width="7.5" height="125.0"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d63b565af99a" x="286.2" y="202.5" width="7.5" height="112.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d63c42fa58f9" x="286.2" y="90.0" width="7.5" height="112.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d63d206fab36" x="419.8" y="744.5" width="7.5" height="245.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d63e1fe4152b" x="419.8" y="567.5" width="7.5" height="177.0"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d63f2f9d3c8e" x="419.8" y="363.0" width="7.5" height="204.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d640be025bf4" x="419.8" y="315.0" width="7.5" height="48.0"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d641e3907be7" x="419.8" y="202.5" width="7.5" height="112.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d642be0def6a" x="419.8" y="90.0" width="7.5" height="112.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d643ec9a371f" x="504.2" y="567.5" width="7.5" height="177.0"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d6445d49195a" x="603.2" y="90.0" width="7.5" height="273.0"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d645dfba8b58" x="775.0" y="744.5" width="15.0" height="245.5"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d6462a1d9eee" x="775.0" y="567.5" width="15.0" height="177.0"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d6477e0698b1" x="775.0" y="363.0" width="15.0" height="204.5"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d6483bbeb4fb" x="775.0" y="90.0" width="15.0" height="273.0"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d6495456efbc" x="90.0" y="975.0" width="200.0" height="15.0"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d64a8d011c9d" x="290.0" y="975.0" width="133.5" height="15.0"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d64b1dd63ae1" x="423.5" y="975.0" width="366.5" height="15.0"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d64c6dc23481" x="423.5" y="740.8" width="84.5" height="7.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d64df9994614" x="508.0" y="740.8" width="282.0" height="7.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d64ed52f7c13" x="90.0" y="686.2" width="200.0" height="7.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d64f52dfc15e" x="423.5" y="563.8" width="84.5" height="7.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d650c439aeda" x="508.0" y="563.8" width="282.0" height="7.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d6513393083f" x="90.0" y="436.2" width="200.0" height="7.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d6527e07b638" x="423.5" y="359.2" width="183.5" height="7.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d6537a1d7d6c" x="607.0" y="359.2" width="183.0" height="7.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d654cfe9f255" x="290.0" y="311.2" width="133.5" height="7.5"/>
+<rect class="wall int" data-id="01a1e8a5-163f-7666-8fdf-d655e204c3a1" x="290.0" y="198.8" width="133.5" height="7.5"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d6563d7e7186" x="90.0" y="90.0" width="200.0" height="15.0"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d657ad8f23e4" x="290.0" y="90.0" width="133.5" height="15.0"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d65890388945" x="423.5" y="90.0" width="183.5" height="15.0"/>
+<rect class="wall" data-id="01a1e8a5-163f-7666-8fdf-d659554bf39b" x="607.0" y="90.0" width="183.0" height="15.0"/>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d698c74ef100">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d698c74ef100" x="90.0" y="802.5" width="15.0" height="75.0"/>
+<line class="frame" x1="90.0" y1="877.5" x2="90.0" y2="802.5"/>
+<line class="frame" x1="105.0" y1="877.5" x2="105.0" y2="802.5"/>
+<line class="glass" x1="97.5" y1="877.5" x2="97.5" y2="802.5"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d69906a164b4">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d69906a164b4" x="90.0" y="708.8" width="15.0" height="75.0"/>
+<line class="frame" x1="90.0" y1="783.8" x2="90.0" y2="708.8"/>
+<line class="frame" x1="105.0" y1="783.8" x2="105.0" y2="708.8"/>
+<line class="glass" x1="97.5" y1="783.8" x2="97.5" y2="708.8"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d69a6300b34b">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d69a6300b34b" x="90.0" y="527.5" width="15.0" height="75.0"/>
+<line class="frame" x1="90.0" y1="602.5" x2="90.0" y2="527.5"/>
+<line class="frame" x1="105.0" y1="602.5" x2="105.0" y2="527.5"/>
+<line class="glass" x1="97.5" y1="602.5" x2="97.5" y2="527.5"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d69ba6cb003b">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d69ba6cb003b" x="90.0" y="455.0" width="15.0" height="57.5"/>
+<line class="frame" x1="90.0" y1="512.5" x2="90.0" y2="455.0"/>
+<line class="frame" x1="105.0" y1="512.5" x2="105.0" y2="455.0"/>
+<line class="glass" x1="97.5" y1="512.5" x2="97.5" y2="455.0"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d69ce9efecf1">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d69ce9efecf1" x="90.0" y="227.5" width="15.0" height="75.0"/>
+<line class="frame" x1="90.0" y1="302.5" x2="90.0" y2="227.5"/>
+<line class="frame" x1="105.0" y1="302.5" x2="105.0" y2="227.5"/>
+<line class="glass" x1="97.5" y1="302.5" x2="97.5" y2="227.5"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d69db14130fe">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d69db14130fe" x="90.0" y="121.2" width="15.0" height="75.0"/>
+<line class="frame" x1="90.0" y1="196.2" x2="90.0" y2="121.2"/>
+<line class="frame" x1="105.0" y1="196.2" x2="105.0" y2="121.2"/>
+<line class="glass" x1="97.5" y1="196.2" x2="97.5" y2="121.2"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d69e740bb817">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d69e740bb817" x="775.0" y="829.8" width="15.0" height="75.0"/>
+<line class="frame" x1="775.0" y1="904.8" x2="775.0" y2="829.8"/>
+<line class="frame" x1="790.0" y1="904.8" x2="790.0" y2="829.8"/>
+<line class="glass" x1="782.5" y1="904.8" x2="782.5" y2="829.8"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d69f894c053e">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d69f894c053e" x="775.0" y="759.6" width="15.0" height="55.2"/>
+<line class="frame" x1="775.0" y1="814.8" x2="775.0" y2="759.6"/>
+<line class="frame" x1="790.0" y1="814.8" x2="790.0" y2="759.6"/>
+<line class="glass" x1="782.5" y1="814.8" x2="782.5" y2="759.6"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d6a0fda0deb2">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6a0fda0deb2" x="775.0" y="618.5" width="15.0" height="75.0"/>
+<line class="frame" x1="775.0" y1="693.5" x2="775.0" y2="618.5"/>
+<line class="frame" x1="790.0" y1="693.5" x2="790.0" y2="618.5"/>
+<line class="glass" x1="782.5" y1="693.5" x2="782.5" y2="618.5"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d6a14f37513a">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6a14f37513a" x="775.0" y="427.8" width="15.0" height="75.0"/>
+<line class="frame" x1="775.0" y1="502.8" x2="775.0" y2="427.8"/>
+<line class="frame" x1="790.0" y1="502.8" x2="790.0" y2="427.8"/>
+<line class="glass" x1="782.5" y1="502.8" x2="782.5" y2="427.8"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d6a29002c212">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6a29002c212" x="775.0" y="378.1" width="15.0" height="34.7"/>
+<line class="frame" x1="775.0" y1="412.8" x2="775.0" y2="378.1"/>
+<line class="frame" x1="790.0" y1="412.8" x2="790.0" y2="378.1"/>
+<line class="glass" x1="782.5" y1="412.8" x2="782.5" y2="378.1"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d6a3aad946a9">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6a3aad946a9" x="775.0" y="189.0" width="15.0" height="75.0"/>
+<line class="frame" x1="775.0" y1="264.0" x2="775.0" y2="189.0"/>
+<line class="frame" x1="790.0" y1="264.0" x2="790.0" y2="189.0"/>
+<line class="glass" x1="782.5" y1="264.0" x2="782.5" y2="189.0"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d6a4c8f91390">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6a4c8f91390" x="775.0" y="105.0" width="15.0" height="69.0"/>
+<line class="frame" x1="775.0" y1="174.0" x2="775.0" y2="105.0"/>
+<line class="frame" x1="790.0" y1="174.0" x2="790.0" y2="105.0"/>
+<line class="glass" x1="782.5" y1="174.0" x2="782.5" y2="105.0"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d6a5007fc4b7">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6a5007fc4b7" x="152.5" y="975.0" width="75.0" height="15.0"/>
+<line class="frame" x1="152.5" y1="990.0" x2="227.5" y2="990.0"/>
+<line class="frame" x1="152.5" y1="975.0" x2="227.5" y2="975.0"/>
+<line class="glass" x1="152.5" y1="982.5" x2="227.5" y2="982.5"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d6a6080cc85d">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6a6080cc85d" x="569.2" y="975.0" width="75.0" height="15.0"/>
+<line class="frame" x1="569.2" y1="990.0" x2="644.2" y2="990.0"/>
+<line class="frame" x1="569.2" y1="975.0" x2="644.2" y2="975.0"/>
+<line class="glass" x1="569.2" y1="982.5" x2="644.2" y2="982.5"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d6a755914ab3">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6a755914ab3" x="679.6" y="975.0" width="75.0" height="15.0"/>
+<line class="frame" x1="679.6" y1="990.0" x2="754.6" y2="990.0"/>
+<line class="frame" x1="679.6" y1="975.0" x2="754.6" y2="975.0"/>
+<line class="glass" x1="679.6" y1="982.5" x2="754.6" y2="982.5"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d6a8b88a804d">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6a8b88a804d" x="152.5" y="90.0" width="75.0" height="15.0"/>
+<line class="frame" x1="152.5" y1="105.0" x2="227.5" y2="105.0"/>
+<line class="frame" x1="152.5" y1="90.0" x2="227.5" y2="90.0"/>
+<line class="glass" x1="152.5" y1="97.5" x2="227.5" y2="97.5"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d6a9b0dd4763">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6a9b0dd4763" x="341.8" y="90.0" width="30.0" height="15.0"/>
+<line class="frame" x1="341.8" y1="105.0" x2="371.8" y2="105.0"/>
+<line class="frame" x1="341.8" y1="90.0" x2="371.8" y2="90.0"/>
+<line class="glass" x1="341.8" y1="97.5" x2="371.8" y2="97.5"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d6aa2685e576">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6aa2685e576" x="477.8" y="90.0" width="75.0" height="15.0"/>
+<line class="frame" x1="477.8" y1="105.0" x2="552.8" y2="105.0"/>
+<line class="frame" x1="477.8" y1="90.0" x2="552.8" y2="90.0"/>
+<line class="glass" x1="477.8" y1="97.5" x2="552.8" y2="97.5"/>
+</g>
+<g class="window" data-id="01a1e8a5-163f-7666-8fdf-d6abb8ea32ed">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6abb8ea32ed" x="661.0" y="90.0" width="75.0" height="15.0"/>
+<line class="frame" x1="661.0" y1="105.0" x2="736.0" y2="105.0"/>
+<line class="frame" x1="661.0" y1="90.0" x2="736.0" y2="90.0"/>
+<line class="glass" x1="661.0" y1="97.5" x2="736.0" y2="97.5"/>
+</g>
+<g class="door" data-id="01a1e8a5-163f-7666-8fdf-d68b77d10174">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d68b77d10174" x="419.8" y="442.8" width="7.5" height="45.0"/>
+<line class="leaf" x1="423.5" y1="487.8" x2="468.5" y2="487.8"/>
+<path class="swing" d="M 468.5 487.8 A 45.0 45.0 0 0 0 423.5 442.8"/>
+</g>
+<g class="door" data-id="01a1e8a5-163f-7666-8fdf-d68c97682147">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d68c97682147" x="286.2" y="817.5" width="7.5" height="45.0"/>
+<line class="leaf" x1="290.0" y1="862.5" x2="245.0" y2="862.5"/>
+<path class="swing" d="M 245.0 862.5 A 45.0 45.0 0 0 1 290.0 817.5"/>
+</g>
+<g class="door" data-id="01a1e8a5-163f-7666-8fdf-d68daa61777f">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d68daa61777f" x="286.2" y="542.5" width="7.5" height="45.0"/>
+<line class="leaf" x1="290.0" y1="587.5" x2="245.0" y2="587.5"/>
+<path class="swing" d="M 245.0 587.5 A 45.0 45.0 0 0 1 290.0 542.5"/>
+</g>
+<g class="door" data-id="01a1e8a5-163f-7666-8fdf-d68e04672f60">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d68e04672f60" x="419.8" y="844.8" width="7.5" height="45.0"/>
+<line class="leaf" x1="423.5" y1="889.8" x2="468.5" y2="889.8"/>
+<path class="swing" d="M 468.5 889.8 A 45.0 45.0 0 0 0 423.5 844.8"/>
+</g>
+<g class="door" data-id="01a1e8a5-163f-7666-8fdf-d68f2994a3d4">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d68f2994a3d4" x="286.2" y="355.0" width="7.5" height="45.0"/>
+<line class="leaf" x1="290.0" y1="400.0" x2="245.0" y2="400.0"/>
+<path class="swing" d="M 245.0 400.0 A 45.0 45.0 0 0 1 290.0 355.0"/>
+</g>
+<g class="door" data-id="01a1e8a5-163f-7666-8fdf-d690abb7cb5b">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d690abb7cb5b" x="626.5" y="563.8" width="45.0" height="7.5"/>
+<line class="leaf" x1="626.5" y1="567.5" x2="626.5" y2="612.5"/>
+<path class="swing" d="M 626.5 612.5 A 45.0 45.0 0 0 0 671.5 567.5"/>
+</g>
+<g class="door" data-id="01a1e8a5-163f-7666-8fdf-d6917bad4e93">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6917bad4e93" x="492.8" y="359.2" width="45.0" height="7.5"/>
+<line class="leaf" x1="492.8" y1="363.0" x2="492.8" y2="318.0"/>
+<path class="swing" d="M 492.8 318.0 A 45.0 45.0 0 0 1 537.8 363.0"/>
+</g>
+<g class="door" data-id="01a1e8a5-163f-7666-8fdf-d692e4b54577">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d692e4b54577" x="676.0" y="359.2" width="45.0" height="7.5"/>
+<line class="leaf" x1="676.0" y1="363.0" x2="676.0" y2="318.0"/>
+<path class="swing" d="M 676.0 318.0 A 45.0 45.0 0 0 1 721.0 363.0"/>
+</g>
+<g class="door" data-id="01a1e8a5-163f-7666-8fdf-d693f7fae3dc">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d693f7fae3dc" x="286.2" y="126.2" width="7.5" height="40.0"/>
+<line class="leaf" x1="290.0" y1="166.2" x2="330.0" y2="166.2"/>
+<path class="swing" d="M 330.0 166.2 A 40.0 40.0 0 0 0 290.0 126.2"/>
+</g>
+<g class="door" data-id="01a1e8a5-163f-7666-8fdf-d6949c7cd2c6">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6949c7cd2c6" x="419.8" y="238.8" width="7.5" height="40.0"/>
+<line class="leaf" x1="423.5" y1="278.8" x2="383.5" y2="278.8"/>
+<path class="swing" d="M 383.5 278.8 A 40.0 40.0 0 0 1 423.5 238.8"/>
+</g>
+<g class="door" data-id="01a1e8a5-163f-7666-8fdf-d695dad7133a">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d695dad7133a" x="504.2" y="636.0" width="7.5" height="40.0"/>
+<line class="leaf" x1="508.0" y1="676.0" x2="468.0" y2="676.0"/>
+<path class="swing" d="M 468.0 676.0 A 40.0 40.0 0 0 1 508.0 636.0"/>
+</g>
+<g class="door" data-id="01a1e8a5-163f-7666-8fdf-d69685648d02">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d69685648d02" x="167.5" y="686.2" width="45.0" height="7.5"/>
+<line class="leaf" x1="167.5" y1="690.0" x2="167.5" y2="645.0"/>
+<path class="swing" d="M 167.5 645.0 A 45.0 45.0 0 0 1 212.5 690.0"/>
+</g>
+<g class="door" data-id="01a1e8a5-163f-7666-8fdf-d6971c20af85">
+<rect class="cut" data-for="01a1e8a5-163f-7666-8fdf-d6971c20af85" x="331.8" y="975.0" width="50.0" height="15.0"/>
+<line class="leaf" x1="331.8" y1="982.5" x2="331.8" y2="932.5"/>
+<path class="swing" d="M 331.8 932.5 A 50.0 50.0 0 0 1 381.8 982.5"/>
+</g>
+<text class="name" data-for="01a1e8a5-163f-7666-8fdf-d65a68c7654e" x="606.8" y="863.2">Majlis</text>
+<text class="meta" data-for="01a1e8a5-163f-7666-8fdf-d65a68c7654e" x="606.8" y="877.2">31.5 m²  ·  7.33 × 4.91</text>
+<text class="name" data-for="01a1e8a5-163f-7666-8fdf-d65b06deae73" x="606.8" y="461.2">Living</text>
+<text class="meta" data-for="01a1e8a5-163f-7666-8fdf-d65b06deae73" x="606.8" y="475.2">27.4 m²  ·  7.33 × 4.09</text>
+<text class="name" data-for="01a1e8a5-163f-7666-8fdf-d65caba3c9cd" x="190.0" y="836.0">Dining</text>
+<text class="meta" data-for="01a1e8a5-163f-7666-8fdf-d65caba3c9cd" x="190.0" y="850.0">20.4 m²  ·  4.00 × 6.00</text>
+<text class="name" data-for="01a1e8a5-163f-7666-8fdf-d65d947d52ee" x="190.0" y="561.0">Kitchen</text>
+<text class="meta" data-for="01a1e8a5-163f-7666-8fdf-d65d947d52ee" x="190.0" y="575.0">17.6 m²  ·  4.00 × 5.00</text>
+<text class="name" data-for="01a1e8a5-163f-7666-8fdf-d65eec2c5d26" x="190.0" y="261.0">Master bed</text>
+<text class="meta" data-for="01a1e8a5-163f-7666-8fdf-d65eec2c5d26" x="190.0" y="275.0">24.0 m²  ·  4.00 × 7.00</text>
+<text class="name" data-for="01a1e8a5-163f-7666-8fdf-d65fb759f89c" x="698.5" y="222.5">Bedroom 1</text>
+<text class="meta" data-for="01a1e8a5-163f-7666-8fdf-d65fb759f89c" x="698.5" y="236.5">16.7 m²  ·  3.66 × 5.46</text>
+<text class="name" data-for="01a1e8a5-163f-7666-8fdf-d6601674f587" x="649.0" y="652.0">Bedroom 2</text>
+<text class="meta" data-for="01a1e8a5-163f-7666-8fdf-d6601674f587" x="649.0" y="666.0">17.9 m²  ·  5.64 × 3.54</text>
+<text class="name" data-for="01a1e8a5-163f-7666-8fdf-d6615de8510f" x="515.2" y="222.5">Bedroom 3</text>
+<text class="meta" data-for="01a1e8a5-163f-7666-8fdf-d6615de8510f" x="515.2" y="236.5">17.9 m²  ·  3.67 × 5.46</text>
+<text class="name" data-for="01a1e8a5-163f-7666-8fdf-d662c46966bc" x="356.8" y="142.2">Bath 1</text>
+<text class="meta" data-for="01a1e8a5-163f-7666-8fdf-d662c46966bc" x="356.8" y="156.2">4.7 m²  ·  2.67 × 2.25</text>
+<text class="name" data-for="01a1e8a5-163f-7666-8fdf-d66313dee6a0" x="356.8" y="254.8">Bath 2</text>
+<text class="meta" data-for="01a1e8a5-163f-7666-8fdf-d66313dee6a0" x="356.8" y="268.8">5.3 m²  ·  2.67 × 2.25</text>
+<text class="name" data-for="01a1e8a5-163f-7666-8fdf-d664f3017f87" x="465.8" y="652.0">Bath 3</text>
+<text class="meta" data-for="01a1e8a5-163f-7666-8fdf-d664f3017f87" x="465.8" y="666.0">5.2 m²  ·  1.69 × 3.54</text>
+<text class="name" data-for="01a1e8a5-163f-7666-8fdf-d66560ead4b4" x="356.8" y="648.5">Hall / circulation</text>
+<text class="meta" data-for="01a1e8a5-163f-7666-8fdf-d66560ead4b4" x="356.8" y="662.5">33.1 m²  ·  2.67 × 13.50</text>
+<path class="dim" d="M 90.0 1024.0 H 790.0 M 90.0 1019.0 V 1029.0 M 790.0 1019.0 V 1029.0"/>
+<text class="dimtxt" x="440.0" y="1018.0">14.00 m</text>
+<path class="dim" d="M 56.0 90.0 V 990.0 M 51.0 90.0 H 61.0 M 51.0 990.0 H 61.0"/>
+<text class="dimtxt" transform="translate(48.0 540.0) rotate(-90)">18.00 m</text>
+<g class="north"><path d="M 810.0 52.0 L 817.0 78.0 L 810.0 72.0 L 803.0 78.0 Z" fill="#111"/><text class="dimtxt" x="810.0" y="48.0">N</text></g>
+<g class="scale"><path class="dim" d="M 90.0 1108.0 h 250.0 M 90.0 1104.0 v 8 M 340.0 1104.0 v 8"/><text class="dimtxt" x="215.0" y="1099.0">5 m</text></g>
+<text class="title" x="90.0" y="1154.0">Villa - ground floor plan (synthetic test program)</text>
+<text class="note" x="90.0" y="1180.0">Preliminary schematic. Not for construction; requires review by a licensed engineer.</text>
+</svg>

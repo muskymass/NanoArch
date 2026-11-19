@@ -1,0 +1,34 @@
+﻿id,name,zone,quantity,unit,duration_days,predecessors,start,finish,total_float,critical,rate_source,element_count
+T01,Site mobilisation,,,,3,,2026-11-15,2026-11-17,0,true,synthetic,0
+T02,Setting out,,,,3,T01,2026-11-18,2026-11-22,0,true,synthetic,0
+T03,Excavation for footings,,12.835,m2,1,T02,2026-11-23,2026-11-23,0,true,synthetic,32
+T04,Footing formwork,,12.835,m2,1,T03,2026-11-24,2026-11-24,0,true,synthetic,32
+T05,Footing reinforcement,,32.000,nr,1,T04,2026-11-25,2026-11-25,0,true,synthetic,32
+T06,Footing concrete pour,,12.835,m2,1,T05,2026-11-26,2026-11-26,0,true,synthetic,32
+T07,Footing curing,,,,3,T06,2026-11-29,2026-12-01,0,true,synthetic,0
+T08,Backfill around footings,,12.835,m2,1,T07,2026-12-02,2026-12-02,0,true,synthetic,32
+T09,Column formwork (zone 1),1,57.600,m2,2,T08,2026-12-03,2026-12-06,0,true,synthetic,32
+T10,Column formwork (zone 2),2,57.600,m2,2,T08;T09,2026-12-07,2026-12-08,3,false,synthetic,32
+T11,Column reinforcement (zone 1),1,16.000,nr,1,T09,2026-12-07,2026-12-07,0,true,synthetic,32
+T12,Column reinforcement (zone 2),2,16.000,nr,1,T10;T11,2026-12-09,2026-12-09,3,false,synthetic,32
+T13,Column concrete pour (zone 1),1,4.320,m3,1,T11,2026-12-08,2026-12-08,0,true,synthetic,32
+T14,Column concrete pour (zone 2),2,4.320,m3,1,T12;T13,2026-12-10,2026-12-10,3,false,synthetic,32
+T15,Slab and beam formwork (zone 1),1,164.554,m2,5,T13,2026-12-09,2026-12-15,0,true,synthetic,55
+T16,Slab and beam formwork (zone 2),2,164.554,m2,5,T14;T15,2026-12-16,2026-12-22,0,true,synthetic,55
+T17,Slab and beam reinforcement (zone 1),1,126.000,m2,4,T15,2026-12-16,2026-12-21,1,false,synthetic,12
+T18,Slab and beam reinforcement (zone 2),2,126.000,m2,4,T16;T17,2026-12-23,2026-12-28,0,true,synthetic,12
+T19,Embedded electrical and plumbing,,,,3,T18,2026-12-29,2026-12-31,0,true,synthetic,0
+T20,Slab and beam concrete pour (zone 1),1,20.474,m3,1,T19,2027-01-03,2027-01-03,0,true,synthetic,55
+T21,Slab and beam concrete pour (zone 2),2,20.474,m3,1,T19;T20,2027-01-04,2027-01-04,0,true,synthetic,55
+T22,Slab curing,,,,3,T21,2027-01-05,2027-01-07,0,true,synthetic,0
+T23,Formwork stripping,,252.000,m2,7,T22,2027-01-10,2027-01-18,0,true,synthetic,12
+T24,Blockwork,,368.010,m2,10,T23,2027-01-19,2027-02-01,0,true,synthetic,37
+T25,First-fix electrical and plumbing,,,,3,T24,2027-02-02,2027-02-04,0,true,synthetic,0
+T26,Plastering,,736.020,m2,19,T25,2027-02-07,2027-03-03,0,true,synthetic,37
+T27,Doors and windows,,33.000,nr,1,T26,2027-03-04,2027-03-04,5,false,synthetic,33
+T28,Ceilings,,222.300,m2,6,T26,2027-03-04,2027-03-11,0,true,synthetic,12
+T29,Painting,,736.020,m2,19,T28;T27,2027-03-14,2027-04-07,0,true,synthetic,37
+T30,Floor finishes,,222.300,m2,6,T29,2027-04-08,2027-04-15,0,true,synthetic,12
+T31,Second-fix and fixtures,,,,3,T29,2027-04-08,2027-04-12,3,false,synthetic,0
+T32,Testing and commissioning,,,,3,T31;T30,2027-04-18,2027-04-20,0,true,synthetic,0
+T33,Snagging and handover,,,,3,T32,2027-04-21,2027-04-25,0,true,synthetic,0

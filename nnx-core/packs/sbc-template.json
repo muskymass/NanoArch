@@ -1,0 +1,36 @@
+{
+  "id": "SBC",
+  "edition": "ENTER-EDITION-FROM-OFFICIAL-TEXT",
+  "version": "template-0",
+  "rules": [
+    {
+      "id": "SBC.egress.door.clear_width",
+      "clause": "ENTER-CLAUSE",
+      "applies_to": { "kind": "Door", "where": "isEgress == true" },
+      "check": "width >= param.minClear",
+      "params": { "minClear": { "value": null, "source": "" } },
+      "severity": "error",
+      "message": "Egress door clear width is below the required minimum",
+      "fix": { "prop": "width", "value": "param.minClear" }
+    },
+    {
+      "id": "SBC.space.min_area.bedroom",
+      "clause": "ENTER-CLAUSE",
+      "applies_to": { "kind": "Space", "where": "func == \"bedroom\"" },
+      "check": "area >= param.minArea",
+      "params": { "minArea": { "value": null, "source": "" } },
+      "severity": "error",
+      "message": "Bedroom area is below the required minimum"
+    },
+    {
+      "id": "SBC.space.min_height",
+      "clause": "ENTER-CLAUSE",
+      "applies_to": { "kind": "Space" },
+      "check": "ceilingHeight >= param.minHeight",
+      "params": { "minHeight": { "value": null, "source": "" } },
+      "severity": "error",
+      "message": "Ceiling height is below the required minimum",
+      "fix": { "prop": "ceilingHeight", "value": "param.minHeight" }
+    }
+  ]
+}

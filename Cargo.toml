@@ -1,0 +1,17 @@
+﻿[package]
+name = "nanoarch-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+nnx-core = { version = "0.1.0", path = "./nnx-core" }
+rfd = "0.18.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tao = "0.37.2"
+wry = "0.57.2"
+
+# Printing a document to PDF goes through the WebView2 runtime that wry already uses (same versions as wry's).
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows = { version = "0.62", features = ["Win32_Foundation"] }
