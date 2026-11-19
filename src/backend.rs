@@ -352,7 +352,14 @@ impl App {
             "mep" => self.mep(args),
             "sizing" => self.sizing(args),
             "boq" => self.boq(args),
-            "model3d" => serde_json::to_value(nnx_core::model3d::build_styled(&self.doc()?.model, self.style())).map_err(|e| e.to_string()),
+            "model3d" => self.model3d(),
+            "finishes" => self.finishes_report(),
+            "finishes_set" => self.finishes_set(args),
+            "asbuilt" => self.asbuilt_report(),
+            "asbuilt_set" => self.asbuilt_set(args),
+            "asbuilt_svg" => self.asbuilt_svg(),
+            "tour_export" => self.tour_export(args),
+            "stl_export" => self.stl_export(args),
             "export_ifc" => self.export_ifc(),
             "export_dxf" => self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false)),
             "report_html" => {
@@ -544,6 +551,9 @@ impl App {
             v.extend(nnx_core::insulation::analyze(model, &lib).items);
         }
         v.extend(nnx_core::mep::point_items(model));
+        if let Some(p) = self.project() {
+            v.extend(nnx_core::finishes::items(model, &p.meta.finishes));
+        }
         v
     }
 
@@ -590,6 +600,8 @@ impl App {
         // The take-off, plus insulation, MEP devices and runs, and the concrete and steel of the structural schedules.
         let mut q = qto::compute(&doc.model, &QtoOpts::default());
         q.items.extend(self.extra_items(&doc.model));
+        // A finish has no productivity input, so it is a quantity and a BOQ row, not a scheduled activity.
+        q.items.retain(|i| !i.code.starts_with("FIN."));
         if let Some(inputs) = self.project().and_then(|p| p.sizing.map(|s| (s, p.structure.bearing_kpa))) {
             q.items.extend(nnx_core::sizing::schedule_items(&nnx_core::sizing::compute(&doc.model, inputs.1, &inputs.0)));
         }
@@ -1082,6 +1094,109 @@ impl App {
         Ok(json!({ "svg": svg, "name": "network-plan.svg" }))
     }
 
+    /// The 3D scene, with the finish colours the project chose and the as-built deviations by element.
+    fn model3d(&self) -> Result<Value, String> {
+        let model = &self.doc()?.model;
+        let mut v = serde_json::to_value(nnx_core::model3d::build_styled(model, self.style())).map_err(|e| e.to_string())?;
+        if let Some(p) = self.project() {
+            let col = |kind: &str, id: &Option<String>| id.as_deref().and_then(|i| nnx_core::finishes::find(kind, i)).map(|f| f.color);
+            v["finishes"] = json!({ "facade": col("facade", &p.meta.finishes.facade), "floor": col("floor", &p.meta.finishes.floor) });
+            if !p.meta.as_built.rows.is_empty() {
+                v["deviations"] = json!(nnx_core::asbuilt::compare(model, &p.meta.as_built).by_element);
+            }
+        }
+        Ok(v)
+    }
+
+    /// The finish catalog, the project's choice and the quantities (with prices only where the user entered a rate).
+    fn finishes_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let rep = nnx_core::finishes::report(&self.doc()?.model, &p.meta.finishes, p.boq.as_ref());
+        Ok(json!({ "catalog": nnx_core::finishes::CATALOG, "chosen": p.meta.finishes, "report": rep }))
+    }
+
+    /// Chooses the facade and floor finishes (and optionally the rate of a finish code in the BOQ library): ONE undoable edit.
+    fn finishes_set(&mut self, args: &Value) -> Result<Value, String> {
+        let f: nnx_core::finishes::Finishes = serde_json::from_value(args.get("finishes").cloned().ok_or("finishes is required")?).map_err(|e| format!("finishes: {e}"))?;
+        let rates: BTreeMap<String, f64> = match args.get("rates") {
+            Some(r) if !r.is_null() => serde_json::from_value(r.clone()).map_err(|e| format!("rates: {e}"))?,
+            _ => BTreeMap::new(),
+        };
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "Finishes", |p| {
+            p.meta.finishes = f.clone();
+            for (code, rate) in &rates {
+                nnx_core::finishes::set_rate(&mut p.boq, code, *rate)?;
+            }
+            Ok(())
+        })?;
+        let mut v = self.finishes_report()?;
+        v["changed"] = json!(out.changed);
+        Ok(v)
+    }
+
+    /// The as-built inputs and their deviations from the design, in mm.
+    fn asbuilt_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let rep = nnx_core::asbuilt::compare(&self.doc()?.model, &p.meta.as_built);
+        Ok(json!({ "inputs": p.meta.as_built, "report": rep }))
+    }
+
+    /// Stores measured rows (CSV text in `csv`, or `rows`), the tolerance and the source: ONE undoable edit. A null tolerance clears it.
+    fn asbuilt_set(&mut self, args: &Value) -> Result<Value, String> {
+        let mut ab = self.project().ok_or("choose a layout first")?.meta.as_built;
+        if let Some(text) = args.get("csv").and_then(Value::as_str) {
+            ab.rows = nnx_core::asbuilt::parse_csv(text)?;
+        } else if let Some(rows) = args.get("rows") {
+            ab.rows = serde_json::from_value(rows.clone()).map_err(|e| format!("as-built rows: {e}"))?;
+        }
+        if let Some(t) = args.get("toleranceMm") {
+            ab.tolerance_mm = t.as_f64();
+        }
+        if let Some(s) = args.get("source") {
+            ab.source = s.as_str().filter(|s| !s.trim().is_empty()).map(str::to_string);
+        }
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "As-built measurements", |p| {
+            p.meta.as_built = ab.clone();
+            Ok(())
+        })?;
+        let mut v = self.asbuilt_report()?;
+        v["changed"] = json!(out.changed);
+        Ok(v)
+    }
+
+    /// The plan of the level on screen with the as-built point deviations drawn over it.
+    fn asbuilt_svg(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let model = &self.doc()?.model;
+        let rep = nnx_core::asbuilt::compare(model, &p.meta.as_built);
+        let opts = self.draw_opts(self.show_structure);
+        let svg = plan_svg(model, self.current_level(), &opts).map_err(|e| e.to_string())?;
+        Ok(json!({ "svg": nnx_core::asbuilt::add_markers(&svg, model, self.current_level(), &opts, &rep), "report": rep }))
+    }
+
+    /// The standalone HTML tour: one file with the 3D scene and a viewer inside.
+    fn tour_export(&self, args: &Value) -> Result<Value, String> {
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        let scene = nnx_core::model3d::build_styled(&self.doc()?.model, self.style());
+        let (facade, floor) = match self.project() {
+            Some(p) => (p.meta.finishes.facade.as_deref().and_then(|i| nnx_core::finishes::find("facade", i)).map(|f| f.color), p.meta.finishes.floor.as_deref().and_then(|i| nnx_core::finishes::find("floor", i)).map(|f| f.color)),
+            None => (None, None),
+        };
+        let html = nnx_core::tour::tour_html(&scene, &self.display_title(), arabic, facade, floor)?;
+        Ok(json!({ "html": html, "name": "tour.html" }))
+    }
+
+    /// A binary STL of the solids at the scale entered (`scale: 100` is 1:100), optionally one level.
+    fn stl_export(&self, args: &Value) -> Result<Value, String> {
+        let opts = nnx_core::stl::StlOpts { scale: args.get("scale").and_then(Value::as_f64), level: args.get("level").and_then(Value::as_i64), min_feature_mm: args.get("minFeatureMm").and_then(Value::as_f64) };
+        let scene = nnx_core::model3d::build_styled(&self.doc()?.model, self.style());
+        let (tris, rep) = nnx_core::stl::triangles(&scene, &opts)?;
+        let bytes = nnx_core::stl::to_binary(&tris, &format!("NanoArch 1:{}", rep.scale));
+        let level = opts.level.map(|l| format!("-L{}", l + 1)).unwrap_or_default();
+        Ok(json!({ "stl_b64": nnx_core::xlsx::base64_encode(&bytes), "name": format!("model-1to{}{level}.stl", rep.scale), "report": rep, "closed": nnx_core::stl::each_solid_closed(&tris) }))
+    }
     /// A starter template with the Ministry-rule setbacks of its plot (each carries its clause).
     fn template_apply(args: &Value) -> Result<Value, String> {
         let id = args.get("id").and_then(Value::as_str).ok_or("template id missing")?;
@@ -3359,4 +3474,80 @@ mod tests {
         assert!(app.handle("qto", &json!({})).is_err());
         assert!(app.handle("nope", &json!({})).is_err());
     }
-}
+    #[test]
+    fn the_finish_choice_is_one_undoable_edit_that_reaches_the_3d_scene_and_the_quantities() {
+        let mut app = started();
+        let r = app.handle("finishes", &json!({})).unwrap();
+        assert_eq!(r["catalog"].as_array().unwrap().len(), 8);
+        assert!(r["report"]["lines"].as_array().unwrap().is_empty());
+        assert!(app.handle("finishes_set", &json!({ "finishes": { "facade": "gold" } })).is_err());
+        let set = json!({ "finishes": { "facade": "travertine", "floor": "marble" } });
+        let r = app.handle("finishes_set", &set).unwrap();
+        assert_eq!(r["changed"], true);
+        let lines = r["report"]["lines"].as_array().unwrap();
+        assert_eq!(lines.len(), 2);
+        assert!(lines.iter().all(|l| l["rate"].is_null()), "no price without the user's rate");
+        assert!(app.handle("finishes_set", &set).unwrap()["changed"] == false);
+        // The 3D scene carries the colours, and the quantity table the two finish rows.
+        let scene = app.handle("model3d", &json!({})).unwrap();
+        assert!(scene["finishes"]["facade"].is_array() && scene["finishes"]["floor"].is_array());
+        let q = app.handle("qto", &json!({})).unwrap();
+        let codes: Vec<&str> = q["items"].as_array().unwrap().iter().filter_map(|i| i["code"].as_str()).collect();
+        assert!(codes.contains(&"FIN.facade.travertine") && codes.contains(&"FIN.floor.marble"), "{codes:?}");
+        // A rate makes the row priced; swapping the finish moves to the other code and the old rate no longer applies.
+        let rate = json!({ "finishes": { "facade": "travertine", "floor": "marble" }, "rates": { "FIN.floor.marble": 10.0, "FIN.facade.travertine": 2.0 } });
+        let r = app.handle("finishes_set", &rate).unwrap();
+        assert!(r["report"]["total"].as_f64().unwrap() > 0.0);
+        let r = app.handle("finishes_set", &json!({ "finishes": { "facade": "riyadh_stone", "floor": "marble" } })).unwrap();
+        assert!(r["report"]["total"].is_null());
+        assert!(app.handle("finishes_set", &json!({ "finishes": {}, "rates": { "FIN.x.y": 1.0 } })).is_err());
+        // Undo goes back one step at a time.
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.handle("finishes", &json!({})).unwrap()["chosen"]["facade"], "travertine");
+        // A finish never becomes a scheduled activity.
+        if let Ok(s) = app.handle("schedule", &json!({})) {
+            assert!(!s.to_string().contains("FIN."));
+        }
+    }
+
+    #[test]
+    fn as_built_rows_are_stored_in_the_project_and_deviations_are_judged_by_the_users_tolerance() {
+        let mut app = started();
+        let r = app.handle("asbuilt", &json!({})).unwrap();
+        assert!(r["report"]["deviations"].as_array().unwrap().is_empty());
+        assert!(app.handle("asbuilt_set", &json!({ "csv": "name,x_mm\nCOL-1,abc\n" })).unwrap_err().contains("line 2"));
+        assert!(app.handle("asbuilt_set", &json!({ "toleranceMm": -1.0 })).is_err());
+        let r = app.handle("asbuilt_set", &json!({ "csv": "name,x_mm,y_mm\nCOL-1,10,10\nNOPE-1,1,1\n", "source": "total station" })).unwrap();
+        assert_eq!(r["changed"], true);
+        assert_eq!(r["report"]["unmatched"], json!(["NOPE-1"]));
+        assert!(r["report"]["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("no tolerance")));
+        // The column's design position is far from (10, 10) mm, so the deviation is large and, with a tolerance, over it.
+        let r = app.handle("asbuilt_set", &json!({ "toleranceMm": 5.0 })).unwrap();
+        assert!(r["report"]["over"].as_u64().unwrap() >= 1 && r["inputs"]["rows"].as_array().unwrap().len() == 2);
+        // The 3D scene colours the elements by deviation, and the plan carries the markers.
+        let scene = app.handle("model3d", &json!({})).unwrap();
+        assert!(!scene["deviations"].as_object().unwrap().is_empty());
+        let svg = app.handle("asbuilt_svg", &json!({})).unwrap();
+        assert!(svg["svg"].as_str().unwrap().contains("class=\"asbuilt\""));
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.handle("asbuilt", &json!({})).unwrap()["inputs"]["toleranceMm"].is_null());
+        assert!(App::default().handle("asbuilt", &json!({})).is_err());
+    }
+
+    #[test]
+    fn the_stl_and_the_standalone_tour_come_from_the_open_model() {
+        let mut app = started();
+        assert!(app.handle("stl_export", &json!({})).unwrap_err().contains("scale"));
+        assert!(app.handle("stl_export", &json!({ "scale": 100.0, "level": 99 })).is_err());
+        let r = app.handle("stl_export", &json!({ "scale": 100.0, "minFeatureMm": 1.0 })).unwrap();
+        assert_eq!(r["closed"], true);
+        assert!(r["name"].as_str().unwrap().ends_with("1to100.stl"));
+        let n = r["report"]["triangles"].as_u64().unwrap();
+        assert!(n > 0 && n.is_multiple_of(12));
+        assert!(!r["stl_b64"].as_str().unwrap().is_empty());
+        let t = app.handle("tour_export", &json!({ "lang": "en" })).unwrap();
+        let html = t["html"].as_str().unwrap();
+        assert!(html.contains("<canvas id=\"gl\">") && html.contains("\"k\":\"Wall\"") && !html.contains("src=\"http"));
+        assert_eq!(t["name"], "tour.html");
+        assert!(App::default().handle("tour_export", &json!({})).is_err() && App::default().handle("stl_export", &json!({ "scale": 100.0 })).is_err());
+    }}

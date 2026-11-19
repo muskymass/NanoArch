@@ -174,6 +174,11 @@ ul.clean li{margin:3px 0}
         <button id="v-play" data-i="v_play"></button><input type="range" id="v-day" min="0" max="0" value="0" style="width:170px">
         <span id="v-day-info" class="note"></span>
         <button id="v-top" data-i="v_top"></button><button id="v-reset" data-i="v_reset"></button>
+        <button id="v-walk"></button><label><span id="v-eye-l"></span> <input id="v-eye" type="number" step="0.05" min="0.5" max="2.5" value="1.70" style="width:62px"></label>
+        <label><input type="checkbox" id="v-xray"><span id="v-xray-l"></span></label>
+        <select id="v-light"><option value="day"></option><option value="golden"></option><option value="night"></option></select>
+        <select id="v-fin-facade"></select><select id="v-fin-floor"></select>
+        <button id="v-snap"></button><span id="v-walk-hint" class="note" style="display:none"></span>
         <span id="v3-info" class="note"></span>
       </div>
       <canvas id="gl"></canvas>
@@ -185,7 +190,7 @@ ul.clean li{margin:3px 0}
   <section class="col">
     <div class="tabs">
       <button class="tab on" data-tab="notes" data-i="t_notes"></button><button class="tab" data-tab="qto" data-i="t_qto"></button>
-      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="an" id="tab-an"></button><button class="tab" data-tab="cp" id="tab-cp"></button><button class="tab" data-tab="mx" id="tab-mx"></button>
+      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="an" id="tab-an"></button><button class="tab" data-tab="cp" id="tab-cp"></button><button class="tab" data-tab="mx" id="tab-mx"></button><button class="tab" data-tab="pr" id="tab-pr"></button>
     </div>
     <div class="scroll">
       <div class="pane" id="p-sketch">
@@ -280,6 +285,7 @@ ul.clean li{margin:3px 0}
       <div class="pane" id="p-an"></div>
       <div class="pane" id="p-cp"></div>
       <div class="pane" id="p-mx"></div>
+      <div class="pane" id="p-pr"></div>
       <div class="pane" id="p-rules">
         <div class="note" data-i="rules_note"></div>
         <textarea id="pack" spellcheck="false" dir="ltr" style="text-align:left"></textarea>
@@ -412,6 +418,7 @@ function applyLang() {
   try { $("tab-cp").textContent = L("الامتثال والكود", "Compliance"); cpBuild(); } catch (e) { /* not loaded yet */ }
   try { sxBuild(); } catch (e) { /* not loaded yet */ }
   try { $("tab-mx").textContent = L("MEP متقدم", "Advanced MEP"); mxBuild(); } catch (e) { /* not loaded yet */ }
+  try { v5Labels(); prBuild(); } catch (e) { /* not loaded yet */ }
   if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
 }
 
@@ -876,7 +883,7 @@ function renderBoq() {
 
 // ---------------------------------------------------------------- 3D view (WebGL, no external library)
 // The geometry comes from the model (command "model3d"); every solid names its element, so a click on it is a click on the model.
-const V3 = { on: false, gl: null, prog: null, boxes: [], sel: null, yaw: -0.8, pitch: 0.55, dist: 30, target: [0, 0, 1.5], show: { slab: false, struct: true, floor: true, glass: true, mep: true }, disc: {}, clash: new Set(), fourD: { on: false, day: 0, ids: new Map(), days: 0, cal: [], tasks: [], timer: null }, buf: null, drag: null, size: [1, 1] };
+const V3 = { on: false, gl: null, prog: null, boxes: [], sel: null, yaw: -0.8, pitch: 0.55, dist: 30, target: [0, 0, 1.5], show: { slab: false, struct: true, floor: true, glass: true, mep: true }, disc: {}, clash: new Set(), fourD: { on: false, day: 0, ids: new Map(), days: 0, cal: [], tasks: [], timer: null }, buf: null, drag: null, size: [1, 1], walk: false, xray: false, light: "day", eye: 1.7, open: new Set(), pos: [0, 0, 1.7], wyaw: 0, wpitch: 0, keys: {}, fin: null, dev: null };
 const FLOOR_COL = { stair: [0.78, 0.78, 0.86], hall: [0.9, 0.88, 0.8], bedroom: [0.81, 0.89, 0.95], bathroom: [0.74, 0.88, 0.85], kitchen: [0.95, 0.89, 0.72], majlis: [0.91, 0.83, 0.93], living: [0.94, 0.85, 0.78], dining: [0.91, 0.88, 0.75] };
 const FACADE_COL = { "facade-cap": [0.8, 0.75, 0.65], "facade-merlon": [0.76, 0.68, 0.52], "facade-slit": [0.22, 0.2, 0.17], "facade-cantilever": [0.72, 0.75, 0.78], "facade-mullion": [0.29, 0.35, 0.4], "facade-plinth": [0.72, 0.66, 0.54], "facade-pilaster": [0.9, 0.86, 0.78], "facade-cornice": [0.85, 0.8, 0.7], "facade-reveal": [0.33, 0.33, 0.33] };
 const RUN_COL = { duct: [0.5, 0.77, 0.83], pipe: [0.56, 0.82, 0.62], drain: [0.73, 0.63, 0.49] };
@@ -900,7 +907,7 @@ function colorOf(b) {
     default: return [...(MEP_COL[b.class] || [0.3, 0.3, 0.3]), 1];
   }
 }
-const visible3 = b => V3.disc[b.discipline] !== false && status4d(b.id) !== "todo" && (V3.maxLevel == null || b.level == null || b.level <= V3.maxLevel) && (b.kind === "Slab" ? V3.show.slab : (b.kind === "Column" || b.kind === "Beam" || b.kind === "Footing") ? V3.show.struct : b.kind === "Space" ? V3.show.floor : b.kind === "Window" ? V3.show.glass : b.kind === "MepPoint" ? V3.show.mep : true);
+const visible3 = b => !(b.kind === "Door" && V3.open.has(b.id)) && V3.disc[b.discipline] !== false && status4d(b.id) !== "todo" && (V3.maxLevel == null || b.level == null || b.level <= V3.maxLevel) && (b.kind === "Slab" ? (V3.show.slab || V3.xray) : (b.kind === "Column" || b.kind === "Beam" || b.kind === "Footing") ? V3.show.struct : b.kind === "Space" ? V3.show.floor : b.kind === "Window" ? V3.show.glass : b.kind === "MepPoint" ? V3.show.mep : true);
 function pushBox(out, b, col) {
   const [x0, y0, z0] = b.min, [x1, y1, z1] = b.max, f = [
     [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [0, 0, -1]], [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [0, 0, 1]],
@@ -913,7 +920,7 @@ function build3() {
   const op = [], tr = [];
   for (const b of V3.boxes) {
     if (!visible3(b)) continue;
-    let c = colorOf(b);
+    let c = v5Tint(b, colorOf(b));
     if (status4d(b.id) === "active") c = [0.95, 0.62, 0.12, c[3]];
     if (V3.clash.has(b.id)) c = [0.9, 0.1, 0.1, 1];
     if (V3.sel && b.id === V3.sel) c = [0.9, 0.63, 0, c[3] < 1 ? 0.6 : 1];
@@ -938,9 +945,9 @@ function draw3() {
   const cv = $("gl"), dpr = window.devicePixelRatio || 1, w = Math.max(2, Math.round(cv.clientWidth * dpr)), h = Math.max(2, Math.round(cv.clientHeight * dpr));
   if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
   V3.size = [w, h]; gl.viewport(0, 0, w, h);
-  gl.clearColor(0.95, 0.96, 0.98, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  const mvp = m4.mul(m4.persp(0.8, w / h, 0.1, 600), m4.look(eye3(), V3.target, [0, 0, 1]));
-  gl.useProgram(V3.prog); gl.uniformMatrix4fv(V3.u.m, false, new Float32Array(mvp)); gl.uniform3f(V3.u.l, -0.4, -0.55, 0.75);
+  const P5 = V5_PRE[V3.light] || V5_PRE.day; gl.clearColor(P5.sky[0], P5.sky[1], P5.sky[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  const cam = v5Cam(), mvp = m4.mul(m4.persp(cam.fov, w / h, 0.05, 600), m4.look(cam.eye, cam.tg, [0, 0, 1]));
+  gl.useProgram(V3.prog); gl.uniformMatrix4fv(V3.u.m, false, new Float32Array(mvp)); gl.uniform3f(V3.u.l, P5.l[0], P5.l[1], P5.l[2]); gl.uniform1f(V3.u.amb, P5.amb); gl.uniform3f(V3.u.tint, P5.tint[0], P5.tint[1], P5.tint[2]);
   const bind = buf => { gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.vertexAttribPointer(V3.a.p, 3, gl.FLOAT, false, 40, 0); gl.vertexAttribPointer(V3.a.n, 3, gl.FLOAT, false, 40, 12); gl.vertexAttribPointer(V3.a.c, 4, gl.FLOAT, false, 40, 24); };
   gl.enable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.depthMask(true);
   if (V3.buf.nOp) { bind(V3.buf.op); gl.drawArrays(gl.TRIANGLES, 0, V3.buf.nOp); }
@@ -952,9 +959,9 @@ function init3() {
   const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
   const pr = gl.createProgram();
   gl.attachShader(pr, sh(gl.VERTEX_SHADER, "attribute vec3 p;attribute vec3 n;attribute vec4 c;uniform mat4 m;varying vec4 vc;varying vec3 vn;void main(){gl_Position=m*vec4(p,1.0);vn=n;vc=c;}"));
-  gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, "precision mediump float;varying vec4 vc;varying vec3 vn;uniform vec3 l;void main(){float d=max(dot(normalize(vn),normalize(l)),0.0);float k=0.5+0.5*d;gl_FragColor=vec4(vc.rgb*k,vc.a);}"));
+  gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, "precision mediump float;varying vec4 vc;varying vec3 vn;uniform vec3 l;uniform float amb;uniform vec3 tint;void main(){float d=max(dot(normalize(vn),normalize(l)),0.0);float k=amb+(1.0-amb)*d;gl_FragColor=vec4(vc.rgb*k*tint,vc.a);}"));
   gl.linkProgram(pr);
-  V3.gl = gl; V3.prog = pr; V3.a = { p: gl.getAttribLocation(pr, "p"), n: gl.getAttribLocation(pr, "n"), c: gl.getAttribLocation(pr, "c") }; V3.u = { m: gl.getUniformLocation(pr, "m"), l: gl.getUniformLocation(pr, "l") };
+  V3.gl = gl; V3.prog = pr; V3.a = { p: gl.getAttribLocation(pr, "p"), n: gl.getAttribLocation(pr, "n"), c: gl.getAttribLocation(pr, "c") }; V3.u = { m: gl.getUniformLocation(pr, "m"), l: gl.getUniformLocation(pr, "l"), amb: gl.getUniformLocation(pr, "amb"), tint: gl.getUniformLocation(pr, "tint") };
   for (const a of Object.values(V3.a)) gl.enableVertexAttribArray(a);
   V3.buf = { op: gl.createBuffer(), tr: gl.createBuffer(), nOp: 0, nTr: 0 };
   return true;
@@ -965,7 +972,7 @@ function fit3(sc) {
 }
 async function refresh3d(refit) {
   if (!V3.on || !init3()) return;
-  try { const sc = await call("model3d"); V3.boxes = sc.boxes; V3.scene = sc;
+  try { const sc = await call("model3d"); V3.boxes = sc.boxes; V3.scene = sc; V3.fin = sc.finishes || null; V3.dev = sc.deviations || null;
     { const w = $("v-level-wrap"), sel = $("v-level"), ls = sc.levels || []; w.style.display = ls.length > 1 ? "" : "none";
       sel.innerHTML = `<option value="all">${t("lv_all")}</option>` + ls.map(l => `<option value="${l.index}">${levelLabel(l.index)}</option>`).join("");
       if (ls.length < 2 || (V3.maxLevel != null && V3.maxLevel >= ls.length)) V3.maxLevel = null;
@@ -1001,18 +1008,19 @@ function pick3(ev) {
 const gl3 = $("gl");
 gl3.addEventListener("mousedown", e => { V3.drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey, moved: 0 }; });
 window.addEventListener("mouseup", async e => {
-  const d = V3.drag; V3.drag = null; if (!d || !V3.on || d.moved > 4 || e.target !== gl3) return;
+  const d = V3.drag; V3.drag = null; if (!d || !V3.on || V3.walk || d.moved > 4 || e.target !== gl3) return;
   const b = pick3(e); V3.sel = b ? b.id : null; build3(); draw3();
   if (!b) { $("v3-pick").textContent = ""; return; }
   $("v3-pick").textContent = `${b.kind}${b.class ? " / " + b.class : ""}${b.visual ? " (" + t("v_visual") + ")" : ""} · ${b.id}`;
 });
 window.addEventListener("mousemove", e => {
   const d = V3.drag; if (!d) return; const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY; d.moved += Math.abs(dx) + Math.abs(dy);
-  if (d.pan) { const k = V3.dist * 0.0016, c = Math.cos(V3.yaw), s = Math.sin(V3.yaw); V3.target[0] += (s * dx - c * dy * Math.sin(V3.pitch)) * k; V3.target[1] += (-c * dx - s * dy * Math.sin(V3.pitch)) * k; }
+  if (V3.walk) { V3.wyaw -= dx * 0.005; V3.wpitch = Math.max(-1.2, Math.min(1.2, V3.wpitch - dy * 0.005)); }
+  else if (d.pan) { const k = V3.dist * 0.0016, c = Math.cos(V3.yaw), s = Math.sin(V3.yaw); V3.target[0] += (s * dx - c * dy * Math.sin(V3.pitch)) * k; V3.target[1] += (-c * dx - s * dy * Math.sin(V3.pitch)) * k; }
   else { V3.yaw -= dx * 0.007; V3.pitch = Math.max(-0.1, Math.min(1.5, V3.pitch + dy * 0.007)); }
   draw3();
 });
-gl3.addEventListener("wheel", e => { e.preventDefault(); V3.dist = Math.max(2, Math.min(300, V3.dist * Math.exp(e.deltaY * 0.001))); draw3(); }, { passive: false });
+gl3.addEventListener("wheel", e => { e.preventDefault(); if (V3.walk) return; V3.dist = Math.max(2, Math.min(300, V3.dist * Math.exp(e.deltaY * 0.001))); draw3(); }, { passive: false });
 gl3.addEventListener("contextmenu", e => e.preventDefault());
 window.addEventListener("resize", () => draw3());
 
@@ -1803,6 +1811,198 @@ function mxWire() {
 document.querySelector('[data-tab="mx"]').addEventListener("click", () => busy(mxLoad));
 
 $("tab-mx").textContent = L("MEP متقدم", "Advanced MEP");
+// ---------------------------------------------------------------- M5: walkthrough, X-ray, finishes, lighting, as-built, tour and STL
+// The page computes nothing: finishes, deviations, the tour and the STL come from the backend. Colours of the lighting presets are a
+// display choice. The eye height and the scale are inputs.
+var V5_PRE = {
+  day: { sky: [0.95, 0.96, 0.98], l: [-0.4, -0.55, 0.75], amb: 0.5, tint: [1, 1, 1] },
+  golden: { sky: [0.99, 0.83, 0.62], l: [-0.9, -0.3, 0.25], amb: 0.38, tint: [1, 0.85, 0.7] },
+  night: { sky: [0.04, 0.06, 0.13], l: [0.3, 0.3, 0.5], amb: 0.22, tint: [0.5, 0.55, 0.85] }
+};
+const V5_ARCH = ["Wall", "Door", "Window", "Space", "Facade", "Site", "Furniture", "Vertical"];
+const V5 = { cat: null, chosen: { facade: null, floor: null }, tick: 0 };
+
+// Finish colours, as-built deviations, X-ray and the night glow applied to the colour the viewer already chose for a solid.
+function v5Tint(b, c) {
+  const f = V3.fin;
+  if (f && f.facade && b.kind === "Wall" && b.class === "ext") c = [f.facade[0], f.facade[1], f.facade[2], c[3]];
+  if (f && f.floor && b.kind === "Space" && b.class !== "bathroom" && b.class !== "toilet") c = [f.floor[0], f.floor[1], f.floor[2], c[3]];
+  const dv = V3.dev && V3.dev[b.id];
+  if (dv) c = dv[1] === "over" ? [0.85, 0.1, 0.1, 1] : dv[1] === "ok" ? [0.18, 0.62, 0.25, 1] : [0.55, 0.55, 0.55, 1];
+  if (V3.xray) {
+    if (V5_ARCH.includes(b.kind)) c = [c[0], c[1], c[2], Math.min(c[3], 0.14)];
+    else if (b.kind === "Slab") c = [c[0], c[1], c[2], 0.45];
+  }
+  if (V3.light === "night" && (b.kind === "Window" || b.kind === "MepPoint")) c = [1, 0.82, 0.45, 0.9];
+  return c;
+}
+function v5Cam() {
+  if (V3.walk) { const cp = Math.cos(V3.wpitch), e = V3.pos; return { eye: e, tg: [e[0] + Math.cos(V3.wyaw) * cp, e[1] + Math.sin(V3.wyaw) * cp, e[2] + Math.sin(V3.wpitch)], fov: 1.05 }; }
+  return { eye: eye3(), tg: V3.target, fov: 0.8 };
+}
+function v5Eye() {
+  const v = parseFloat($("v-eye").value);
+  if (Number.isFinite(v) && v >= 0.5 && v <= 2.5) { V3.eye = v; return v; }
+  toast(L("ارتفاع العين يجب أن يكون بين 0.5 و2.5 م", "Eye height must be between 0.5 and 2.5 m")); $("v-eye").value = V3.eye.toFixed(2); return V3.eye;
+}
+function v5Level() { const ls = (V3.scene && V3.scene.levels) || []; return V3.maxLevel == null ? (ls[0] ? ls[0].index : null) : V3.maxLevel; }
+function v5LevelZ() { const ls = (V3.scene && V3.scene.levels) || [], i = v5Level(), l = ls.find(x => x.index === i); return l ? l.z0 : 0; }
+function v5Start() {
+  const lv = v5Level(), sp = V3.boxes.find(b => b.kind === "Space" && (lv == null || b.level == null || b.level === lv));
+  const c = sp ? [(sp.min[0] + sp.max[0]) / 2, (sp.min[1] + sp.max[1]) / 2] : [V3.target[0], V3.target[1]];
+  V3.pos = [c[0], c[1], v5LevelZ() + V3.eye];
+}
+// A circle of 0.25 m against the walls, columns and closed doors that stand between the knee and the eye.
+function v5Blocked(x, y) {
+  const z = v5LevelZ(), top = z + V3.eye;
+  for (const b of V3.boxes) {
+    if (!(b.kind === "Wall" || b.kind === "Column" || (b.kind === "Door" && !V3.open.has(b.id)))) continue;
+    if (b.max[2] < z + 0.2 || b.min[2] > top) continue;
+    const cx = Math.max(b.min[0], Math.min(x, b.max[0])), cy = Math.max(b.min[1], Math.min(y, b.max[1]));
+    if (Math.hypot(x - cx, y - cy) < 0.25) return true;
+  }
+  return false;
+}
+function v5Door() {
+  const lv = v5Level(); let best = null, bd = 2.5;
+  for (const b of V3.boxes) {
+    if (b.kind !== "Door" || (lv != null && b.level != null && b.level !== lv)) continue;
+    const d = Math.hypot((b.min[0] + b.max[0]) / 2 - V3.pos[0], (b.min[1] + b.max[1]) / 2 - V3.pos[1]);
+    if (d < bd) { bd = d; best = b; }
+  }
+  if (!best) { toast(L("لا باب قريب (حتى 2.5 م)", "No door within 2.5 m")); return; }
+  if (V3.open.has(best.id)) V3.open.delete(best.id); else V3.open.add(best.id);
+  build3(); draw3();
+}
+async function v5Walk(on) {
+  if (on) {
+    if (!V3.on) { setView3(true); await refresh3d(true); }
+    if (!V3.boxes.length) { toast(L("لا نموذج ثلاثي الأبعاد للتجوّل فيه", "There is no 3D model to walk through")); return; }
+    V3.eye = v5Eye(); v5Start(); V3.wyaw = 0; V3.wpitch = 0;
+  }
+  V3.walk = on; V3.keys = {}; v5Labels(); build3(); draw3();
+}
+function v5Labels() {
+  const set = (id, s) => { const e = $(id); if (e) e.textContent = s; };
+  set("v-walk", V3.walk ? L("خروج من التجوّل", "Exit walk") : L("تجوّل", "Walk"));
+  set("v-eye-l", L("ارتفاع العين م", "Eye m")); set("v-xray-l", L("أشعة سينية", "X-ray")); set("v-snap", L("لقطة PNG", "PNG"));
+  const lo = $("v-light"); if (lo) [L("نهار", "Day"), L("الساعة الذهبية", "Golden hour"), L("ليل", "Night")].forEach((n, i) => { lo.options[i].textContent = n; });
+  const h = $("v-walk-hint"); if (h) { h.style.display = V3.walk ? "" : "none"; h.textContent = L("WASD أو الأسهم للمشي، اسحب للنظر، E باب، Esc خروج", "WASD or arrows to walk, drag to look, E door, Esc exit"); }
+  if (V5.cat) for (const kind of ["facade", "floor"]) {
+    const s = $("v-fin-" + kind); if (!s) continue; const cur = V5.chosen[kind] || "";
+    s.innerHTML = `<option value="">${kind === "facade" ? L("واجهة: —", "Facade: —") : L("أرضية: —", "Floor: —")}</option>` + V5.cat.filter(f => f.kind === kind).map(f => `<option value="${f.id}" ${f.id === cur ? "selected" : ""}>${esc(L(f.ar, f.en))}</option>`).join("");
+  }
+}
+async function v5SyncFin() { try { const r = await call("finishes"); V5.cat = r.catalog; V5.chosen = r.chosen; v5Labels(); } catch (e) { /* no project yet */ } }
+async function v5SetFin() {
+  const pick = id => $(id).value || null;
+  const r = await call("finishes_set", { finishes: { facade: pick("v-fin-facade"), floor: pick("v-fin-floor") } });
+  V5.chosen = r.chosen; if (PR.fin) { PR.fin = r; prBuild(); } await refresh3d(false);
+}
+$("v-walk").onclick = () => busy(() => v5Walk(!V3.walk));
+$("v-eye").onchange = () => { v5Eye(); if (V3.walk) { V3.pos[2] = v5LevelZ() + V3.eye; draw3(); } };
+$("v-xray").onchange = () => { V3.xray = $("v-xray").checked; build3(); draw3(); };
+$("v-light").onchange = () => { V3.light = $("v-light").value; build3(); draw3(); };
+$("v-fin-facade").onchange = () => busy(v5SetFin); $("v-fin-floor").onchange = () => busy(v5SetFin);
+$("v-snap").onclick = () => busy(async () => {
+  if (!V3.on) { toast(L("افتح العرض ثلاثي الأبعاد أولاً", "Open the 3D view first")); return; }
+  draw3(); const u = $("gl").toDataURL("image/png"); const r = await call("export", { name: `view-${V3.light}.png`, b64: u.split(",")[1] });
+  toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled"));
+});
+window.addEventListener("keydown", e => {
+  if (!V3.on || !V3.walk) return; const tg = e.target.tagName; if (tg === "INPUT" || tg === "SELECT" || tg === "TEXTAREA") return;
+  const k = e.key.toLowerCase(); if (k === "escape") { v5Walk(false); return; } if (k === "e") { v5Door(); return; }
+  V3.keys[k] = true; if (k.startsWith("arrow")) e.preventDefault();
+});
+window.addEventListener("keyup", e => { V3.keys[e.key.toLowerCase()] = false; });
+function v5Tick(ts) {
+  if (V3.on && V3.walk) {
+    const dt = Math.min(0.05, (ts - (V5.tick || ts)) / 1000); V5.tick = ts; const k = V3.keys, sp = 2.2 * dt;
+    if (k.arrowleft) V3.wyaw += 1.6 * dt; if (k.arrowright) V3.wyaw -= 1.6 * dt;
+    const f = (k.w || k.arrowup ? 1 : 0) - (k.s || k.arrowdown ? 1 : 0), s = (k.d ? 1 : 0) - (k.a ? 1 : 0);
+    const dx = (Math.cos(V3.wyaw) * f + Math.sin(V3.wyaw) * s) * sp, dy = (Math.sin(V3.wyaw) * f - Math.cos(V3.wyaw) * s) * sp;
+    if (dx || dy || k.arrowleft || k.arrowright) {
+      if (!v5Blocked(V3.pos[0] + dx, V3.pos[1])) V3.pos[0] += dx;
+      if (!v5Blocked(V3.pos[0], V3.pos[1] + dy)) V3.pos[1] += dy;
+      draw3();
+    }
+  } else V5.tick = 0;
+  requestAnimationFrame(v5Tick);
+}
+requestAnimationFrame(v5Tick);
+
+// ---- the Presentation tab: finish rates, as-built measurements, the client tour and the STL scale model
+const PR = { fin: null, ab: null, levels: [], stl: null };
+async function prLoad() {
+  PR.fin = await call("finishes"); PR.ab = await call("asbuilt");
+  try { PR.levels = (await call("model3d")).levels || []; } catch (e) { PR.levels = []; }
+  V5.cat = PR.fin.catalog; V5.chosen = PR.fin.chosen; prBuild(); v5Labels();
+}
+function prBuild() {
+  const box = $("p-pr"); if (!box || !PR.fin || !PR.ab) return;
+  $("tab-pr").textContent = L("العرض والتسليم", "Presentation");
+  const cat = PR.fin.catalog, ch = PR.fin.chosen, rep = PR.fin.report, ab = PR.ab.inputs, ar = PR.ab.report;
+  const opts = (kind, sel) => `<option value=""></option>` + cat.filter(f => f.kind === kind).map(f => `<option value="${f.id}" ${f.id === sel ? "selected" : ""}>${esc(L(f.ar, f.en))}</option>`).join("");
+  const dev = ar.deviations.slice(0, 200).map(d => [esc(d.name), d.what, d.design_mm, d.measured_mm, `<b dir="ltr">${d.deviation_mm}</b>`, `<span style="color:${d.status === "over" ? "#c62828" : d.status === "ok" ? "#2e7d32" : "#757575"}">${d.status === "over" ? L("تجاوز", "over") : d.status === "ok" ? L("ضمن التفاوت", "within") : L("بلا تفاوت", "no tolerance")}</span>`]);
+  const st = PR.stl;
+  box.innerHTML = `
+    <h2>${L("بدّل التشطيبات", "Material swapper")}</h2>
+    <div class="note">${L("الكسوة الخارجية وتشطيب الأرضيات يُحفظان في المشروع (تراجع/إعادة) ويظهران في العرض ثلاثي الأبعاد وجدول الكميات وBOQ تحت الرمز FIN.*. الأسعار من مدخلاتك فقط (لا أسعار مدمجة): اختر التشطيب ثم اضغط التطبيق، وبعدها أدخل السعر لكل بند.", "The facade and floor finish are stored in the project (undo/redo) and reach the 3D view, the quantity table and the BOQ under the code FIN.*. Prices are only the rates you enter (none is built in): choose the finish, apply, then enter a rate per line.")}</div>
+    <div class="row"><div><label>${L("الكسوة الخارجية", "Facade finish")}</label><select id="pr-facade">${opts("facade", ch.facade)}</select></div><div><label>${L("تشطيب الأرضيات", "Floor finish")}</label><select id="pr-floor">${opts("floor", ch.floor)}</select></div></div>
+    ${rep.lines.length ? sxT(rep.lines.map(l => [esc(L(l.ar, l.en)), l.code, l.area_m2, `<input type="number" step="any" dir="ltr" data-prrate="${l.code}" value="${l.rate ?? ""}" style="width:90px">`, l.amount ?? "-"]), [L("البند", "Item"), L("الرمز", "Code"), "m²", L("السعر/م²", "Rate/m²"), L("المبلغ", "Amount")]) : ""}
+    ${rep.total != null ? `<div class="ok">${L("إجمالي التشطيبات", "Finishes total")}: <b dir="ltr">${rep.total} ${esc(rep.currency || "")}</b></div>` : ""}
+    <ul class="clean">${(rep.notes || []).map(n => `<li class="hint">${esc(n)}</li>`).join("")}</ul>
+    <div class="bar" style="padding:2px 0;border:0"><button id="pr-fin-save" class="primary">${L("طبّق التشطيبات والأسعار", "Apply finishes and rates")}</button></div>
+
+    <h2>${L("فحص الإنجاز الفعلي (As-built)", "As-built deviation check")}</h2>
+    <div class="note">${L("ملف CSV بأعمدة: name,x_mm,y_mm,length_mm,width_mm,height_mm,thickness_mm. الاسم: COL-1 أو FND-1 أو BM-1 أو SL-1 (كما في الجداول) أو معرّف العنصر أو room:المفتاح. الانحراف = المقاس − التصميم بالمليمتر، ولا يُحكم عليه إلا بتفاوتك أنت.", "CSV with columns name,x_mm,y_mm,length_mm,width_mm,height_mm,thickness_mm. The name is COL-1, FND-1, BM-1 or SL-1 (as in the schedules), an element id, or room:<key>. Deviation = measured - design in mm, judged only against your own tolerance.")}</div>
+    <div class="row"><div><label>${L("ملف القياسات", "Measurements file")}</label><input type="file" id="pr-csvf" accept=".csv,.txt"></div><div><label>${L("التفاوت المسموح (مم)", "Tolerance (mm)")}</label><input type="number" step="any" dir="ltr" id="pr-tol" value="${ab.toleranceMm ?? ""}"></div></div>
+    <label>${L("أو الصق النص", "or paste the text")}</label><textarea id="pr-csv" rows="4" dir="ltr" placeholder="name,x_mm,y_mm&#10;COL-1,6012,1995"></textarea>
+    <label>${L("مصدر القياس", "Source of the measurements")}</label><input type="text" id="pr-src" value="${esc(ab.source || "")}">
+    <div class="hint">${L("الصفوف المخزّنة", "Stored rows")}: ${ab.rows.length} · ${L("مطابقة", "matched")} ${ar.matched} · ${L("خارج التفاوت", "over")} <b>${ar.over}</b> · ${L("أكبر انحراف", "largest")} <b dir="ltr">${ar.max_abs_mm} mm</b>${ar.unmatched.length ? " · " + L("بلا عنصر", "no element") + ": " + esc(ar.unmatched.join(", ")) : ""}</div>
+    ${dev.length ? sxT(dev, [L("الاسم", "Name"), L("القيمة", "Value"), L("التصميم", "Design"), L("المقاس", "Measured"), L("الانحراف مم", "Deviation mm"), ""]) : ""}
+    <ul class="clean">${(ar.notes || []).map(n => `<li class="hint">${esc(n)}</li>`).join("")}</ul>
+    <div class="bar" style="padding:2px 0;border:0;gap:6px;flex-wrap:wrap"><button id="pr-ab-save" class="primary">${L("احفظ وقارن", "Save and compare")}</button><button id="pr-ab-plan">${L("اعرضها على المخطط", "Show on the plan")}</button><button id="pr-ab-3d">${L("اعرضها في 3D", "Show in 3D")}</button></div>
+
+    <h2>${L("جولة العميل (ملف HTML واحد)", "Client tour (one HTML file)")}</h2>
+    <div class="note">${L("ملف واحد بلا إنترنت ولا تثبيت: يفتحه العميل في أي متصفح ويدور حول النموذج أو يتجوّل فيه (WASD) مع الأشعة السينية والإضاءة ولقطة PNG.", "One file, no internet and no install: the client opens it in any browser and orbits or walks through the model (WASD) with X-ray, lighting and a PNG snapshot.")}</div>
+    <div class="bar" style="padding:2px 0;border:0"><button id="pr-tour">${L("صدّر الجولة", "Export the tour")}</button></div>
+
+    <h2>${L("مجسّم STL للطباعة", "STL scale model")}</h2>
+    <div class="note">${L("كل مجسّم مغلق (12 مثلثاً). المجسمات المتداخلة لا تُدمج هنا (يدمجها برنامج الطباعة). الوحدة مم من النموذج المصغّر.", "Every solid is closed (12 triangles). Overlapping solids are not merged here (the slicer fuses them). Units are mm of the scaled model.")}</div>
+    <div class="row3"><div><label>${L("المقياس 1 :", "Scale 1 :")}</label><input type="number" step="any" dir="ltr" id="pr-scale" value="100"></div><div><label>${L("الدور", "Level")}</label><select id="pr-lv"><option value="">${L("كل الأدوار", "All levels")}</option>${PR.levels.map(l => `<option value="${l.index}">${esc(levelLabel(l.index))}</option>`).join("")}</select></div><div><label>${L("أصغر جدار تطبعه الطابعة (مم)", "Smallest wall your printer holds (mm)")}</label><input type="number" step="any" dir="ltr" id="pr-minf"></div></div>
+    <div class="bar" style="padding:2px 0;border:0"><button id="pr-stl">${L("صدّر STL", "Export STL")}</button></div>
+    ${st ? `<div class="${st.report.thin.length ? "warn" : "ok"}">${st.report.solids} ${L("مجسماً", "solids")} · ${st.report.triangles} ${L("مثلثاً", "triangles")} · ${st.report.size_mm.join(" × ")} mm · ${st.closed ? L("كل مجسم مغلق", "every solid closed") : L("شبكة غير مغلقة", "mesh not closed")}</div><ul class="clean">${st.report.thin.slice(0, 12).map(x => `<li class="hint">${esc(x)}</li>`).join("")}${st.report.notes.map(n => `<li class="hint">${esc(n)}</li>`).join("")}</ul>` : ""}`;
+  prWire();
+}
+function prWire() {
+  const act = (id, fn) => { const e = $(id); if (e) e.onclick = () => busy(fn); };
+  const num = id => { const v = $(id).value.trim(); return v === "" ? null : Number(v); };
+  const rates = () => { const o = {}; document.querySelectorAll("[data-prrate]").forEach(e => { if (e.value !== "") o[e.dataset.prrate] = Number(e.value); }); return o; };
+  act("pr-fin-save", async () => {
+    PR.fin = await call("finishes_set", { finishes: { facade: $("pr-facade").value || null, floor: $("pr-floor").value || null }, rates: rates() });
+    V5.chosen = PR.fin.chosen; prBuild(); v5Labels(); if (V3.on) await refresh3d(false); toast(t("proj_saved"));
+  });
+  const f = $("pr-csvf"); if (f) f.onchange = () => { const file = f.files[0]; if (!file) return; const r = new FileReader(); r.onload = () => { $("pr-csv").value = String(r.result); }; r.readAsText(file); };
+  const abSave = async () => {
+    const args = { toleranceMm: num("pr-tol"), source: $("pr-src").value };
+    const csv = $("pr-csv").value.trim(); if (csv) args.csv = csv;
+    PR.ab = await call("asbuilt_set", args); prBuild(); if (V3.on) await refresh3d(false); toast(t("proj_saved"));
+  };
+  act("pr-ab-save", abSave);
+  act("pr-ab-plan", async () => { await abSave(); const r = await call("asbuilt_svg"); if (V3.on) setView3(false); showPlan(r.svg); });
+  act("pr-ab-3d", async () => { await abSave(); if (!V3.on) setView3(true); else await refresh3d(false); });
+  act("pr-tour", async () => { const r = await call("tour_export", { lang: lang === "en" ? "en" : "ar" }); const s = await call("export", { name: r.name, data: r.html }); toast(s.saved ? t("saved") + ": " + s.saved : t("cancelled")); });
+  act("pr-stl", async () => {
+    const args = { scale: num("pr-scale"), minFeatureMm: num("pr-minf") }; const lv = $("pr-lv").value; if (lv !== "") args.level = Number(lv);
+    const r = await call("stl_export", args); PR.stl = r; prBuild();
+    const s = await call("export", { name: r.name, b64: r.stl_b64 }); toast(s.saved ? t("saved") + ": " + s.saved : t("cancelled"));
+  });
+}
+v5Labels(); v5SyncFin();
+$("tab-pr").textContent = L("العرض والتسليم", "Presentation");
+document.querySelector('[data-tab="pr"]').addEventListener("click", () => busy(prLoad));
+
 // ---------------------------------------------------------------- project details and code check
 function projectPayload() {
   const src = $("lim-src").value.trim();

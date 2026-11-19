@@ -78,6 +78,10 @@ pub struct ProjectMeta {
     pub structural: crate::structx::StructuralInputs,
     /// Inputs of the advanced MEP pack: solar, smart home, Wi-Fi, CCTV, EV chargers, balancing, greywater, head loss.
     pub mep_ext: crate::mepx::MepExtInputs,
+    /// The facade and floor finishes chosen for the 3D view, the quantities and the BOQ.
+    pub finishes: crate::finishes::Finishes,
+    /// Measured coordinates and dimensions compared with the design.
+    pub as_built: crate::asbuilt::AsBuilt,
 }
 
 /// Limits set by the municipality for this plot. Each carries the source the user took it from. A limit without a
@@ -209,6 +213,8 @@ impl NanoArchProject {
         self.meta.compliance.check()?;
         self.meta.structural.check()?;
         self.meta.mep_ext.check()?;
+        self.meta.finishes.check()?;
+        self.meta.as_built.check()?;
         if let Some(f) = &self.meta.furniture
             && f.min_clear_mm.is_some_and(|m| !m.is_finite() || m <= 0.0)
         {
