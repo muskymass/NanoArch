@@ -4,7 +4,7 @@
 ; The installer is NOT code-signed, so Windows SmartScreen will warn on first run.
 
 #define AppName "NanoArch"
-#define AppVersion "0.2.0"
+#define AppVersion "0.3.0"
 #define AppPublisher "NanoNexus"
 #ifndef ExeSrc
   #error Pass the built executable: /DExeSrc="C:\path\to\nanoarch-app.exe"
@@ -25,8 +25,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\dist
 OutputBaseFilename=NanoArch-Setup-{#AppVersion}
-SetupIconFile=nanoarch.ico
-UninstallDisplayIcon={app}\nanoarch.ico
+SetupIconFile=..\assets\icon.ico
+UninstallDisplayIcon={app}\icon.ico
 UninstallDisplayName={#AppName}
 Compression=lzma2
 SolidCompression=yes
@@ -44,13 +44,13 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#ExeSrc}"; DestDir: "{app}"; DestName: "NanoArch.exe"; Flags: ignoreversion
-Source: "nanoarch.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; Empty templates to fill in: a code rule pack (every value null) and production rates (every value null).
 Source: "..\nnx-core\packs\*.json"; DestDir: "{app}\templates"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\NanoArch.exe"; IconFilename: "{app}\nanoarch.ico"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\NanoArch.exe"; IconFilename: "{app}\nanoarch.ico"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\NanoArch.exe"; IconFilename: "{app}\icon.ico"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\NanoArch.exe"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\NanoArch.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent

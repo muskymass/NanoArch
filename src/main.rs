@@ -14,10 +14,18 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
-use tao::window::{Window, WindowBuilder};
+use tao::window::{Icon, Window, WindowBuilder};
 use wry::{PageLoadEvent, WebView, WebViewBuilder};
 
 const HTML: &str = include_str!("../assets/index.html");
+
+/// The application icon as raw RGBA, 64 x 64 (made from `assets/icon.png`, see `assets/icon.ico` for the file icon).
+const ICON_RGBA: &[u8] = include_bytes!("../assets/icon-window.rgba");
+const ICON_SIZE: u32 = 64;
+
+fn window_icon() -> Icon {
+    Icon::from_rgba(ICON_RGBA.to_vec(), ICON_SIZE, ICON_SIZE).expect("the embedded icon is a 64 x 64 RGBA image")
+}
 
 /// Messages to the event loop (the only thread that may touch windows and web views).
 enum Ui {
@@ -262,6 +270,7 @@ fn main() {
     let ui_proxy = proxy.clone();
     let window = WindowBuilder::new()
         .with_title("NanoArch - NanoNexus")
+        .with_window_icon(Some(window_icon()))
         .with_inner_size(LogicalSize::new(1440.0, 900.0))
         .build(&event_loop)
         .expect("window");
@@ -340,6 +349,39 @@ mod tests {
         assert_eq!(k("x.png"), Some(("image", "image/png")));
         assert_eq!(k("x.dwg"), None);
         assert_eq!(k("noext"), None);
+    }
+
+    #[test]
+    fn the_window_icon_is_a_valid_64_pixel_rgba_image_that_is_not_blank() {
+        assert_eq!(ICON_RGBA.len(), (ICON_SIZE * ICON_SIZE * 4) as usize);
+        let _ = window_icon();
+        let opaque = ICON_RGBA.chunks(4).filter(|p| p[3] == 255).count();
+        let transparent = ICON_RGBA.chunks(4).filter(|p| p[3] == 0).count();
+        assert!(opaque > 2000, "the rounded square is drawn: {opaque}");
+        assert!(transparent > 100, "its corners are transparent: {transparent}");
+        let colours: std::collections::BTreeSet<[u8; 3]> = ICON_RGBA.chunks(4).filter(|p| p[3] == 255).map(|p| [p[0] / 16, p[1] / 16, p[2] / 16]).collect();
+        assert!(colours.len() > 20, "a shaded 3D drawing, not a flat fill: {} colours", colours.len());
+    }
+
+    #[test]
+    fn the_icon_files_are_a_multi_size_ico_and_a_png() {
+        let ico = include_bytes!("../assets/icon.ico");
+        assert_eq!(&ico[..4], &[0, 0, 1, 0], "ICO header");
+        let n = u16::from_le_bytes([ico[4], ico[5]]) as usize;
+        assert_eq!(n, 7);
+        let mut sizes = Vec::new();
+        for i in 0..n {
+            let e = &ico[6 + 16 * i..6 + 16 * (i + 1)];
+            let (w, len, off) = (if e[0] == 0 { 256 } else { e[0] as u32 }, u32::from_le_bytes([e[8], e[9], e[10], e[11]]) as usize, u32::from_le_bytes([e[12], e[13], e[14], e[15]]) as usize);
+            assert_eq!(&ico[off..off + 8], b"\x89PNG\r\n\x1a\n", "entry {i} is a PNG");
+            assert!(off + len <= ico.len());
+            sizes.push(w);
+        }
+        assert_eq!(sizes, vec![16, 24, 32, 48, 64, 128, 256]);
+        let png = include_bytes!("../assets/icon.png");
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        // The PNG header holds its size: 512 x 512.
+        assert_eq!((u32::from_be_bytes([png[16], png[17], png[18], png[19]]), u32::from_be_bytes([png[20], png[21], png[22], png[23]])), (512, 512));
     }
 
     #[test]

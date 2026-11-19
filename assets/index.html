@@ -227,6 +227,11 @@ ul.clean li{margin:3px 0}
         <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="lim-enforce"><span data-i="lim_enforce"></span></label>
         <div class="bar" style="padding:10px 0;border:0"><button id="proj-save" class="primary" data-i="proj_save"></button></div>
         <div id="sbcout"></div>
+        <h2 data-i="zone_h"></h2>
+        <div class="row"><div><label data-i="zone_pick"></label><select id="zone-sel"></select></div><div><label>&nbsp;</label><button id="zone-apply" data-i="zone_apply"></button></div></div>
+        <div id="zone-out"></div>
+        <h2 data-i="conc_h"></h2>
+        <div id="conc-out"></div>
       </div>
       <div class="pane" id="p-str">
         <div class="note" data-i="str_note"></div>
@@ -294,6 +299,9 @@ ar: {
   m_missing:"مدخلات ناقصة", m_circuits:"الدوائر الكهربائية", m_circuit:"الدائرة", m_points:"نقاط", m_watts:"واط", m_amps:"أمبير", m_breaker:"القاطع (A)", m_cable:"الكابل (مم²)", m_len:"الطول (م)", m_vd:"هبوط الجهد %", m_total:"المجموع", m_demand:"الطلب", m_main:"القاطع الرئيسي (A)",
   m_plumb:"السباكة", m_flow:"التدفق (L/s)", m_pipe:"الأنبوب", m_dfu:"وحدات التصريف", m_drain:"المصرف (مم)", m_tank:"الخزان (م³)", m_design:"تدفق التصميم (L/s)", m_hvac:"التكييف", m_load:"الحمل (W)", m_units:"الوحدات", m_tons:"طن تبريد", m_ins:"العزل", m_scope:"النطاق", m_area:"المساحة (م²)", m_u:"U", m_limit:"الحد", m_status:"الحالة", m_applied:"أُضيفت {c} نقطة وأُزيلت {r}", m_pts:"النقاط في النموذج: {n}",
   export_pdf:"تصدير PDF",
+  zone_h:"المنطقة المناخية (SBC 602)", zone_pick:"المنطقة أو المدينة", zone_apply:"طبّق حدود المنطقة", zone_applied:"طُبّقت حدود المنطقة {z} على مدخلات العزل", z_cdd:"تعريف المنطقة", z_wall_u:"U للجدار ≤", z_roof_u:"U للسقف ≤", z_wall_r:"R للجدار ≥", z_roof_r:"R للسقف ≥", z_win:"الزجاج U / SHGC", z_src:"المرجع",
+  conc_h:"الخرسانة (SBC 1101 الباب 4A)", c_fcmin:"أقل f'c للخرسانة العادية الوزن (MPa)", c_exposure:"فئات التعرض", c_cover:"الغطاء الخرساني المحدد (جدول 4A5)", c_notfound:"غير موجود في ملفات الكود (أدخله أنت)", c_class:"الفئة", c_wcm:"أعلى نسبة ماء/أسمنت", c_fc:"أقل f'c", c_expo:"التعرض", c_member:"العنصر", c_bars:"الأسياخ", c_mm:"الغطاء (مم)",
+  str_design:"نتائج التصميم الأولي للتسليح", s_reqas:"المطلوب (مم²)", s_provas:"المقدَّم (مم²)", s_ratio:"النسبة %", s_barsx:"الأسياخ", s_notes:"ملاحظات",
   dxf_views:"مع الواجهات والمقاطع", rep_pdf:"تقرير هندسي (PDF)", rep_xlsx:"تقرير هندسي (Excel)", v_4d:"4D", v_4d_need:"احسب الجدول الزمني أولاً (تبويب الجدول)", v_play:"تشغيل", v_pause:"إيقاف", v_day:"اليوم", s_wbs:"WBS", s_phase:"المرحلة", s_active:"قيد التنفيذ", phase:{"Substructure":"الأساسات","Superstructure":"الهيكل","Insulation":"العزل","MEP rough-in":"تمديدات الكهروميكانيك","Finishing":"التشطيبات","Commissioning":"الاختبار والتشغيل"},
   t_str:"الجداول الإنشائية", str_note:"أحمال الأعمدة بالمساحة المساهمة، والقواعد مقابل تحمل التربة (من المدخلات الإنشائية)، والميدات الرابطة، والخرسانة وجدول ثني الحديد. الحديد يُجدول من نماذج تحددها أنت (أقطار وأعداد وتباعد وغطاء)؛ التطبيق لا يصمم التسليح. أولي ولا يغني عن مهندس إنشائي مرخّص.", str_example:"املأ بقيم اصطناعية (للاختبار فقط)", str_run:"احسب الجداول", str_cols:"الأعمدة", str_fnd:"القواعد", str_tb:"الميدات الرابطة", str_conc:"الخرسانة (م³)", str_bbs:"جدول ثني الحديد", s_trib:"المساحة المساهمة (م²)", s_axial:"الحمل المحوري (kN)", s_req:"المطلوب (م²)", s_prov:"المقاس القائم", s_status:"الحالة", s_span:"البحر (مم)", s_clear:"الصافي (مم)", s_size:"المقطع", s_vol:"الحجم (م³)", s_mark:"العلامة", s_dia:"القطر", s_num:"العدد", s_cut:"طول القص (مم)", s_kg:"كغ", s_soil:"تحمل التربة (kPa)", s_csv_members:"تصدير العناصر (CSV)", s_csv_conc:"تصدير الخرسانة (CSV)", s_csv_bbs:"تصدير ثني الحديد (CSV)", m_btu:"BTU/ساعة", m_tons:"طن تبريد", m_air:"تدفق الهواء (L/s)", m_kva:"kVA", m_board:"اللوحة", m_boards:"لوحات التوزيع", m_routes:"المسارات المولّدة", m_sys:"النظام", m_role:"الدور", m_from:"من", m_to:"إلى", m_slope:"ميل %",
   t_bim:"BIM والتعارضات", bim_note:"أدخل المجاري والأنابيب والمصارف (مم؛ الارتفاع فوق سطح أرضية الدور). التطبيق لا يرسم مساراتها. يُفحص تقاطعها مع الكمرات والأعمدة والقواعد بالهندسة الفعلية، وتُلوَّن العناصر المتعارضة بالأحمر في العرض ثلاثي الأبعاد.", run_sys:"النظام", sys_duct:"مجرى تكييف", sys_pipe:"أنبوب", sys_drain:"مصرف", run_from:"من (x, y, z)", run_to:"إلى (x, y, z)", run_size:"العرض × الارتفاع (مم)", run_level:"الدور (رقم)", run_add:"أضف", run_none:"لا مجاري ولا أنابيب بعد", clash_run:"افحص التعارضات", clash_h:"التعارضات", clash_none:"لا تعارض", clash_new:"تعارض جديد: {n}", d_architectural:"معماري", d_structural:"إنشائي", d_electrical:"كهرباء", d_plumbing:"سباكة", d_hvac:"تكييف", v_plan:"المخطط", v_north:"واجهة شمالية", v_south:"واجهة جنوبية", v_east:"واجهة شرقية", v_west:"واجهة غربية", v_aa:"مقطع A-A", v_bb:"مقطع B-B", sec_at:"موضع المقطع (م)", p_parapet:"ارتفاع الجدار الاستنادي للسطح (م)",
@@ -334,6 +342,9 @@ en: {
   m_missing:"Missing inputs", m_circuits:"Electrical circuits", m_circuit:"Circuit", m_points:"Points", m_watts:"W", m_amps:"A", m_breaker:"Breaker (A)", m_cable:"Cable (mm²)", m_len:"Length (m)", m_vd:"Voltage drop %", m_total:"Total", m_demand:"Demand", m_main:"Main breaker (A)",
   m_plumb:"Plumbing", m_flow:"Flow (L/s)", m_pipe:"Pipe", m_dfu:"Drain fixture units", m_drain:"Drain (mm)", m_tank:"Tank (m³)", m_design:"Design flow (L/s)", m_hvac:"HVAC", m_load:"Load (W)", m_units:"Units", m_tons:"Tons of refrigeration", m_ins:"Insulation", m_scope:"Scope", m_area:"Area (m²)", m_u:"U", m_limit:"Limit", m_status:"Status", m_applied:"Added {c} points, removed {r}", m_pts:"Points in the model: {n}",
   export_pdf:"Export PDF",
+  zone_h:"Climate zone (SBC 602)", zone_pick:"Zone or city", zone_apply:"Apply zone limits", zone_applied:"Zone {z} limits applied to the insulation inputs", z_cdd:"Zone definition", z_wall_u:"Wall U ≤", z_roof_u:"Roof U ≤", z_wall_r:"Wall R ≥", z_roof_r:"Roof R ≥", z_win:"Glazing U / SHGC", z_src:"Source",
+  conc_h:"Concrete (SBC 1101 chapter 4A)", c_fcmin:"Least f'c of normal-weight concrete (MPa)", c_exposure:"Exposure classes", c_cover:"Specified concrete cover (Table 4A5)", c_notfound:"Not in the code files (enter them yourself)", c_class:"Class", c_wcm:"Max w/cm", c_fc:"Least f'c", c_expo:"Exposure", c_member:"Member", c_bars:"Bars", c_mm:"Cover (mm)",
+  str_design:"Preliminary reinforcement design", s_reqas:"Required (mm²)", s_provas:"Provided (mm²)", s_ratio:"Ratio %", s_barsx:"Bars", s_notes:"Notes",
   dxf_views:"with elevations and sections", rep_pdf:"Engineering report (PDF)", rep_xlsx:"Engineering report (Excel)", v_4d:"4D", v_4d_need:"Compute the schedule first (Schedule tab)", v_play:"Play", v_pause:"Pause", v_day:"Day", s_wbs:"WBS", s_phase:"Phase", s_active:"active", phase:{"Substructure":"Substructure","Superstructure":"Superstructure","Insulation":"Insulation","MEP rough-in":"MEP rough-in","Finishing":"Finishing","Commissioning":"Commissioning"},
   t_str:"Structural schedules", str_note:"Column loads by tributary area, footings against the soil bearing value (from the structural inputs), tie beams, concrete and the bar bending schedule. Steel is scheduled from templates YOU give (diameters, counts, spacing, cover); the application does not design reinforcement. Preliminary: a licensed structural engineer must check it.", str_example:"Fill with synthetic values (testing only)", str_run:"Compute schedules", str_cols:"Columns", str_fnd:"Footings", str_tb:"Tie beams", str_conc:"Concrete (m³)", str_bbs:"Bar bending schedule", s_trib:"Tributary area (m²)", s_axial:"Axial load (kN)", s_req:"Required (m²)", s_prov:"Provided", s_status:"Status", s_span:"Span (mm)", s_clear:"Clear (mm)", s_size:"Section", s_vol:"Volume (m³)", s_mark:"Mark", s_dia:"Dia", s_num:"No.", s_cut:"Cut length (mm)", s_kg:"kg", s_soil:"Soil bearing (kPa)", s_csv_members:"Export members (CSV)", s_csv_conc:"Export concrete (CSV)", s_csv_bbs:"Export bar schedule (CSV)", m_btu:"Btu/hr", m_tons:"Tons", m_air:"Airflow (L/s)", m_kva:"kVA", m_board:"Board", m_boards:"Distribution boards", m_routes:"Generated routes", m_sys:"System", m_role:"Role", m_from:"From", m_to:"To", m_slope:"Slope %",
   t_bim:"BIM and clashes", bim_note:"Enter the ducts, pipes and drains (mm; heights above the level's floor top). The application does not route them. Their intersections with beams, columns and footings are tested on the real geometry, and the clashing elements turn red in the 3D view.", run_sys:"System", sys_duct:"HVAC duct", sys_pipe:"Pipe", sys_drain:"Drain", run_from:"From (x, y, z)", run_to:"To (x, y, z)", run_size:"Width x height (mm)", run_level:"Level (number)", run_add:"Add", run_none:"No ducts or pipes yet", clash_run:"Detect clashes", clash_h:"Clashes", clash_none:"No clash", clash_new:"New clashes: {n}", d_architectural:"Architectural", d_structural:"Structural", d_electrical:"Electrical", d_plumbing:"Plumbing", d_hvac:"HVAC", v_plan:"Plan", v_north:"North elevation", v_south:"South elevation", v_east:"East elevation", v_west:"West elevation", v_aa:"Section A-A", v_bb:"Section B-B", sec_at:"Section position (m)", p_parapet:"Roof parapet height (m)",
@@ -361,7 +372,7 @@ function applyLang() {
   if (state.levels) setLevels(state.levels);
   $("to3d").textContent = (typeof V3 !== "undefined" && V3.on) ? t("to2d") : t("to3d");
   renderRooms(); renderWorkdays(); renderRates();
-  if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr();
+  if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
 }
 
 // ---------------------------------------------------------------- state and helpers
@@ -730,7 +741,13 @@ const STR_EXAMPLE = () => ({
   rebar: { cover_mm: 40, anchorage_mm: 300, hook_mm: 100,
     column: { bar_dia_mm: 16, count: 8, tie_dia_mm: 8, tie_spacing_mm: 200 },
     footing: { bar_dia_mm: 12, spacing_mm: 150 },
-    beam: { top_dia_mm: 16, top_count: 2, bottom_dia_mm: 16, bottom_count: 3, stirrup_dia_mm: 8, stirrup_spacing_mm: 150 } }
+    beam: { top_dia_mm: 16, top_count: 2, bottom_dia_mm: 16, bottom_count: 3, stirrup_dia_mm: 8, stirrup_spacing_mm: 150 },
+    // Bars not covered by a template above are sized from these (all of them are yours; SYNTHETIC here).
+    design: { fc_mpa: 25, fy_mpa: 420, bar_dias_mm: [12, 16, 20, 25], min_clear_spacing_mm: 25, load_factor: 1.4, exposure_class: "C1",
+      exposure: { column: "protected", footing: "ground", beam: "protected", tie_beam: "ground" },
+      column: { ratio_min: 0.01, ratio_max: 0.04, min_bars: 4, phi: 0.65, alpha: 0.8, tie_dia_mm: 8, tie_spacing_mm: 200 },
+      footing: { ratio_min: 0.0018, phi_flexure: 0.9, max_spacing_mm: 300 },
+      beam: { ratio_min: 0.004, min_top_bars: 2, stirrup_dia_mm: 8, stirrup_spacing_mm: 150 } } }
 });
 $("str-example").onclick = () => { $("strin").value = JSON.stringify(STR_EXAMPLE(), null, 2); };
 const readStr = () => { const txt = $("strin").value.trim(); if (!txt) return {}; try { return JSON.parse(txt); } catch (e) { throw new Error("JSON: " + e.message); } };
@@ -748,7 +765,8 @@ function renderStr() {
   if (rep.footings.length) h.push(`<h2>${t("str_fnd")}</h2><table><thead><tr><th>${t("s_mark")}</th><th>${t("str_cols")}</th><th>${t("s_prov")}</th><th>${t("s_axial")}</th><th>${t("s_req")}</th><th>${t("s_status")}</th></tr></thead><tbody>${rep.footings.map(x => `<tr class="${x.status === "undersized" ? "missing" : ""}"><td>${esc(x.name)}</td><td>${esc(x.column)}</td><td class="num">${esc(x.provided_mm)}</td><td class="num">${f(x.load_kn, 1)}</td><td class="num">${f(x.required_m2)}</td><td>${esc(x.status)}</td></tr>`).join("")}</tbody></table>`);
   if (rep.tie_beams.length) h.push(`<h2>${t("str_tb")}</h2><table><thead><tr><th>${t("s_mark")}</th><th>${t("m_from")}</th><th>${t("m_to")}</th><th>${t("s_span")}</th><th>${t("s_clear")}</th><th>${t("s_size")}</th></tr></thead><tbody>${rep.tie_beams.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.from)}</td><td>${esc(x.to)}</td><td class="num">${x.span_mm}</td><td class="num">${x.clear_mm}</td><td class="num">${x.width_mm}×${x.depth_mm}</td></tr>`).join("")}</tbody></table>`);
   if (rep.concrete.length) h.push(`<h2>${t("str_conc")}</h2><table><thead><tr><th>${t("s_mark")}</th><th>ID</th><th>${t("s_vol")}</th></tr></thead><tbody>${rep.concrete.map(x => `<tr title="${esc(x.basis)}"><td>${esc(x.element)}</td><td class="num" dir="ltr" title="${esc(x.id || "")}">${esc((x.id || "").slice(0, 8))}</td><td class="num">${f(x.volume_m3, 3)}</td></tr>`).join("")}</tbody></table><div class="note">${t("m_total")}: ${f(rep.concrete_total_m3, 3)} m³</div>`);
-  if (rep.bars.length) h.push(`<h2>${t("str_bbs")}</h2><table><thead><tr><th>${t("s_mark")}</th><th>${t("s_dia")}</th><th>${t("s_num")}</th><th>${t("s_cut")}</th><th>${t("s_kg")}</th></tr></thead><tbody>${rep.bars.map(b => `<tr title="${esc(b.role)}"><td>${esc(b.mark)}</td><td class="num">${b.dia_mm}</td><td class="num">${b.number}</td><td class="num">${b.cut_length_mm}</td><td class="num">${f(b.kg)}</td></tr>`).join("")}</tbody></table><div class="note">${t("m_total")}: ${f(rep.steel_total_kg)} kg</div>`);
+  if ((rep.designs || []).length) h.push(`<h2>${t("str_design")}</h2><table><thead><tr><th>${t("s_mark")}</th><th>${t("s_reqas")}</th><th>${t("s_provas")}</th><th>${t("s_ratio")}</th><th>${t("s_barsx")}</th><th>${t("c_mm")}</th><th>${t("s_status")}</th></tr></thead><tbody>${rep.designs.map(d => `<tr class="${d.status === "ok" || d.status === "minimum steel only" ? "" : "missing"}" title="${esc(d.notes)}"><td>${esc(d.element)}</td><td class="num">${f(d.required_mm2, 0)}</td><td class="num">${f(d.provided_mm2, 0)}</td><td class="num">${f(d.ratio_pct)}</td><td>${esc(d.bars)}</td><td class="num">${d.cover_mm}</td><td>${esc(d.status)}</td></tr>`).join("")}</tbody></table>`);
+  if (rep.bars.length) h.push(`<h2>${t("str_bbs")}</h2><table><thead><tr><th>${t("s_mark")}</th><th>${t("s_dia")}</th><th>${t("s_num")}</th><th>${t("s_cut")}</th><th>${t("s_kg")}</th></tr></thead><tbody>${rep.bars.map(b => `<tr title="${esc(b.role)} · ${esc(b.source || "")}"><td>${esc(b.mark)}</td><td class="num">${b.dia_mm}</td><td class="num">${b.number}</td><td class="num">${b.cut_length_mm}</td><td class="num">${f(b.kg)}</td></tr>`).join("")}</tbody></table><div class="note">${t("m_total")}: ${f(rep.steel_total_kg)} kg</div>`);
   if (rep.warnings.length) h.push(`<h2>${t("warnings")}</h2><ul class="clean">${rep.warnings.map(x => `<li class="warn">${esc(x)}</li>`).join("")}</ul>`);
   $("strout").innerHTML = h.join("");
 }
@@ -990,6 +1008,33 @@ $("v-play").onclick = () => {
   $("v-play").textContent = t("v_pause");
   f.timer = setInterval(() => { f.day = Math.min(f.days, f.day + Math.max(1, Math.round(f.days / 120))); $("v-day").value = f.day; redraw4d(); if (f.day >= f.days) stop4d(); }, 120);
 };
+// ---------------------------------------------------------------- reference presets: climate zones and concrete
+async function loadPresets() {
+  if (state.presets) return;
+  state.presets = await call("presets");
+  const ar = lang === "ar", sel = $("zone-sel");
+  sel.innerHTML = [1, 2, 3].map(z => `<option value="${z}">${ar ? "المنطقة" : "Zone"} ${z}</option>`).join("") + `<optgroup label="${ar ? "المدن" : "Cities"}">${state.presets.cities.map(c => `<option value="${esc(c.en)}">${esc(ar ? c.ar : c.en)} — ${ar ? "المنطقة" : "zone"} ${c.zone}</option>`).join("")}</optgroup>`;
+  renderPresets();
+}
+function renderPresets() {
+  const p = state.presets; if (!p) return; const ar = lang === "ar";
+  $("zone-out").innerHTML = `<table><thead><tr><th>#</th><th>${t("z_cdd")}</th><th>${t("z_wall_u")}</th><th>${t("z_roof_u")}</th><th>${t("z_wall_r")}</th><th>${t("z_roof_r")}</th><th>${t("z_win")}</th></tr></thead><tbody>${p.zones.map(z => `<tr title="${esc(z.source)}"><td>${z.zone}</td><td>${esc(ar ? z.cdd_rule_ar : z.cdd_rule_en)}</td><td class="num">${z.wall_u_max}</td><td class="num">${z.roof_u_max}</td><td class="num">${z.wall_r_min}</td><td class="num">${z.roof_r_min}</td><td class="num">${z.window_u_max} / ${z.window_shgc_max}</td></tr>`).join("")}</tbody></table>
+    <div class="note">${esc(p.zones[0].source)}</div><div class="note warn">${esc(ar ? p.zone_caveat_ar : p.zone_caveat_en)}</div><div class="note warn">${esc(ar ? p.design_temperature_note_ar : p.design_temperature_note)}</div>
+    <div class="note">${p.cities.filter(c => c.zone === 1 && /not named/.test(c.note)).map(c => esc((ar ? c.ar : c.en) + ": " + c.note)).join("")}</div>`;
+  const c = p.concrete;
+  $("conc-out").innerHTML = `<div class="note">${t("c_fcmin")}: <b>${c.fc_min_mpa}</b> · ${esc(c.fc_source)}</div>
+    <h3>${t("c_exposure")}</h3><table><thead><tr><th>${t("c_class")}</th><th>${t("c_fc")}</th><th>${t("c_wcm")}</th></tr></thead><tbody>${c.exposure_classes.map(x => `<tr><td>${x.class}</td><td class="num">${x.min_fc_mpa}</td><td class="num">${x.max_wcm ?? "—"}</td></tr>`).join("")}</tbody></table><div class="note">${esc(c.exposure_source)}</div>
+    <h3>${t("c_cover")}</h3><table><thead><tr><th>${t("c_expo")}</th><th>${t("c_member")}</th><th>${t("c_bars")}</th><th>${t("c_mm")}</th></tr></thead><tbody>${c.cover_rows.map(x => `<tr><td>${esc(x.exposure)}</td><td>${esc(x.member)}</td><td>${esc(x.bars)}</td><td class="num">${x.cover_mm}</td></tr>`).join("")}</tbody></table><div class="note">${esc(c.cover_source)}</div>
+    <div class="note warn"><b>${t("c_notfound")}:</b> ${c.not_found.map(esc).join("، ")}</div>`;
+}
+document.querySelector('[data-tab="sbc"]').addEventListener("click", () => busy(loadPresets));
+$("zone-apply").onclick = () => busy(async () => {
+  await loadPresets();
+  const r = await call("zone_preset", { zone: $("zone-sel").value });
+  applyProject(r.settings); renderSbc(r.sbc);
+  $("mepin").value = r.settings.mep && Object.keys(r.settings.mep).length ? JSON.stringify(r.settings.mep, null, 2) : ""; refreshStatus();
+  toast(t("zone_applied").replace("{z}", r.zone));
+});
 // ---------------------------------------------------------------- code rules
 $("runrules").onclick = () => busy(async () => {
   const r = await call("check_rules", { pack: $("pack").value });

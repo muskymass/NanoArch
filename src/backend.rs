@@ -253,6 +253,8 @@ impl App {
                 editing::delete_opening(self.doc.as_mut().ok_or("choose a layout first")?, &so, id)?;
                 Ok(json!({ "svg": self.render_or_null()?, "sbc": self.sbc_json() }))
             }
+            "presets" => Ok(nnx_core::presets::presets_json()),
+            "zone_preset" => self.zone_preset(args),
             "elevation" => self.elevation(args),
             "section" => self.section(args),
             "clashes" => Ok(self.clash_json()),
@@ -628,6 +630,22 @@ impl App {
         self.cur_level = 0;
         self.doc = Some(doc);
         Ok(json!({ "svg": self.render_or_null()?, "warnings": warnings, "rooms": self.rooms_json(), "levels": self.levels_json(), "settings": self.form_state(), "sbc": self.sbc_json() }))
+    }
+
+    /// Sets the project's climate zone (a number or a city) and puts that zone's wall and roof U limits into the insulation inputs,
+    /// as one undoable step. The values are the guide's reproduction of SBC 602 Table 5.2 (see `presets`).
+    fn zone_preset(&mut self, args: &Value) -> Result<Value, String> {
+        let text = args.get("zone").map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_string)).ok_or("zone is required (1, 2, 3 or a city)")?;
+        let z = nnx_core::presets::zone_of(&text).and_then(nnx_core::presets::zone).ok_or_else(|| format!("'{text}' is not a zone (1, 2, 3) or a city of the table"))?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "climate zone", |p| {
+            p.meta.climate_zone = Some(text.trim().to_string());
+            let lib = p.mep.get_or_insert_with(Default::default).insulation.get_or_insert_with(Default::default);
+            lib.u_limits.insert("wall".into(), z.wall_u_max);
+            lib.u_limits.insert("roof".into(), z.roof_u_max);
+            Ok(())
+        })?;
+        Ok(json!({ "zone": z.zone, "preset": nnx_core::presets::presets_json()["zones"][(z.zone - 1) as usize].clone(), "settings": self.form_state(), "sbc": self.sbc_json() }))
     }
 
     fn view_opts(&self) -> nnx_core::elevation::ViewOpts {
@@ -2329,6 +2347,79 @@ mod tests {
         // With nothing entered there is nothing to report, and it says what to enter.
         let mut bare = started_with_project();
         assert!(bare.handle("report_html", &json!({})).unwrap_err().contains("enter the MEP inputs"));
+    }
+
+    // ------------------------------------------------------------------ presets and reinforcement design
+
+    #[test]
+    fn a_climate_zone_preset_fills_the_insulation_limits_in_one_undoable_step_and_the_thermal_check_cites_the_page() {
+        let mut app = started_with_project();
+        let p = app.handle("presets", &json!({})).unwrap();
+        assert_eq!(p["zones"].as_array().unwrap().len(), 3);
+        assert!(p["cities"].as_array().unwrap().iter().any(|c| c["en"] == "Jubail" && c["zone"] == 1));
+        assert_eq!(p["concrete"]["fc_min_mpa"], 20.0);
+        // The project's climate zone is free text ("zone-a" here), so the thermal check has nothing to compare against.
+        let before = app.handle("sbc_check", &json!({})).unwrap();
+        assert!(before["skipped"].as_array().unwrap().iter().any(|s| s["rule"] == "thermal" && s["en"].as_str().unwrap().contains("Set the climate zone")));
+        app.handle("mep", &json!({ "inputs": mep_inputs(), "apply": false })).unwrap();
+        let h = hash(&app);
+        let r = app.handle("zone_preset", &json!({ "zone": "Jubail" })).unwrap();
+        assert_eq!(r["zone"], 1);
+        let proj = app.project().unwrap();
+        assert_eq!(proj.meta.climate_zone.as_deref(), Some("Jubail"));
+        let limits = &proj.mep.as_ref().unwrap().insulation.as_ref().unwrap().u_limits;
+        assert_eq!((limits["wall"], limits["roof"]), (0.403, 0.272));
+        // The assemblies of the fixture (wall U 0.607, roof U 0.575) and its glazing U 3.0 all exceed zone 1: warnings with the page.
+        let rules: Vec<(String, String, String)> = r["sbc"]["violations"].as_array().unwrap().iter().filter(|v| v["rule"].as_str().unwrap().starts_with("thermal")).map(|v| (v["rule"].as_str().unwrap().into(), v["severity"].as_str().unwrap().into(), v["source"].as_str().unwrap().into())).collect();
+        for rule in ["thermal.wall.u", "thermal.roof.u", "thermal.window.u"] {
+            let found = rules.iter().find(|x| x.0 == rule).unwrap_or_else(|| panic!("{rule} in {rules:?}"));
+            assert_eq!(found.1, "warning", "secondary values never refuse an edit");
+            assert!(found.2.contains("p.172") && found.2.contains("secondary"), "{}", found.2);
+        }
+        assert!(!r["sbc"]["skipped"].as_array().unwrap().iter().any(|s| s["rule"] == "thermal"));
+        // One undo takes the zone and the limits back out.
+        app.handle("undo", &json!({})).unwrap();
+        assert_ne!(app.project().unwrap().meta.climate_zone.as_deref(), Some("Jubail"));
+        assert!(app.project().unwrap().mep.unwrap().insulation.unwrap().u_limits.get("wall") != Some(&0.403));
+        assert_eq!(hash(&app), h, "the undo returned the model to exactly what it was");
+        // A zone that does not exist is refused by name and changes nothing.
+        let h2 = hash(&app);
+        assert!(app.handle("zone_preset", &json!({ "zone": "Atlantis" })).unwrap_err().contains("not a zone"));
+        assert!(app.handle("zone_preset", &json!({})).unwrap_err().contains("zone is required"));
+        assert_eq!(hash(&app), h2);
+        // Zone 3 has looser limits: the same assemblies are checked against 0.511 and 0.34.
+        let r3 = app.handle("zone_preset", &json!({ "zone": 3 })).unwrap();
+        let wall = r3["sbc"]["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "thermal.wall.u").unwrap().clone();
+        assert_eq!(wall["limit"], 0.511);
+    }
+
+    #[test]
+    fn the_sizing_command_designs_the_bars_from_your_parameters_where_no_template_is_given() {
+        let mut app = sized_app();
+        let mut inp = sizing_inputs();
+        inp["rebar"].as_object_mut().unwrap().remove("column");
+        inp["rebar"].as_object_mut().unwrap().remove("footing");
+        inp["rebar"].as_object_mut().unwrap().remove("beam");
+        inp["rebar"]["design"] = json!({
+            "fc_mpa": 25, "fy_mpa": 420, "bar_dias_mm": [12, 16, 20], "min_clear_spacing_mm": 25, "load_factor": 1.4,
+            "exposure": { "column": "protected", "footing": "ground", "beam": "protected", "tie_beam": "ground" },
+            "column": { "ratio_min": 0.01, "ratio_max": 0.04, "min_bars": 4, "phi": 0.65, "alpha": 0.8, "tie_dia_mm": 8, "tie_spacing_mm": 200 },
+            "footing": { "ratio_min": 0.0018, "phi_flexure": 0.9, "max_spacing_mm": 300 },
+            "beam": { "ratio_min": 0.004, "min_top_bars": 2, "stirrup_dia_mm": 8, "stirrup_spacing_mm": 150 } });
+        let r = app.handle("sizing", &json!({ "inputs": inp })).unwrap();
+        let rep = &r["report"];
+        assert_eq!(rep["missing"], json!({}), "{}", rep["missing"]);
+        let designs = rep["designs"].as_array().unwrap();
+        assert!(designs.iter().any(|d| d["kind"] == "Column") && designs.iter().any(|d| d["kind"] == "Footing") && designs.iter().any(|d| d["kind"] == "TieBeam"));
+        assert!(designs.iter().all(|d| d["bars"].as_str().unwrap().contains("Dia") && d["provided_mm2"].as_f64().unwrap() >= d["required_mm2"].as_f64().unwrap() - 1e-6 || d["status"] != "ok"));
+        assert!(rep["bars"].as_array().unwrap().iter().all(|b| b["source"] == "design"));
+        assert!(rep["steel_total_kg"].as_f64().unwrap() > 0.0);
+        assert!(r["bbs_csv"].as_str().unwrap().contains(",design"));
+        // Leave out the strength of the bars: it is named, and the design is skipped, not guessed.
+        inp["rebar"]["design"].as_object_mut().unwrap().remove("fy_mpa");
+        let r2 = app.handle("sizing", &json!({ "inputs": inp })).unwrap();
+        assert!(r2["report"]["missing"]["design"].as_array().unwrap().iter().any(|m| m == "design.fy_mpa"));
+        assert!(r2["report"]["designs"].as_array().unwrap().is_empty());
     }
 
     #[test]

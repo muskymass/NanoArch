@@ -1,7 +1,10 @@
 [package]
 name = "nanoarch-app"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
+
+[build-dependencies]
+embed-resource = "3"
 
 [dependencies]
 nnx-core = { version = "0.1.0", path = "./nnx-core" }
