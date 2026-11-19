@@ -88,8 +88,27 @@ ul.clean li{margin:3px 0}
   <!-- ============ brief ============ -->
   <section class="col">
     <div class="scroll">
+      <h2 data-i="h_ai"></h2>
+      <div class="note" data-i="ai_note"></div>
+      <textarea id="ai-text" rows="3" style="width:100%" data-ph="ai_ph"></textarea>
+      <div class="row"><div><label data-i="ai_endpoint"></label><input id="ai-endpoint" dir="ltr" value="http://localhost:11434"></div>
+      <div><label data-i="ai_model"></label><select id="ai-model"><option value=""></option></select></div></div>
+      <div class="bar" style="padding:6px 0;border:0;flex-wrap:wrap;gap:6px"><button id="ai-check" data-i="ai_check"></button><button id="ai-run" class="primary" data-i="ai_run"></button><span id="ai-status" class="badge"></span></div>
+      <div id="ai-out"></div>
+
       <h2 data-i="h_project"></h2>
       <label data-i="title"></label><input id="title">
+      <label data-i="plot_shape"></label>
+      <select id="plot-shape"><option value="rect" data-i="shape_rect"></option><option value="poly" data-i="shape_poly"></option></select>
+      <div id="poly-box" style="display:none">
+        <div class="note" data-i="poly_note"></div>
+        <div class="bar" style="padding:4px 0;border:0;flex-wrap:wrap;gap:6px"><button id="tpl-trap" data-i="tpl_trap"></button><button id="tpl-chamfer" data-i="tpl_chamfer"></button><button id="tpl-l" data-i="tpl_l"></button></div>
+        <table class="rooms"><thead><tr><th>#</th><th>x (m)</th><th>y (m)</th><th data-i="edge_kind"></th><th data-i="street_w"></th><th data-i="edge_sb"></th><th></th></tr></thead><tbody id="poly-rows"></tbody></table>
+        <div class="bar" style="padding:6px 0;border:0;flex-wrap:wrap;gap:6px"><button id="poly-add" data-i="poly_add"></button>
+          <select id="poly-rule" style="width:auto"><option value="ministry_villa" data-i="rule_villa"></option><option value="ministry_apartment" data-i="rule_apt"></option><option value="manual" data-i="rule_manual"></option></select>
+          <button id="poly-analyze" class="primary" data-i="poly_analyze"></button></div>
+        <div id="poly-out"></div>
+      </div>
       <div class="row"><div><label data-i="width"></label><input id="width" type="number" step="0.1" min="0"></div>
       <div><label data-i="length"></label><input id="length" type="number" step="0.1" min="0"></div></div>
       <div class="row3"><div><label data-i="sb_front"></label><input id="sbf" type="number" step="0.1" min="0" value="0"></div>
@@ -126,7 +145,7 @@ ul.clean li{margin:3px 0}
       <label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="showstruct"><span data-i="show_struct"></span></label>
       <button id="sync" disabled data-i="sync"></button>
       <button id="to3d" disabled></button>
-      <select id="viewsel" disabled style="width:auto"><option value="plan" data-i="v_plan"></option><option value="north" data-i="v_north"></option><option value="south" data-i="v_south"></option><option value="east" data-i="v_east"></option><option value="west" data-i="v_west"></option><option value="A-A" data-i="v_aa"></option><option value="B-B" data-i="v_bb"></option></select>
+      <select id="viewsel" disabled style="width:auto"><option value="plan" data-i="v_plan"></option><option value="north" data-i="v_north"></option><option value="south" data-i="v_south"></option><option value="east" data-i="v_east"></option><option value="west" data-i="v_west"></option><option value="A-A" data-i="v_aa"></option><option value="B-B" data-i="v_bb"></option><option value="site" data-i="v_site"></option></select>
       <input id="sec-at" type="number" step="0.1" style="width:90px" data-title="sec_at" placeholder="m">
       <span style="flex:1"></span>
       <span id="savestate" class="badge"></span>
@@ -218,7 +237,7 @@ ul.clean li{margin:3px 0}
       <div class="pane" id="p-sbc">
         <div class="note" data-i="sbc_note"></div>
         <div class="row"><div><label data-i="bt"></label><select id="p-btype"><option value=""></option><option value="villa" data-i="bt_villa"></option><option value="house" data-i="bt_house"></option><option value="palace" data-i="bt_palace"></option><option value="apartment_building" data-i="bt_apartment_building"></option></select></div>
-          <div><label data-i="p_style"></label><input id="p-style"></div></div>
+          <div><label data-i="p_style"></label><input id="p-style" list="style-list"><datalist id="style-list"><option value="modern_najdi"></option><option value="contemporary"></option><option value="neo_classical"></option><option value="minimalist"></option></datalist></div></div>
         <div class="row"><div><label data-i="p_climate"></label><input id="p-climate"></div><div><label data-i="p_smart"></label><input id="p-smart"></div></div>
         <label data-i="p_parapet"></label><input id="p-parapet" type="number" step="0.1" min="0">
         <h2 data-i="lim_h"></h2>
@@ -276,6 +295,8 @@ const call = (cmd, args = {}) => new Promise((resolve, reject) => {
 // ---------------------------------------------------------------- text
 const T = {
 ar: {
+  h_ai:"مساعد الوصف (Ollama محلي، اختياري)", ai_note:"اكتب وصف المشروع بالعربية أو الإنجليزية، فيملأ الحقول لتراجعها. لا يُرسل النص إلا إلى خادم على جهازك؛ وإن لم يعمل Ollama تُستخرج الحقول من الكلمات المفتاحية.", ai_ph:"مثال: فيلا دورين وملحق في الجبيل على أرض 600م طراز نجدي حديث", ai_endpoint:"عنوان Ollama", ai_model:"النموذج", ai_check:"فحص الاتصال", ai_run:"املأ الموجز", ai_online:"متصل", ai_offline:"غير متصل", ai_src_kw:"من الكلمات المفتاحية", ai_src_model:"من النموذج", ai_review:"اقتراح — راجعه قبل التوليد", ai_applied:"طُبّقت الحقول", ai_rooms:"غرف مقترحة", ai_assumed:"مفترضة", ai_empty:"اكتب وصفاً أولاً",
+  plot_shape:"شكل الأرض", shape_rect:"مستطيل", shape_poly:"مضلع (شبه منحرف، شطفة، حرف L...)", poly_note:"أدخل رؤوس حد الأرض بالأمتار مرتبة حول الحد. الضلع i يمتد من الرأس i إلى التالي. حدّد نوع كل ضلع وعرض شارعه، ثم حلّل: يُحسب الارتداد لكل ضلع ويُوضع أكبر مستطيل بناء.", tpl_trap:"شبه منحرف", tpl_chamfer:"شطفة ركنية", tpl_l:"حرف L", edge_kind:"نوع الضلع", street_w:"عرض الشارع (م)", edge_sb:"ارتداد يدوي (م)", poly_add:"+ رأس", poly_analyze:"حلّل الأرض", rule_villa:"فلل (الوزارة 4-1)", rule_apt:"عمارات (الوزارة 4-2)", rule_manual:"يدوي (أدخل ارتداد كل ضلع)", ek_front_street:"شارع أمامي", ek_side_street:"شارع جانبي", ek_neighbour:"جار", ek_plaza:"ساحة", site_area:"مساحة الأرض", site_bld:"مستطيل البناء", site_cov:"نسبة التغطية", site_unused:"مساحة قابلة للبناء غير مستغلة", site_src:"مصدر قواعد الارتداد", site_first:"حلّل الأرض أولاً (وأعد التحليل بعد أي تعديل)", v_site:"موقع عام",
   subtitle:"مصمم مخططات الفلل", prelim:"أولي — غير صالح للتنفيذ", h_project:"المشروع", title:"اسم المشروع", width:"عرض الأرض (م)", length:"عمق الأرض (م)",
   sb_front:"ارتداد أمامي (م)", sb_back:"ارتداد خلفي (م)", sb_side:"ارتداد جانبي (م)", sb_note:"أدخل الارتدادات من اشتراطات البلدية؛ لا قيم افتراضية.",
   entry:"جهة المدخل (الشارع)", south:"جنوب", north:"شمال", east:"شرق", west:"غرب", h_rooms:"الفراغات", r_name:"الاسم", r_func:"النوع", r_area:"م²", r_zone:"المنطقة",
@@ -319,6 +340,8 @@ ar: {
   b_boq:"جدول الكميات والأسعار", b_no:"رقم", b_desc:"الوصف", b_rate:"السعر", b_amount:"المبلغ", b_materials:"قائمة المواد", b_material:"المادة", b_spec:"المواصفة", b_specs:"جدول المواصفات والكميات", b_no_materials:"لا معاملات استهلاك مُدخلة، فلا قائمة مواد.", m_cleared:"عُدّل المخطط وأُزيلت {n} نقطة كهروميكانيكية: أعد الحساب لوضعها من جديد (التراجع يعيدها)",
 },
 en: {
+  h_ai:"Brief assistant (local Ollama, optional)", ai_note:"Describe the project in Arabic or English and the fields are filled for you to review. The text goes only to a server on this computer; if Ollama is not running the fields are read from keywords.", ai_ph:"e.g. A two-floor villa with an annex in Jubail on a 600 m2 plot, modern Najdi style", ai_endpoint:"Ollama address", ai_model:"Model", ai_check:"Check connection", ai_run:"Fill the brief", ai_online:"online", ai_offline:"offline", ai_src_kw:"from keywords", ai_src_model:"from the model", ai_review:"Suggestion - review it before generating", ai_applied:"Fields applied", ai_rooms:"Proposed rooms", ai_assumed:"assumed", ai_empty:"Write a description first",
+  plot_shape:"Plot shape", shape_rect:"Rectangle", shape_poly:"Polygon (trapezoid, chamfer, L...)", poly_note:"Enter the plot boundary vertices in metres, in order around the boundary. Edge i runs from vertex i to the next. Set each edge's kind and street width, then analyse: every edge gets its own setback and the largest buildable rectangle is placed.", tpl_trap:"Trapezoid", tpl_chamfer:"Corner chamfer", tpl_l:"L shape", edge_kind:"Edge kind", street_w:"Street width (m)", edge_sb:"Manual setback (m)", poly_add:"+ Vertex", poly_analyze:"Analyse plot", rule_villa:"Villa (Ministry 4-1)", rule_apt:"Apartment (Ministry 4-2)", rule_manual:"Manual (enter every edge's setback)", ek_front_street:"Front street", ek_side_street:"Side street", ek_neighbour:"Neighbour", ek_plaza:"Plaza", site_area:"Plot area", site_bld:"Building rectangle", site_cov:"Coverage", site_unused:"Buildable area left unused", site_src:"Setback rule source", site_first:"Analyse the plot first (and again after any change)", v_site:"Site plan",
   subtitle:"Villa plan designer", prelim:"Preliminary - not for construction", h_project:"Project", title:"Project name", width:"Plot width (m)", length:"Plot depth (m)",
   sb_front:"Front setback (m)", sb_back:"Rear setback (m)", sb_side:"Side setback (m)", sb_note:"Enter setbacks from the municipality's requirements; no defaults.",
   entry:"Entrance side (street)", south:"South", north:"North", east:"East", west:"West", h_rooms:"Rooms", r_name:"Name", r_func:"Type", r_area:"m²", r_zone:"Zone",
@@ -367,7 +390,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 function applyLang() {
   document.documentElement.lang = lang; document.documentElement.dir = lang === "ar" ? "rtl" : "ltr";
-  document.querySelectorAll("[data-i]").forEach(e => e.textContent = t(e.dataset.i)); document.querySelectorAll("[data-title]").forEach(e => { e.title = t(e.dataset.title); });
+  document.querySelectorAll("[data-i]").forEach(e => e.textContent = t(e.dataset.i)); document.querySelectorAll("[data-ph]").forEach(e => e.placeholder = t(e.dataset.ph)); document.querySelectorAll("[data-title]").forEach(e => { e.title = t(e.dataset.title); });
   $("lang").textContent = lang === "ar" ? "English" : "العربية";
   if (state.levels) setLevels(state.levels);
   $("to3d").textContent = (typeof V3 !== "undefined" && V3.on) ? t("to2d") : t("to3d");
@@ -524,6 +547,7 @@ $("sk-cv").addEventListener("click", ev => {
 
 // ---------------------------------------------------------------- generate and choose
 $("generate").onclick = () => busy(async () => {
+  if ($("plot-shape").value === "poly") polyRequireAnalysis();
   const w = num("width"), l = num("length");
   if (!w || !l) throw new Error(lang === "ar" ? "أدخل أبعاد الأرض" : "Enter the plot size");
   const rooms = state.rooms.map((r, i) => ({ key: r.key || "r" + i, name: r.name, func: r.func, area: r.area, zone: r.zone, light: r.light, floor: r.floor || 1 }));
@@ -836,6 +860,7 @@ function renderBoq() {
 // The geometry comes from the model (command "model3d"); every solid names its element, so a click on it is a click on the model.
 const V3 = { on: false, gl: null, prog: null, boxes: [], sel: null, yaw: -0.8, pitch: 0.55, dist: 30, target: [0, 0, 1.5], show: { slab: false, struct: true, floor: true, glass: true, mep: true }, disc: {}, clash: new Set(), fourD: { on: false, day: 0, ids: new Map(), days: 0, cal: [], tasks: [], timer: null }, buf: null, drag: null, size: [1, 1] };
 const FLOOR_COL = { stair: [0.78, 0.78, 0.86], hall: [0.9, 0.88, 0.8], bedroom: [0.81, 0.89, 0.95], bathroom: [0.74, 0.88, 0.85], kitchen: [0.95, 0.89, 0.72], majlis: [0.91, 0.83, 0.93], living: [0.94, 0.85, 0.78], dining: [0.91, 0.88, 0.75] };
+const FACADE_COL = { "facade-cap": [0.8, 0.75, 0.65], "facade-merlon": [0.76, 0.68, 0.52], "facade-slit": [0.22, 0.2, 0.17], "facade-cantilever": [0.72, 0.75, 0.78], "facade-mullion": [0.29, 0.35, 0.4], "facade-plinth": [0.72, 0.66, 0.54], "facade-pilaster": [0.9, 0.86, 0.78], "facade-cornice": [0.85, 0.8, 0.7], "facade-reveal": [0.33, 0.33, 0.33] };
 const RUN_COL = { duct: [0.5, 0.77, 0.83], pipe: [0.56, 0.82, 0.62], drain: [0.73, 0.63, 0.49] };
 const MEP_COL = { light: [0.95, 0.72, 0.02], socket: [0.1, 0.42, 0.66], panel: [0.42, 0.1, 0.6], fixture: [0.16, 0.62, 0.56], ac_indoor: [0.04, 0.45, 0.52] };
 function colorOf(b) {
@@ -849,6 +874,7 @@ function colorOf(b) {
     case "Window": return [0.31, 0.59, 0.78, 0.38];
     case "Space": return [...(FLOOR_COL[b.class] || [0.87, 0.87, 0.87]), 1];
     case "MepRun": return [...(RUN_COL[b.class] || [0.3, 0.3, 0.3]), 1];
+    case "Facade": { const m = (b.class || "").split(":")[0]; return m === "facade-curtain" ? [0.55, 0.78, 0.9, 0.4] : [...(FACADE_COL[m] || [0.8, 0.76, 0.68]), 1]; }
     default: return [...(MEP_COL[b.class] || [0.3, 0.3, 0.3]), 1];
   }
 }
@@ -1126,18 +1152,107 @@ $("viewer").addEventListener("click", e => {
   if (el && el.ownerSVGElement) busy(async () => selectElement(el));
 });
 
+// ---------------------------------------------------------------- non-rectangular plots
+// The page only collects the outline and draws what the backend returns; every setback and the building rectangle come from "site_analyze".
+const POLY = { pts: [], site: null };
+const POLY_TPL = {
+  trap: [[0, 0, "front_street"], [20, 0, "neighbour"], [16, 28, "neighbour"], [0, 28, "side_street"]],
+  chamfer: [[0, 0, "front_street"], [18, 0, "neighbour"], [18, 18, "neighbour"], [14, 22, "side_street"], [0, 22, "neighbour"]],
+  l: [[0, 0, "front_street"], [18, 0, "neighbour"], [18, 10, "neighbour"], [8, 10, "neighbour"], [8, 22, "neighbour"], [0, 22, "neighbour"]],
+};
+function polyTemplate(k) { POLY.pts = POLY_TPL[k].map(([x, y, kind]) => ({ x, y, kind, sw: kind.endsWith("street") ? 15 : "", sb: "" })); POLY.site = null; polyRender(); }
+function polyInput() { return { polygonM: POLY.pts.map(p => [Number(p.x), Number(p.y)]), edges: POLY.pts.map(p => ({ kind: p.kind, streetWidthM: p.sw === "" ? null : Number(p.sw), setbackM: p.sb === "" ? null : Number(p.sb) })), rule: $("poly-rule").value, floors: num("floors") || null }; }
+function polyRender() {
+  $("poly-rows").innerHTML = POLY.pts.map((p, i) => `<tr><td>${i + 1}</td><td><input data-k="x" data-n="${i}" type="number" step="0.1" value="${p.x}" style="width:64px"></td><td><input data-k="y" data-n="${i}" type="number" step="0.1" value="${p.y}" style="width:64px"></td>
+    <td><select data-k="kind" data-n="${i}">${["front_street", "side_street", "neighbour", "plaza"].map(k => `<option value="${k}" ${p.kind === k ? "selected" : ""}>${t("ek_" + k)}</option>`).join("")}</select></td>
+    <td><input data-k="sw" data-n="${i}" type="number" step="0.5" min="0" value="${p.sw}" style="width:60px"></td><td><input data-k="sb" data-n="${i}" type="number" step="0.1" min="0" value="${p.sb}" style="width:60px"></td>
+    <td><button data-del="${i}" ${POLY.pts.length <= 3 ? "disabled" : ""}>×</button></td></tr>`).join("");
+  $("poly-rows").querySelectorAll("[data-k]").forEach(e => e.onchange = () => { POLY.pts[Number(e.dataset.n)][e.dataset.k] = e.value; POLY.site = null; });
+  $("poly-rows").querySelectorAll("[data-del]").forEach(b => b.onclick = () => { POLY.pts.splice(Number(b.dataset.del), 1); POLY.site = null; polyRender(); });
+  polyShowResult();
+}
+function polyShowResult() {
+  const s = POLY.site; if (!s) { $("poly-out").innerHTML = `<div class="note">${t("site_first")}</div>`; return; }
+  const r = s.result, ar = lang === "ar";
+  $("poly-out").innerHTML = `<div class="gantt" style="background:#fff">${s.svg}</div><ul class="clean">
+    <li>${t("site_area")}: <b dir="ltr">${r.area_m2} m²</b></li><li>${t("site_bld")}: <b dir="ltr">${r.building.width_m} × ${r.building.length_m} m</b> (${r.building_area_m2} m²)</li>
+    <li>${t("site_cov")}: <b dir="ltr">${(r.coverage * 100).toFixed(1)}%</b></li><li>${t("site_unused")}: <b dir="ltr">${r.unused_buildable_m2} m²</b></li>
+    ${(r.warnings || []).map(w => `<li class="warn">${esc(w)}</li>`).join("")}</ul><div class="hint">${t("site_src")}: ${esc(s.rule_source || "")}</div>`;
+}
+function polyRequireAnalysis() {
+  if (!POLY.site || POLY.site.key !== JSON.stringify(polyInput())) throw new Error(t("site_first"));
+}
+$("poly-analyze").onclick = () => busy(async () => {
+  const input = polyInput(), r = await call("site_analyze", input);
+  POLY.site = { ...r, key: JSON.stringify(input) };
+  // The building rectangle is the brief of the planner: the setbacks are already in the outline analysis, so they are zero here.
+  $("width").value = r.result.building.width_m; $("length").value = r.result.building.length_m;
+  $("sbf").value = 0; $("sbb").value = 0; $("sbs").value = 0; $("entry").value = "south";
+  polyShowResult();
+});
+$("poly-add").onclick = () => { const last = POLY.pts[POLY.pts.length - 1] || { x: 0, y: 0 }; POLY.pts.push({ x: last.x, y: last.y, kind: "neighbour", sw: "", sb: "" }); POLY.site = null; polyRender(); };
+$("tpl-trap").onclick = () => polyTemplate("trap"); $("tpl-chamfer").onclick = () => polyTemplate("chamfer"); $("tpl-l").onclick = () => polyTemplate("l");
+$("poly-rule").onchange = () => { POLY.site = null; polyShowResult(); };
+function polyApplyShape() {
+  const poly = $("plot-shape").value === "poly"; $("poly-box").style.display = poly ? "" : "none";
+  for (const id of ["sbf", "sbb", "sbs", "width", "length"]) $(id).readOnly = poly && id !== "width" && id !== "length" ? true : false;
+  if (poly && !POLY.pts.length) polyTemplate("trap"); else polyRender();
+}
+$("plot-shape").onchange = polyApplyShape;
+// What goes into the project: null/empty for a rectangle, so switching back clears the outline.
+function polyMeta() {
+  if ($("plot-shape").value !== "poly" || !POLY.pts.length) return { plotPolygonM: null, plotEdges: [], setbackRule: null };
+  const i = polyInput(); return { plotPolygonM: i.polygonM, plotEdges: i.edges, setbackRule: i.rule };
+}
+function polyLoad(m) {
+  const poly = Array.isArray(m.plotPolygonM) && m.plotPolygonM.length >= 3;
+  if (poly) { const e = m.plotEdges || []; POLY.pts = m.plotPolygonM.map(([x, y], i) => ({ x, y, kind: (e[i] && e[i].kind) || "neighbour", sw: e[i] && e[i].streetWidthM != null ? e[i].streetWidthM : "", sb: e[i] && e[i].setbackM != null ? e[i].setbackM : "" })); $("poly-rule").value = m.setbackRule || "ministry_villa"; }
+  $("plot-shape").value = poly ? "poly" : "rect"; POLY.site = null; polyApplyShape();
+}
+$("plot-shape").value = "rect"; polyApplyShape();
+
+// ---------------------------------------------------------------- local brief assistant (Ollama, optional)
+function aiArgs() { return { endpoint: $("ai-endpoint").value.trim() || undefined, model: $("ai-model").value || undefined }; }
+async function aiCheck() {
+  const r = await call("ai_status", aiArgs()), sel = $("ai-model"), keep = sel.value;
+  sel.innerHTML = `<option value=""></option>` + (r.models || []).map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join(""); if ((r.models || []).includes(keep)) sel.value = keep;
+  $("ai-status").textContent = r.online ? `${t("ai_online")} · ${(r.models || []).length}` : t("ai_offline"); $("ai-status").title = r.error || "";
+}
+$("ai-check").onclick = () => busy(aiCheck);
+$("ai-run").onclick = () => busy(async () => {
+  const text = $("ai-text").value.trim(); if (!text) throw new Error(t("ai_empty"));
+  const r = await call("ai_brief", { ...aiArgs(), text }), d = r.draft, ar = lang === "ar";
+  $("ai-status").textContent = r.online ? `${t("ai_online")} · ${esc(r.model)}` : t("ai_offline");
+  // Fields the text states are filled; nothing else is touched.
+  if (d.title) $("title").value = d.title;
+  if (d.building_type) $("p-btype").value = d.building_type;
+  if (d.style) $("p-style").value = d.style;
+  if (d.city) $("p-climate").value = d.city;
+  if (d.floors) $("floors").value = d.floors;
+  if (d.plot_width_m && d.plot_length_m) { $("plot-shape").value = "rect"; polyApplyShape(); $("width").value = d.plot_width_m; $("length").value = d.plot_length_m; }
+  if (d.smart_tech && d.smart_tech.length) $("p-smart").value = d.smart_tech.join(", ");
+  if (d.rooms && d.rooms.length) {
+    const have = new Set(state.rooms.map(x => x.key));
+    d.rooms.forEach((x, i) => { const key = "ai" + (Date.now() % 100000) + i; if (have.has(key)) return; state.rooms.push({ key, name: x.name || "", func: x.func, area: x.area_m2 || 0, zone: ZONE_OF[x.func] || "service", light: x.func !== "bathroom", floor: x.floor || 1, ai: true }); });
+    renderRooms();
+  }
+  $("ai-out").innerHTML = `<div class="badge">${t("ai_review")} · ${r.online ? t("ai_src_model") : t("ai_src_kw")}</div><ul class="clean">${(d.notes || []).map(n => `<li class="warn">${esc(n)}</li>`).join("")}</ul>${d.rooms && d.rooms.length ? `<div class="hint">${t("ai_rooms")}: ${d.rooms.map(x => `${esc(x.name || x.func)}${x.assumed ? ` (${t("ai_assumed")})` : ""}`).join("، ")}</div>` : ""}`;
+  toast(t("ai_applied"));
+});
+aiCheck().catch(() => {});
+
 // ---------------------------------------------------------------- project details and code check
 function projectPayload() {
   const src = $("lim-src").value.trim();
   const lim = (id, k = 1) => { const v = num(id); return v === null ? null : { value: v * k, source: src }; };
   return {
-    meta: { title: $("title").value, buildingType: $("p-btype").value || null, style: $("p-style").value.trim() || null, smartTech: $("p-smart").value.split(",").map(s => s.trim()).filter(Boolean), climateZone: $("p-climate").value.trim() || null, parapetHeightM: num("p-parapet") },
+    meta: { title: $("title").value, buildingType: $("p-btype").value || null, style: $("p-style").value.trim() || null, smartTech: $("p-smart").value.split(",").map(s => s.trim()).filter(Boolean), climateZone: $("p-climate").value.trim() || null, parapetHeightM: num("p-parapet"), ...polyMeta() },
     limits: { minSetbackFrontM: lim("lim-f"), minSetbackBackM: lim("lim-b"), minSetbackSideM: lim("lim-s"), maxCoverageRatio: lim("lim-c", 0.01), enforce: $("lim-enforce").checked },
   };
 }
 function applyProject(s) {
   const m = s.meta || {}, l = s.limits || {}, v = p => (p && p.value != null ? p.value : "");
-  $("p-btype").value = m.buildingType || ""; $("p-style").value = m.style || ""; $("p-climate").value = m.climateZone || ""; $("p-smart").value = (m.smartTech || []).join(", "); $("p-parapet").value = m.parapetHeightM ?? "";
+  $("p-btype").value = m.buildingType || ""; $("p-style").value = m.style || ""; $("p-climate").value = m.climateZone || ""; $("p-smart").value = (m.smartTech || []).join(", "); $("p-parapet").value = m.parapetHeightM ?? ""; polyLoad(m);
   $("lim-f").value = v(l.minSetbackFrontM); $("lim-b").value = v(l.minSetbackBackM); $("lim-s").value = v(l.minSetbackSideM);
   $("lim-c").value = l.maxCoverageRatio && l.maxCoverageRatio.value != null ? Math.round(l.maxCoverageRatio.value * 10000) / 100 : "";
   $("lim-src").value = [l.minSetbackFrontM, l.minSetbackBackM, l.minSetbackSideM, l.maxCoverageRatio].map(p => p && p.source).find(Boolean) || "";
@@ -1163,6 +1278,7 @@ $("proj-save").onclick = () => busy(async () => {
 async function showView() {
   const v = $("viewsel").value;
   if (v === "plan") { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); return; }
+  if (v === "site") { const r = await call("site_plan"); state.svgText = r.svg; state.viewName = r.name; $("viewer").innerHTML = r.svg; clearSel(); return; }
   const r = ["north", "south", "east", "west"].includes(v) ? await call("elevation", { side: v }) : await call("section", { name: v, at: num("sec-at") ?? undefined });
   state.svgText = r.svg; state.viewName = r.name; $("viewer").innerHTML = r.svg; clearSel();
 }

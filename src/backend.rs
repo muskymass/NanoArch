@@ -254,6 +254,8 @@ impl App {
                 Ok(json!({ "svg": self.render_or_null()?, "sbc": self.sbc_json() }))
             }
             "presets" => Ok(nnx_core::presets::presets_json()),
+            "site_analyze" => Self::site_analyze(args),
+            "site_plan" => self.site_plan(),
             "zone_preset" => self.zone_preset(args),
             "elevation" => self.elevation(args),
             "section" => self.section(args),
@@ -278,7 +280,7 @@ impl App {
             "mep" => self.mep(args),
             "sizing" => self.sizing(args),
             "boq" => self.boq(args),
-            "model3d" => serde_json::to_value(nnx_core::model3d::build(&self.doc()?.model)).map_err(|e| e.to_string()),
+            "model3d" => serde_json::to_value(nnx_core::model3d::build_styled(&self.doc()?.model, self.style())).map_err(|e| e.to_string()),
             "export_ifc" => self.export_ifc(),
             "export_dxf" => self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false)),
             "report_html" => self.report(args).map(|(html, _)| json!({ "html": html, "name": "engineering-report.pdf" })),
@@ -648,8 +650,30 @@ impl App {
         Ok(json!({ "zone": z.zone, "preset": nnx_core::presets::presets_json()["zones"][(z.zone - 1) as usize].clone(), "settings": self.form_state(), "sbc": self.sbc_json() }))
     }
 
+    /// Analyses a plot outline before there is a project: `{ polygon_m, edges, rule, floors }`. Returns the setbacks, the buildable
+    /// polygon, the building rectangle and the site plan drawing. Every problem is listed.
+    fn site_analyze(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::site::SiteInput = serde_json::from_value(args.clone()).map_err(|e| format!("plot: {e}"))?;
+        let r = nnx_core::site::analyse(&input).map_err(|e| e.join("; "))?;
+        let svg = nnx_core::site::site_svg(&r, "Site plan");
+        Ok(json!({ "result": r, "svg": svg, "rule_source": nnx_core::site::RULE_SOURCE }))
+    }
+
+    /// The site plan of the open project (its plot outline, edges and rule).
+    fn site_plan(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let input = p.site_input().ok_or("this project has no plot outline: enter the plot as a polygon")?;
+        let r = nnx_core::site::analyse(&input).map_err(|e| e.join("; "))?;
+        Ok(json!({ "svg": nnx_core::site::site_svg(&r, &self.display_title()), "name": "site-plan.svg", "result": r }))
+    }
+
+    /// The architectural style the project names (`meta.style`), if it names one of the four.
+    fn style(&self) -> Option<nnx_core::style::Style> {
+        self.project().and_then(|p| p.meta.style).and_then(|s| nnx_core::style::parse(&s))
+    }
+
     fn view_opts(&self) -> nnx_core::elevation::ViewOpts {
-        nnx_core::elevation::ViewOpts { title: self.title(), parapet_m: self.project().and_then(|p| p.meta.parapet_height_m), ..Default::default() }
+        nnx_core::elevation::ViewOpts { title: self.title(), parapet_m: self.project().and_then(|p| p.meta.parapet_height_m), style: self.style(), ..Default::default() }
     }
 
     /// An elevation of one side: `{ "side": "north" | "south" | "east" | "west" }`.
@@ -1771,13 +1795,76 @@ mod tests {
         assert!(e.contains("source"), "{e}");
         let e = app.handle("project_set", &json!({ "limits": { "maxCoverageRatio": { "value": 1.5, "source": "x" } } })).unwrap_err();
         assert!(e.contains("out of range"), "{e}");
-        // Only a rectangle is supported as plot outline: another shape is refused, not replaced by its bounding box.
-        let l_shape = json!({ "meta": { "plotPolygonM": [[0, 0], [18, 0], [18, 10], [8, 10], [8, 22], [0, 22]] } });
-        assert!(app.handle("project_set", &l_shape).unwrap_err().contains("rectangle"));
+        // An outline that crosses itself is refused; an L-shaped one is a valid plot.
+        let bowtie = json!({ "meta": { "plotPolygonM": [[0, 0], [18, 22], [18, 0], [0, 22]] } });
+        assert!(app.handle("project_set", &bowtie).unwrap_err().contains("crosses itself"));
+        let two_vertices = json!({ "meta": { "plotPolygonM": [[0, 0], [18, 22]] } });
+        assert!(app.handle("project_set", &two_vertices).unwrap_err().contains("at least 3 vertices"));
+        let bad_edges = json!({ "meta": { "plotPolygonM": [[0, 0], [18, 0], [18, 10], [8, 10], [8, 22], [0, 22]], "plotEdges": [{ "kind": "front_street" }] } });
+        assert!(app.handle("project_set", &bad_edges).unwrap_err().contains("edge descriptions"));
         let wrong = json!({ "meta": { "plotPolygonM": [[0, 0], [10, 0], [10, 10], [0, 10]] } });
         assert!(app.handle("project_set", &wrong).unwrap_err().contains("brief says"));
         assert_eq!(hash(&app), before);
         assert!(app.handle("project_set", &json!({ "meta": { "plotPolygonM": [[0, 0], [18, 0], [18, 22], [0, 22]] } })).is_ok());
+        // An L-shaped outline is accepted, the area of the plot is the outline's, and the front/rear/side limits no longer apply.
+        let l_shape = json!({ "meta": { "plotPolygonM": [[0, 0], [18, 0], [18, 10], [8, 10], [8, 22], [0, 22]] } });
+        app.handle("project_set", &l_shape).unwrap();
+        assert!((app.project().unwrap().plot_area_m2().unwrap() - (18.0 * 10.0 + 8.0 * 12.0)).abs() < 1e-9);
+        let skipped = app.handle("sbc_check", &json!({})).unwrap()["skipped"].to_string();
+        assert!(skipped.contains("not a rectangle"), "{skipped}");
+    }
+
+    #[test]
+    fn a_non_rectangular_plot_is_analysed_drawn_and_kept_in_the_project() {
+        // The page sends the outline; the engine returns every setback and the building rectangle (a chamfered corner here).
+        let input = json!({ "polygonM": [[0, 0], [18, 0], [18, 18], [14, 22], [0, 22]],
+            "edges": [{ "kind": "front_street", "streetWidthM": 15.0 }, { "kind": "neighbour" }, { "kind": "neighbour" }, { "kind": "side_street", "streetWidthM": 10.0 }, { "kind": "neighbour" }],
+            "rule": "ministry_villa", "floors": 2 });
+        let mut app = App::default();
+        let r = app.handle("site_analyze", &input).unwrap();
+        assert!(r["svg"].as_str().unwrap().starts_with("<svg") && r["rule_source"].as_str().unwrap().contains("4-1"));
+        let res = &r["result"];
+        assert!((res["area_m2"].as_f64().unwrap() - (18.0 * 22.0 - 8.0)).abs() < 1e-6, "{res}");
+        assert_eq!(res["setbacks_m"].as_array().unwrap().len(), 5);
+        assert!(res["building"]["width_m"].as_f64().unwrap() > 5.0 && res["building"]["entry"] == "south");
+        // Bad shapes and missing rules come back as messages, with nothing changed.
+        assert!(app.handle("site_analyze", &json!({ "polygonM": [[0, 0], [10, 0]] })).is_err());
+        assert!(app.handle("site_analyze", &json!({ "polygonM": "x" })).unwrap_err().starts_with("plot:"));
+        // No project yet, and then a rectangle: there is no outline to draw.
+        assert!(app.handle("site_plan", &json!({})).is_err());
+        let mut app = started_with_project();
+        assert!(app.handle("site_plan", &json!({})).unwrap_err().contains("no plot outline"));
+        let edges: Vec<Value> = ["front_street", "neighbour", "neighbour", "neighbour", "neighbour", "neighbour"].iter().map(|k| json!({ "kind": k, "streetWidthM": if *k == "front_street" { json!(15.0) } else { Value::Null } })).collect();
+        let l_shape = json!({ "meta": { "plotPolygonM": [[0, 0], [18, 0], [18, 10], [8, 10], [8, 22], [0, 22]], "plotEdges": edges } });
+        app.handle("project_set", &l_shape).unwrap();
+        let plan = app.handle("site_plan", &json!({})).unwrap();
+        assert_eq!(plan["name"], "site-plan.svg");
+        assert!(plan["svg"].as_str().unwrap().contains("<polygon"), "the outline is drawn");
+        assert!(plan["result"]["buildable_area_m2"].as_f64().unwrap() > 100.0, "{}", plan["result"]["buildable_area_m2"]);
+        // Switching back to a rectangle removes the outline.
+        app.handle("project_set", &json!({ "meta": { "plotPolygonM": null, "plotEdges": [], "setbackRule": null } })).unwrap();
+        assert!(app.handle("site_plan", &json!({})).unwrap_err().contains("no plot outline"));
+    }
+
+    #[test]
+    fn the_projects_style_adds_facade_solids_to_the_3d_scene_and_the_elevations() {
+        let mut app = started_with_project();
+        let count = |app: &mut App, kind: &str| app.handle("model3d", &json!({})).unwrap()["boxes"].as_array().unwrap().iter().filter(|b| b["kind"] == kind).count();
+        // The helper project names the style "najdi", so its scene already carries the Najdi facade.
+        assert!(count(&mut app, "Facade") > 20);
+        app.handle("project_set", &json!({ "meta": { "style": null } })).unwrap();
+        assert_eq!(count(&mut app, "Facade"), 0, "no style, no facade");
+        let plain = app.handle("elevation", &json!({ "side": "south" })).unwrap()["svg"].as_str().unwrap().to_string();
+        assert!(!plain.contains("class=\"facade-"));
+        app.handle("project_set", &json!({ "meta": { "style": "نجدي حديث" } })).unwrap();
+        assert!(count(&mut app, "Facade") > 20);
+        let najdi = app.handle("elevation", &json!({ "side": "south" })).unwrap()["svg"].as_str().unwrap().to_string();
+        assert!(najdi.contains("class=\"facade-merlon\"") && najdi.contains("class=\"facade-slit\""));
+        // A style the application does not know draws nothing and is not an error.
+        app.handle("project_set", &json!({ "meta": { "style": "baroque" } })).unwrap();
+        assert_eq!(count(&mut app, "Facade"), 0);
+        app.handle("project_set", &json!({ "meta": { "style": "contemporary" } })).unwrap();
+        assert!(app.handle("elevation", &json!({ "side": "south" })).unwrap()["svg"].as_str().unwrap().contains("facade-cantilever"));
     }
 
     #[test]
