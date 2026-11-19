@@ -11,7 +11,9 @@
 //! - The column size and the span-to-depth ratios are PLACEHOLDERS (rules of thumb) to be
 //!   replaced by the SBC requirements.
 //!
-//! Load path is a crude equal-share take-down: each slab's load is split equally among the
+//! Load path is a tributary take-down: each slab's load is shared among the columns on its perimeter in proportion to
+//! the half-spans on either side of each column (so the four corner columns of a plain panel carry a quarter each, and
+//! an intermediate column carries the strip between the mid-points to its neighbours). Before, it was split equally among the
 //! columns on its perimeter. Wall, beam and column self-weight are NOT included (add them
 //! to the dead load). Footing depth, reinforcement, punching shear and everything else
 //! needs a licensed structural engineer; this output is for planning and early costing.
@@ -437,8 +439,8 @@ pub fn build_input(input: &Input, opts: &StructOpts) -> StructPlan {
             continue;
         }
         let total = r.area_m2() * per_area;
-        for &i in &carriers {
-            load[i] += total / carriers.len() as f64;
+        for (i, share) in tributary_shares(&sp.columns, &carriers, &r, tol) {
+            load[i] += total * share;
         }
     }
     for &(x, y, kn) in &opts.extra_loads {
@@ -466,6 +468,78 @@ pub fn build_input(input: &Input, opts: &StructOpts) -> StructPlan {
     }
     sp.warnings.push("footing depth and reinforcement are not designed: a licensed structural engineer must complete them".into());
     sp
+}
+
+/// Share (0..1, summing to 1) of a slab's load that each carrier column takes: its half-spans along the slab's perimeter
+/// divided by the perimeter. `carriers` are the columns on the slab's edge.
+fn tributary_shares(cols: &[ColumnSpec], carriers: &[usize], r: &Rect, tol: i64) -> Vec<(usize, f64)> {
+    let (w, h) = (r.w as f64, r.h as f64);
+    let near = |v: i64, e: i64| (v - e).abs() <= tol;
+    // Position along the perimeter, going east along the lowest-y edge, then north, west and south.
+    let pos = |c: &ColumnSpec| -> f64 {
+        if near(c.y, r.y) {
+            (c.x - r.x) as f64
+        } else if near(c.x, r.x + r.w) {
+            w + (c.y - r.y) as f64
+        } else if near(c.y, r.y + r.h) {
+            w + h + (r.x + r.w - c.x) as f64
+        } else {
+            2.0 * w + h + (r.y + r.h - c.y) as f64
+        }
+    };
+    let mut at: Vec<(usize, f64)> = carriers.iter().map(|&i| (i, pos(&cols[i]).clamp(0.0, 2.0 * (w + h)))).collect();
+    at.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let perimeter = 2.0 * (w + h);
+    let n = at.len();
+    if n == 1 {
+        return vec![(at[0].0, 1.0)];
+    }
+    (0..n)
+        .map(|k| {
+            let prev = at[(k + n - 1) % n].1;
+            let next = at[(k + 1) % n].1;
+            let gap = |from: f64, to: f64| (to - from).rem_euclid(perimeter);
+            let half = (gap(prev, at[k].1) + gap(at[k].1, next)) / 2.0;
+            (at[k].0, half / perimeter)
+        })
+        .collect()
+}
+
+/// Tributary floor area of every column in m2, per column element: each slab's area shared by the same half-span rule the
+/// load take-down uses, for the slabs of the column's own level. Independent of any load: a column that no slab edge
+/// touches gets 0.
+pub fn column_tributary(model: &Model) -> BTreeMap<Id, f64> {
+    let tol = 200;
+    let mut out: BTreeMap<Id, f64> = BTreeMap::new();
+    let levels: BTreeSet<Option<Id>> = model.elements.values().filter(|e| e.kind == Column::KIND).map(|e| e.level_id).collect();
+    for level in levels {
+        let cols: Vec<ColumnSpec> = model
+            .elements
+            .values()
+            .filter(|e| e.kind == Column::KIND && e.level_id == level)
+            .filter_map(|e| Some(ColumnSpec { id: e.id, x: e.typed::<Column>().ok()?.x, y: e.typed::<Column>().ok()?.y, grid_ref: String::new(), load_kn: None }))
+            .collect();
+        for c in &cols {
+            out.entry(c.id).or_insert(0.0);
+        }
+        for s in model.elements.values().filter(|e| e.kind == Slab::KIND && e.level_id == level).filter_map(|e| e.typed::<Slab>().ok()) {
+            let r = Rect { x: s.x, y: s.y, w: s.w, h: s.h };
+            let near = |v: i64, e: i64| (v - e).abs() <= tol;
+            let carriers: Vec<usize> = cols
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.x >= r.x - tol && c.x <= r.x + r.w + tol && c.y >= r.y - tol && c.y <= r.y + r.h + tol && (near(c.x, r.x) || near(c.x, r.x + r.w) || near(c.y, r.y) || near(c.y, r.y + r.h)))
+                .map(|(i, _)| i)
+                .collect();
+            if carriers.is_empty() {
+                continue;
+            }
+            for (i, share) in tributary_shares(&cols, &carriers, &r, tol) {
+                *out.entry(cols[i].id).or_insert(0.0) += r.area_m2() * share;
+            }
+        }
+    }
+    out
 }
 
 /// Creation commands: columns first (footings refer to them), then beams, slabs, footings.

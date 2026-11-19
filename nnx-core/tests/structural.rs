@@ -150,7 +150,7 @@ fn column_loads_balance_the_slab_loads_and_footings_carry_them() {
     let q = o.soil.as_ref().unwrap().bearing_kpa;
     for f in &sp.footings {
         let area = (f.size_mm as f64 / 1000.0).powi(2);
-        assert!(area * q >= f.load_kn, "footing {} m2 is too small for {} kN", area, f.load_kn);
+        assert!(area * q >= f.load_kn - 1e-9, "footing {} m2 is too small for {} kN", area, f.load_kn);
         // Not wildly oversized: the next smaller 50 mm step would not carry the load.
         let smaller = ((f.size_mm - 50) as f64 / 1000.0).powi(2);
         assert!(smaller * q < f.load_kn + 1e-9, "footing is more than one step oversized");

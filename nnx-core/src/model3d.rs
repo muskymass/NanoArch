@@ -47,10 +47,14 @@ fn discipline_of(kind: &str, class: &str) -> &'static str {
         "Column" | "Beam" | "Footing" | "Slab" => "structural",
         "MepPoint" => match class {
             "light" | "socket" | "panel" => "electrical",
-            "ac_indoor" => "hvac",
+            "ac_indoor" | "diffuser" | "grille" => "hvac",
             _ => "plumbing",
         },
-        "MepRun" => if class == "duct" { "hvac" } else { "plumbing" },
+        "MepRun" => match class {
+            "duct" => "hvac",
+            "cable" => "electrical",
+            _ => "plumbing",
+        },
         _ => "architectural",
     }
 }
@@ -251,6 +255,7 @@ pub fn build(model: &Model) -> Scene {
                         "socket" => (0.3, 0.3 + MEP_SIZE),
                         "panel" => (1.2, 1.2 + 3.0 * MEP_SIZE),
                         "ac_indoor" => (storey - 0.3, storey),
+                        "diffuser" | "grille" => (storey - 0.4, storey - 0.25),
                         _ => (0.0, MEP_SIZE),
                     };
                     let h = if p.role == "ac_indoor" { 0.5 } else { MEP_SIZE / 2.0 };
@@ -263,11 +268,12 @@ pub fn build(model: &Model) -> Scene {
                     let (x0, x1) = (r.x1.min(r.x2) as f64 / M, r.x1.max(r.x2) as f64 / M);
                     let (y0, y1) = (r.y1.min(r.y2) as f64 / M, r.y1.max(r.y2) as f64 / M);
                     let (z0, z1) = (r.z1.min(r.z2) as f64 / M, r.z1.max(r.z2) as f64 / M);
-                    // The two axes across the run grow by the half-section; heights are centre lines.
+                    // The two axes across the run grow by the half-section; heights are centre lines. A falling pipe is
+                    // the hull of its slope (lowest to highest centre line).
                     let (lo, hi) = if r.x1 != r.x2 {
-                        ([x0, y0 - hw, z0 - hh], [x1, y0 + hw, z0 + hh])
+                        ([x0, y0 - hw, z0 - hh], [x1, y0 + hw, z1 + hh])
                     } else if r.y1 != r.y2 {
-                        ([x0 - hw, y0, z0 - hh], [x0 + hw, y1, z0 + hh])
+                        ([x0 - hw, y0, z0 - hh], [x0 + hw, y1, z1 + hh])
                     } else {
                         ([x0 - hw, y0 - hh, z0], [x0 + hw, y0 + hh, z1])
                     };

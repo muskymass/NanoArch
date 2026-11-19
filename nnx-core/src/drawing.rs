@@ -95,6 +95,7 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
  .name{{font-size:13px;font-weight:600;fill:#111;text-anchor:middle}} .meta{{font-size:10.5px;fill:#555;text-anchor:middle}}
  .dim{{stroke:#444;stroke-width:.8;fill:none}} .dimtxt{{font-size:11px;fill:#222;text-anchor:middle}}
 .beam{{stroke:#b5451b;stroke-width:1.4;stroke-dasharray:7 4;fill:none}} .column{{fill:#b5451b}} .gridref{{font-size:9px;fill:#b5451b;text-anchor:middle}}
+.run{{fill:none;stroke-opacity:.45;stroke-linecap:butt}} .run-duct{{stroke:#0b7285}} .run-pipe{{stroke:#2b7a3d}} .run-drain{{stroke:#8a5a1b}} .run-cable{{stroke:#6a1b9a;stroke-dasharray:6 3}} .mep-diffuser{{fill:#fff;stroke:#0b7285;stroke-width:1.3}} .mep-grille{{fill:none;stroke:#0b7285;stroke-width:1.1;stroke-dasharray:3 2}}
 .mep-light{{fill:#f2b705;stroke:#7a5c00;stroke-width:.8}} .mep-socket{{fill:#fff;stroke:#1b6ca8;stroke-width:1.3}} .mep-fixture{{fill:#2a9d8f;stroke:#14524b;stroke-width:.8}} .mep-panel{{fill:#6a1b9a}} .mep-ac{{fill:none;stroke:#0b7285;stroke-width:1.4}} .mep-txt{{font-size:8.5px;fill:#333;text-anchor:middle}}
  .title{{font-size:16px;font-weight:700;fill:#111}} .note{{font-size:10.5px;fill:#a33}}
 </style>
@@ -265,6 +266,8 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
                 "socket" => writeln!(o, r#"<rect class="mep mep-socket" data-id="{}" x="{:.1}" y="{:.1}" width="6" height="6"><title>{tip}</title></rect>"#, e.id, x - 3.0, y - 3.0),
                 "fixture" => writeln!(o, r#"<circle class="mep mep-fixture" data-id="{}" cx="{x:.1}" cy="{y:.1}" r="4.2"><title>{tip}</title></circle>"#, e.id),
                 "panel" => writeln!(o, r#"<rect class="mep mep-panel" data-id="{}" x="{:.1}" y="{:.1}" width="12" height="12"><title>{tip}</title></rect>"#, e.id, x - 6.0, y - 6.0),
+                "diffuser" => writeln!(o, r#"<rect class="mep mep-diffuser" data-id="{}" x="{:.1}" y="{:.1}" width="14" height="14"><title>{tip}</title></rect>"#, e.id, x - 7.0, y - 7.0),
+                "grille" => writeln!(o, r#"<rect class="mep mep-grille" data-id="{}" x="{:.1}" y="{:.1}" width="12" height="12"><title>{tip}</title></rect>"#, e.id, x - 6.0, y - 6.0),
                 _ => writeln!(
                     o,
                     r#"<g class="mep" data-id="{}"><rect class="mep-ac" x="{:.1}" y="{:.1}" width="26" height="12"/><text class="mep-txt" x="{x:.1}" y="{:.1}">{tip}</text></g>"#,
@@ -274,6 +277,20 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
                     y + 3.0
                 ),
             };
+        }
+    }
+
+    // Ducts, pipes, drains and cable trays of the level, drawn at their real width in plan.
+    if opts.show_mep {
+        for e in model.elements.values().filter(|e| e.kind == crate::typed::MepRun::KIND && (level.is_none() || e.level_id == level)) {
+            let Ok(r) = e.typed::<crate::typed::MepRun>() else { continue };
+            let w = (r.width as f64 * s).max(1.0);
+            let tip = esc(&format!("{} {}x{}{}", r.system, r.width, r.height, r.label.as_ref().map_or(String::new(), |l| format!(" {l}"))));
+            if r.x1 == r.x2 && r.y1 == r.y2 {
+                let _ = writeln!(o, r#"<circle class="run run-{}" data-id="{}" cx="{:.1}" cy="{:.1}" r="{:.1}" style="fill:#7a7a7a"><title>{tip}</title></circle>"#, esc(&r.system), e.id, tx(r.x1 as f64), ty(r.y1 as f64), w / 2.0);
+            } else {
+                let _ = writeln!(o, r#"<line class="run run-{}" data-id="{}" x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke-width="{w:.1}"><title>{tip}</title></line>"#, esc(&r.system), e.id, tx(r.x1 as f64), ty(r.y1 as f64), tx(r.x2 as f64), ty(r.y2 as f64));
+            }
         }
     }
 

@@ -49,7 +49,7 @@ fn fixture() -> Fixture {
 }
 
 fn run(system: &str, p1: [i64; 3], p2: [i64; 3], w: i64, h: i64) -> Element {
-    run_element(&MepRun { system: system.into(), x1: p1[0], y1: p1[1], z1: p1[2], x2: p2[0], y2: p2[1], z2: p2[2], width: w, height: h, extra: Map::new() }, None, Source::User).unwrap()
+    run_element(&MepRun { system: system.into(), x1: p1[0], y1: p1[1], z1: p1[2], x2: p2[0], y2: p2[1], z2: p2[2], width: w, height: h, room: None, role: None, label: None, extra: Map::new() }, None, Source::User).unwrap()
 }
 
 #[test]
@@ -137,7 +137,7 @@ fn a_vertical_drain_through_a_footing_is_found_and_slabs_are_not_tested() {
 #[test]
 fn runs_are_validated_when_they_are_committed() {
     let mut f = fixture();
-    let bad = |system: &str, p2: [i64; 3], w: i64| run_element(&MepRun { system: system.into(), x1: 0, y1: 0, z1: 0, x2: p2[0], y2: p2[1], z2: p2[2], width: w, height: 100, extra: Map::new() }, None, Source::User);
+    let bad = |system: &str, p2: [i64; 3], w: i64| run_element(&MepRun { system: system.into(), x1: 0, y1: 0, z1: 0, x2: p2[0], y2: p2[1], z2: p2[2], width: w, height: 100, room: None, role: None, label: None, extra: Map::new() }, None, Source::User);
     assert!(bad("steam", [100, 0, 0], 100).is_err(), "unknown system");
     let diagonal = bad("duct", [100, 100, 0], 100).unwrap();
     assert!(f.doc.commit("d", Origin::User, vec![Command::Create(diagonal)]).is_err(), "a diagonal run is refused");

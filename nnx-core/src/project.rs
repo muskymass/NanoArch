@@ -132,6 +132,8 @@ pub struct NanoArchProject {
     pub structure: StructIn,
     pub mep: Option<MepInputs>,
     pub boq: Option<BoqLib>,
+    /// Inputs of the structural schedules (footing thickness, tie beams, reinforcement templates).
+    pub sizing: Option<crate::sizing::SizingInputs>,
     /// Room key -> display name.
     pub labels: BTreeMap<String, String>,
     pub limits: MunicipalLimits,

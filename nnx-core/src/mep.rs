@@ -27,7 +27,11 @@ use std::collections::BTreeMap;
 
 const AIR_DENSITY_KG_M3: f64 = 1.2;
 const AIR_CP_J_KG_K: f64 = 1006.0;
-const WATTS_PER_TON_REFRIGERATION: f64 = 3516.85;
+pub(crate) const WATTS_PER_TON_REFRIGERATION: f64 = 3516.85;
+/// Btu per hour in one watt.
+const BTU_HR_PER_WATT: f64 = 3.412142;
+pub(crate) const AIR_DENSITY: f64 = AIR_DENSITY_KG_M3;
+pub(crate) const AIR_CP: f64 = AIR_CP_J_KG_K;
 
 // ------------------------------------------------------------------ inputs
 
@@ -41,6 +45,47 @@ pub struct MepInputs {
     pub hvac: Option<Hvac>,
     #[serde(default)]
     pub insulation: Option<InsulationLib>,
+    /// Where the generated ducts, drains, supply pipes and cable trays go. Absent: nothing is routed.
+    #[serde(default)]
+    pub routing: Option<Routing>,
+}
+
+/// Position of the water tank feeding the building, millimetres in the plan (z above the floor top of the level where the
+/// supply runs). `kind` is `roof` or `ground`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct TankPos {
+    pub kind: String,
+    pub x_mm: f64,
+    pub y_mm: f64,
+    pub z_mm: f64,
+}
+
+/// Inputs of the router. Every value is yours (design criteria, the project's drawings): nothing is defaulted, and a
+/// system with an input missing is not routed, the missing names are listed under `routing.<system>`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct Routing {
+    /// HVAC: requirement key of the room that holds the air handler (the ducts start at its centre).
+    pub ahu_room: Option<String>,
+    /// Supply air temperature difference, K.
+    pub supply_delta_t_c: Option<f64>,
+    pub duct_velocity_mps: Option<f64>,
+    pub duct_height_mm: Option<f64>,
+    /// Underside of the false ceiling above the floor, mm. The ducts run between it and the slab soffit.
+    pub ceiling_height_mm: Option<f64>,
+    /// Distance between a supply run and its return run, mm.
+    pub return_offset_mm: Option<f64>,
+    /// Drainage: fall of the drains, percent (for example 1.5), the depth of the start of a drain below the floor top, and
+    /// how far outside the building outline the stack or manhole is, mm.
+    pub drain_slope_pct: Option<f64>,
+    pub drain_invert_mm: Option<f64>,
+    pub stack_offset_mm: Option<f64>,
+    /// Water supply: the tank and the height of the supply runs above the floor.
+    pub tank: Option<TankPos>,
+    pub supply_z_mm: Option<f64>,
+    /// Cables: height and section of the cable trays in the ceiling void.
+    pub tray_z_mm: Option<f64>,
+    pub tray_width_mm: Option<f64>,
+    pub tray_height_mm: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -75,6 +120,9 @@ pub struct Elec {
     pub max_vdrop_pct: Option<f64>,
     /// Requirement key of the room that holds the distribution board.
     pub panel_room: Option<String>,
+    /// Several distribution boards (room keys): each circuit is assigned to the nearest one. Overrides `panel_room`.
+    #[serde(default)]
+    pub boards: Vec<String>,
     /// Multiplier from straight-line to routed length.
     pub route_factor: Option<f64>,
 }
@@ -134,6 +182,9 @@ pub struct Hvac {
     pub unit_sizes_w: Vec<f64>,
     /// Whether the roof is exposed over every room (single storey: yes).
     pub roof_exposed: Option<bool>,
+    /// Coefficient of performance of the units: electrical input = cooling load / cop. With it, each room gets a dedicated
+    /// circuit for its air-conditioning unit.
+    pub cop: Option<f64>,
 }
 
 // ------------------------------------------------------------------ reports
@@ -154,6 +205,11 @@ pub struct PointSpec {
 #[derive(Debug, Clone, Serialize)]
 pub struct Circuit {
     pub id: String,
+    /// The distribution board (room key) that feeds it.
+    pub board: String,
+    /// Centre of its points, mm.
+    pub x_mm: i64,
+    pub y_mm: i64,
     pub kind: String,
     pub points: usize,
     pub rooms: Vec<String>,
@@ -166,8 +222,20 @@ pub struct Circuit {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct BoardLoad {
+    pub room: String,
+    pub circuits: usize,
+    pub connected_w: f64,
+    pub demand_w: f64,
+    pub demand_kva: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ElecReport {
     pub circuits: Vec<Circuit>,
+    pub boards: Vec<BoardLoad>,
+    pub connected_kva: f64,
+    pub demand_kva: f64,
     pub connected_w: f64,
     pub demand_w: f64,
     pub main_current_a: f64,
@@ -202,6 +270,10 @@ pub struct HvacRoom {
     pub internal_w: f64,
     pub ventilation_w: f64,
     pub load_w: f64,
+    pub btu_hr: f64,
+    pub tons: f64,
+    /// Supply airflow, L/s, when the routing inputs give the supply temperature difference.
+    pub airflow_lps: Option<f64>,
     pub units: u32,
     pub unit_w: f64,
 }
@@ -210,6 +282,7 @@ pub struct HvacRoom {
 pub struct HvacReport {
     pub rooms: Vec<HvacRoom>,
     pub total_w: f64,
+    pub total_btu_hr: f64,
     pub total_tons: f64,
     pub delta_t: f64,
     pub wall_u: f64,
@@ -225,6 +298,10 @@ pub struct MepReport {
     /// Discipline -> the inputs that are missing, so it was not computed.
     pub missing: BTreeMap<String, Vec<String>>,
     pub warnings: Vec<String>,
+    /// One row per generated duct, drain, pipe or cable run.
+    pub routes: Vec<crate::routing::RouteRow>,
+    #[serde(skip)]
+    pub runs: Vec<crate::routing::RunSpec>,
     #[serde(skip)]
     pub points: Vec<PointSpec>,
     #[serde(skip)]
@@ -233,15 +310,15 @@ pub struct MepReport {
 
 // ------------------------------------------------------------------ helpers
 
-struct RoomG {
-    level: Option<Id>,
-    key: String,
-    func: String,
-    rect: Rect,
-    area: f64,
+pub(crate) struct RoomG {
+    pub(crate) level: Option<Id>,
+    pub(crate) key: String,
+    pub(crate) func: String,
+    pub(crate) rect: Rect,
+    pub(crate) area: f64,
 }
 
-fn read_rooms(model: &Model) -> Vec<RoomG> {
+pub(crate) fn read_rooms(model: &Model) -> Vec<RoomG> {
     let mut v: Vec<RoomG> = model
         .elements
         .values()
@@ -271,7 +348,7 @@ impl Need {
     }
 }
 
-fn centre(r: &Rect) -> (i64, i64) {
+pub(crate) fn centre(r: &Rect) -> (i64, i64) {
     (r.x + r.w / 2, r.y + r.h / 2)
 }
 
@@ -315,17 +392,62 @@ fn along_walls(r: &Rect, n: usize) -> Vec<(i64, i64)> {
         .collect()
 }
 
-fn pick_ge(sorted: &[f64], need: f64) -> Option<f64> {
+pub(crate) fn pick_ge(sorted: &[f64], need: f64) -> Option<f64> {
     sorted.iter().copied().find(|&x| x >= need - 1e-9)
 }
 
-fn round2(v: f64) -> f64 {
+pub(crate) fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }
 
 // ------------------------------------------------------------------ electrical
 
-fn electrical(rooms: &[RoomG], e: &Elec, rep: &mut MepReport) {
+/// The values that size one circuit, read from the user's inputs once.
+struct ElecCtx {
+    v: f64,
+    pf: f64,
+    margin: f64,
+    rho: f64,
+    maxvd: f64,
+    route: f64,
+    demand_factor: f64,
+    phases: f64,
+    breakers: Vec<f64>,
+    cables: Vec<CableRow>,
+}
+
+impl ElecCtx {
+    /// Breaker and cable for a circuit of `watts` whose cable is `length_m` long: the smallest breaker above the design
+    /// current, then the smallest cable that carries the breaker and keeps the voltage drop within the limit.
+    /// Returns `(current_a, breaker_a, cable_mm2, vdrop_pct)`.
+    fn size(&self, id: &str, watts: f64, length_m: f64, rep: &mut MepReport) -> (f64, f64, f64, f64) {
+        let current = watts / (self.v * self.pf);
+        let design = current * self.margin;
+        let breaker = pick_ge(&self.breakers, design).unwrap_or_else(|| {
+            rep.warnings.push(format!("circuit {id} needs {design:.1} A, above the largest breaker you listed"));
+            *self.breakers.last().expect("non-empty")
+        });
+        let mut row = self.cables.iter().find(|c| c.amps >= breaker - 1e-9).unwrap_or_else(|| self.cables.last().expect("non-empty"));
+        let vd = |c: &CableRow| 2.0 * current * length_m * self.rho / (c.mm2 * self.v) * 100.0;
+        while vd(row) > self.maxvd {
+            match self.cables.iter().find(|c| c.mm2 > row.mm2) {
+                Some(next) => row = next,
+                None => {
+                    rep.warnings.push(format!("circuit {id}: even the largest cable gives {:.2} % voltage drop (limit {} %)", vd(row), self.maxvd));
+                    break;
+                }
+            }
+        }
+        (current, breaker, row.mm2, vd(row))
+    }
+}
+
+/// The board nearest (Manhattan) to `(x, y)`: `(index, distance_mm)`.
+fn nearest_board(boards: &[(&RoomG, (i64, i64))], x: i64, y: i64) -> (usize, i64) {
+    boards.iter().enumerate().map(|(i, (_, (bx, by)))| (i, (bx - x).abs() + (by - y).abs())).min_by_key(|(_, d)| *d).expect("at least one board")
+}
+
+fn electrical(rooms: &[RoomG], e: &Elec, rep: &mut MepReport) -> Option<ElecCtx> {
     let mut n = Need { missing: Vec::new() };
     let (v, pf, lpm, lw, spm, sw) = (
         n.f("electrical.voltage_v", e.voltage_v),
@@ -349,20 +471,28 @@ fn electrical(rooms: &[RoomG], e: &Elec, rep: &mut MepReport) {
     if e.three_phase.is_none() {
         n.missing.push("electrical.three_phase".into());
     }
-    let panel = e.panel_room.as_deref().and_then(|k| rooms.iter().find(|r| r.key == k));
-    if panel.is_none() {
+    let board_keys: Vec<String> = if e.boards.is_empty() { e.panel_room.iter().cloned().collect() } else { e.boards.clone() };
+    let mut board_rooms: Vec<&RoomG> = Vec::new();
+    for k in &board_keys {
+        match rooms.iter().find(|r| &r.key == k) {
+            Some(r) => board_rooms.push(r),
+            None => n.missing.push(format!("electrical.panel_room / boards: no room '{k}' in the plan")),
+        }
+    }
+    if board_keys.is_empty() {
         n.missing.push("electrical.panel_room (the key of a room in the plan)".into());
     }
     if !n.missing.is_empty() {
         rep.missing.insert("electrical".into(), n.missing);
-        return;
+        return None;
     }
-    let panel = panel.expect("checked");
-    let (px, py) = centre(&panel.rect);
+    let boards: Vec<(&RoomG, (i64, i64))> = board_rooms.iter().map(|r| (*r, centre(&r.rect))).collect();
     let mut breakers = e.breaker_sizes_a.clone();
     breakers.sort_by(f64::total_cmp);
     let mut cables = e.cables.clone();
     cables.sort_by(|a, b| a.amps.total_cmp(&b.amps));
+    let phases = if e.three_phase == Some(true) { 3.0 } else { 1.0 };
+    let ctx = ElecCtx { v, pf, margin, rho, maxvd, route, demand_factor: df, phases, breakers, cables };
 
     // Points: lights on a grid, sockets along the walls; rooms ordered west to east so circuits stay local.
     let mut ordered: Vec<&RoomG> = rooms.iter().collect();
@@ -389,57 +519,106 @@ fn electrical(rooms: &[RoomG], e: &Elec, rep: &mut MepReport) {
             let slice = &mut pts[a..b];
             slice.iter_mut().for_each(|p| p.circuit = Some(id.clone()));
             let watts: f64 = slice.iter().map(|p| p.watts.unwrap_or(0.0)).sum();
-            let current = watts / (v * pf);
-            let design = current * margin;
-            let breaker = pick_ge(&breakers, design).unwrap_or_else(|| {
-                rep.warnings.push(format!("circuit {id} needs {design:.1} A, above the largest breaker you listed"));
-                *breakers.last().expect("non-empty")
-            });
-            // Length: from the board to the centre of the circuit's points, times the route factor.
             let (cx, cy) = (slice.iter().map(|p| p.x).sum::<i64>() / slice.len() as i64, slice.iter().map(|p| p.y).sum::<i64>() / slice.len() as i64);
-            let length_m = ((cx - px).abs() + (cy - py).abs()) as f64 / 1000.0 * route;
-            // Smallest cable that carries the breaker AND keeps the voltage drop within your limit.
-            let mut row = cables.iter().find(|c| c.amps >= breaker - 1e-9).unwrap_or_else(|| cables.last().expect("non-empty"));
-            let vd = |c: &CableRow| 2.0 * current * length_m * rho / (c.mm2 * v) * 100.0;
-            while vd(row) > maxvd {
-                match cables.iter().find(|c| c.mm2 > row.mm2) {
-                    Some(next) => row = next,
-                    None => {
-                        rep.warnings.push(format!("circuit {id}: even the largest cable gives {:.2} % voltage drop (limit {maxvd} %)", vd(row)));
-                        break;
-                    }
-                }
-            }
+            // Length: from the nearest board to the centre of the circuit's points, times the route factor.
+            let (bi, dist) = nearest_board(&boards, cx, cy);
+            let length_m = dist as f64 / 1000.0 * route;
+            let (current, breaker, mm2, vd) = ctx.size(&id, watts, length_m, rep);
             let mut rooms_of: Vec<String> = slice.iter().map(|p| p.room.clone()).collect();
             rooms_of.dedup();
             circuits.push(Circuit {
                 id,
+                board: boards[bi].0.key.clone(),
+                x_mm: cx,
+                y_mm: cy,
                 kind: kind.into(),
                 points: slice.len(),
                 rooms: rooms_of,
                 watts: round2(watts),
                 current_a: round2(current),
                 breaker_a: breaker,
-                cable_mm2: row.mm2,
+                cable_mm2: mm2,
                 length_m: round2(length_m),
-                vdrop_pct: round2(vd(row)),
+                vdrop_pct: round2(vd),
             });
         }
     }
-    let connected: f64 = circuits.iter().map(|c| c.watts).sum();
-    let demand = connected * df;
-    let phases = if e.three_phase == Some(true) { 3.0 } else { 1.0 };
-    let main_current = demand / (phases * v * pf);
-    let main_breaker = pick_ge(&breakers, main_current * margin).unwrap_or_else(|| {
-        rep.warnings.push(format!("the main supply needs {:.1} A per phase, above the largest breaker you listed", main_current * margin));
-        *breakers.last().expect("non-empty")
-    });
-    rep.points.push(PointSpec { level: panel.level, role: "panel".into(), discipline: Discipline::Ele, x: px, y: py, room: panel.key.clone(), watts: None, circuit: None, label: Some("distribution board".into()) });
+    for (room, (px, py)) in &boards {
+        rep.points.push(PointSpec { level: room.level, role: "panel".into(), discipline: Discipline::Ele, x: *px, y: *py, room: room.key.clone(), watts: None, circuit: None, label: Some(if boards.len() > 1 { format!("DB {}", room.key) } else { "distribution board".into() }) });
+    }
     rep.points.extend(lights);
     rep.points.extend(sockets);
-    rep.electrical = Some(ElecReport { circuits, connected_w: round2(connected), demand_w: round2(demand), main_current_a: round2(main_current), main_breaker_a: main_breaker });
+    rep.electrical = Some(ElecReport { circuits, boards: Vec::new(), connected_kva: 0.0, demand_kva: 0.0, connected_w: 0.0, demand_w: 0.0, main_current_a: 0.0, main_breaker_a: 0.0 });
+    finish_electrical(&ctx, rep);
+    Some(ctx)
 }
 
+/// Totals of the circuits: per board and for the supply. Lighting and socket circuits take the demand factor you gave;
+/// dedicated air-conditioning circuits (`kind` `hvac`) are counted at 100 %, since no diversity value is given for them.
+fn finish_electrical(ctx: &ElecCtx, rep: &mut MepReport) {
+    let Some(el) = rep.electrical.take() else { return };
+    let mut keys: Vec<String> = el.circuits.iter().map(|c| c.board.clone()).collect();
+    keys.sort();
+    keys.dedup();
+    let demand = |cs: &[&Circuit]| cs.iter().map(|c| c.watts * if c.kind == "hvac" { 1.0 } else { ctx.demand_factor }).sum::<f64>();
+    let boards: Vec<BoardLoad> = keys
+        .iter()
+        .map(|k| {
+            let cs: Vec<&Circuit> = el.circuits.iter().filter(|c| &c.board == k).collect();
+            let (connected, dem) = (cs.iter().map(|c| c.watts).sum::<f64>(), demand(&cs));
+            BoardLoad { room: k.clone(), circuits: cs.len(), connected_w: round2(connected), demand_w: round2(dem), demand_kva: round2(dem / ctx.pf / 1000.0) }
+        })
+        .collect();
+    let all: Vec<&Circuit> = el.circuits.iter().collect();
+    let (connected, dem) = (all.iter().map(|c| c.watts).sum::<f64>(), demand(&all));
+    let main_current = dem / (ctx.phases * ctx.v * ctx.pf);
+    let main_breaker = pick_ge(&ctx.breakers, main_current * ctx.margin).unwrap_or_else(|| {
+        rep.warnings.push(format!("the main supply needs {:.1} A per phase, above the largest breaker you listed", main_current * ctx.margin));
+        *ctx.breakers.last().expect("non-empty")
+    });
+    rep.electrical = Some(ElecReport {
+        circuits: el.circuits,
+        boards,
+        connected_kva: round2(connected / ctx.pf / 1000.0),
+        demand_kva: round2(dem / ctx.pf / 1000.0),
+        connected_w: round2(connected),
+        demand_w: round2(dem),
+        main_current_a: round2(main_current),
+        main_breaker_a: main_breaker,
+    });
+}
+
+/// A dedicated circuit for the air-conditioning unit of every room, once the loads are known: electrical input is the
+/// cooling load divided by your `hvac.cop`. Without it the circuits are not made and the report says so.
+fn ac_circuits(rooms: &[RoomG], e: &Elec, ctx: &ElecCtx, h: &Hvac, rep: &mut MepReport) {
+    let (Some(_), Some(hv)) = (&rep.electrical, rep.hvac.clone()) else { return };
+    let Some(cop) = h.cop.filter(|c| *c > 0.0) else {
+        rep.warnings.push("dedicated air-conditioning circuits not made: enter hvac.cop (cooling load / electrical input)".into());
+        return;
+    };
+    let keys: Vec<String> = if e.boards.is_empty() { e.panel_room.iter().cloned().collect() } else { e.boards.clone() };
+    let boards: Vec<(&RoomG, (i64, i64))> = keys.iter().filter_map(|k| rooms.iter().find(|r| &r.key == k)).map(|r| (r, centre(&r.rect))).collect();
+    if boards.is_empty() {
+        return;
+    }
+    let mut circuits = rep.electrical.take().map(|el| el.circuits).unwrap_or_default();
+    for (i, hr) in hv.rooms.iter().enumerate() {
+        let Some(room) = rooms.iter().find(|r| r.key == hr.room) else { continue };
+        let (cx, cy) = centre(&room.rect);
+        let id = format!("AC{}", i + 1);
+        let watts = hr.load_w / cop;
+        let (bi, dist) = nearest_board(&boards, cx, cy);
+        let length_m = dist as f64 / 1000.0 * ctx.route;
+        let (current, breaker, mm2, vd) = ctx.size(&id, watts, length_m, rep);
+        circuits.push(Circuit { id: id.clone(), board: boards[bi].0.key.clone(), x_mm: cx, y_mm: cy, kind: "hvac".into(), points: hr.units as usize, rooms: vec![room.key.clone()], watts: round2(watts), current_a: round2(current), breaker_a: breaker, cable_mm2: mm2, length_m: round2(length_m), vdrop_pct: round2(vd) });
+        for p in rep.points.iter_mut().filter(|p| p.role == "ac_indoor" && p.room == room.key) {
+            p.circuit = Some(id.clone());
+        }
+    }
+    rep.electrical = Some(ElecReport { circuits, boards: Vec::new(), connected_kva: 0.0, demand_kva: 0.0, connected_w: 0.0, demand_w: 0.0, main_current_a: 0.0, main_breaker_a: 0.0 });
+    finish_electrical(ctx, rep);
+    rep.warnings.push("dedicated air-conditioning circuits are counted at 100 % demand: no diversity value was given for them".into());
+}
 // ------------------------------------------------------------------ plumbing
 
 fn plumbing(rooms: &[RoomG], p: &Plumb, rep: &mut MepReport) {
@@ -592,9 +771,9 @@ fn hvac(model: &Model, rooms: &[RoomG], h: &Hvac, ins: &Option<InsulationLib>, r
         total += load;
         let (cx, cy) = centre(&r.rect);
         rep.points.push(PointSpec { level: r.level, role: "ac_indoor".into(), discipline: Discipline::Hvac, x: cx, y: cy, room: r.key.clone(), watts: Some(round2(load)), circuit: None, label: Some(format!("{units} x {unit_w} W")) });
-        out.push(HvacRoom { room: r.key.clone(), conduction_w: round2(conduction), glass_w: round2(glass_w), internal_w: round2(internal), ventilation_w: round2(ventilation), load_w: round2(load), units, unit_w });
+        out.push(HvacRoom { room: r.key.clone(), conduction_w: round2(conduction), glass_w: round2(glass_w), internal_w: round2(internal), ventilation_w: round2(ventilation), load_w: round2(load), btu_hr: round2(load * BTU_HR_PER_WATT), tons: round2(load / WATTS_PER_TON_REFRIGERATION), airflow_lps: None, units, unit_w });
     }
-    rep.hvac = Some(HvacReport { rooms: out, total_w: round2(total), total_tons: round2(total / WATTS_PER_TON_REFRIGERATION), delta_t: dt, wall_u: round2(wall_u * 1e2) / 1.0, roof_u });
+    rep.hvac = Some(HvacReport { rooms: out, total_w: round2(total), total_btu_hr: round2(total * BTU_HR_PER_WATT), total_tons: round2(total / WATTS_PER_TON_REFRIGERATION), delta_t: dt, wall_u: round2(wall_u * 1e2) / 1.0, roof_u });
 }
 
 // ------------------------------------------------------------------ entry points
@@ -613,16 +792,22 @@ pub fn compute(model: &Model, inputs: &MepInputs) -> MepReport {
         rep.insulation_items = r.items;
         rep.warnings.extend(r.warnings);
     }
-    if let Some(e) = &inputs.electrical {
-        electrical(&rooms, e, &mut rep);
-    }
+    let ctx = inputs.electrical.as_ref().and_then(|e| electrical(&rooms, e, &mut rep));
     if let Some(p) = &inputs.plumbing {
         plumbing(&rooms, p, &mut rep);
     }
     if let Some(h) = &inputs.hvac {
         hvac(model, &rooms, h, &inputs.insulation, &mut rep);
+        if let (Some(e), Some(ctx)) = (&inputs.electrical, &ctx) {
+            ac_circuits(&rooms, e, ctx, h, &mut rep);
+        }
     }
-    rep.warnings.push("preliminary: cables, pipes and ducts are not routed; lengths are straight-line estimates".into());
+    if let Some(r) = &inputs.routing {
+        crate::routing::route(model, &rooms, inputs, r, &mut rep);
+    }
+    if inputs.routing.is_none() {
+        rep.warnings.push("preliminary: cables, pipes and ducts are not routed; lengths are straight-line estimates".into());
+    }
     if crate::building::levels(model).len() > 1 {
         rep.warnings.push("several levels: lengths are measured in plan only, so vertical risers between levels are NOT counted".into());
     }
@@ -636,10 +821,16 @@ fn signature(el: &crate::model::Element) -> String {
 /// Replaces the model's generated MEP points with `points`, as one undoable step. Identical points are kept (and
 /// keep their ids); locked points are never deleted. Returns `(created, removed)`.
 pub fn apply(doc: &mut Document, points: &[PointSpec]) -> Result<(usize, usize), String> {
+    apply_with_runs(doc, points, &[])
+}
+
+/// Like `apply`, and the generated ducts, drains, pipes and cable trays (`MepRun`, `Source::Generated`) are replaced by
+/// `runs` in the same undoable step. Runs the user entered (`Source::User`) are never touched.
+pub fn apply_with_runs(doc: &mut Document, points: &[PointSpec], runs: &[crate::routing::RunSpec]) -> Result<(usize, usize), String> {
     let mut existing: BTreeMap<String, Vec<Id>> = BTreeMap::new();
     let mut locked = 0;
     let mut all: Vec<Id> = Vec::new();
-    for e in doc.model.elements.values().filter(|e| e.kind == MepPoint::KIND && e.provenance.source == Source::Generated) {
+    for e in doc.model.elements.values().filter(|e| (e.kind == MepPoint::KIND || e.kind == crate::typed::MepRun::KIND) && e.provenance.source == Source::Generated) {
         if e.provenance.locked {
             locked += 1;
             continue;
@@ -657,6 +848,28 @@ pub fn apply(doc: &mut Document, points: &[PointSpec]) -> Result<(usize, usize),
         );
         el.discipline = p.discipline;
         el.level_id = p.level;
+        match existing.get_mut(&signature(&el)).and_then(|v| v.pop()) {
+            Some(id) => keep.push(id),
+            None => creates.push(Command::Create(el)),
+        }
+    }
+    for run in runs {
+        let spec = crate::typed::MepRun {
+            system: run.system.clone(),
+            x1: run.p1[0],
+            y1: run.p1[1],
+            z1: run.p1[2],
+            x2: run.p2[0],
+            y2: run.p2[1],
+            z2: run.p2[2],
+            width: run.width,
+            height: run.height,
+            room: run.room.clone(),
+            role: Some(run.role.clone()),
+            label: run.label.clone(),
+            extra: Default::default(),
+        };
+        let el = crate::typed::run_element(&spec, run.level, Source::Generated)?;
         match existing.get_mut(&signature(&el)).and_then(|v| v.pop()) {
             Some(id) => keep.push(id),
             None => creates.push(Command::Create(el)),
@@ -684,8 +897,21 @@ pub fn point_items(model: &Model) -> Vec<QtoItem> {
             groups.entry(code).or_default().push(e.id);
         }
     }
-    groups
+    let mut items: Vec<QtoItem> = groups
         .into_iter()
         .map(|(code, ids)| QtoItem { description: format!("{code} points"), code, unit: crate::qto::Unit::Nr, quantity: ids.len() as f64, waste_pct: None, sources: ids, parts: Vec::new() })
-        .collect()
+        .collect();
+    // Runs by system and section, as lengths.
+    let mut runs: BTreeMap<String, (f64, Vec<Id>)> = BTreeMap::new();
+    for e in model.elements.values().filter(|e| e.kind == crate::typed::MepRun::KIND) {
+        if let Ok(r) = e.typed::<crate::typed::MepRun>() {
+            let d = [(r.x2 - r.x1) as f64, (r.y2 - r.y1) as f64, (r.z2 - r.z1) as f64];
+            let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() / 1000.0;
+            let slot = runs.entry(format!("MEP.run.{}.{}x{}", r.system, r.width, r.height)).or_default();
+            slot.0 += len;
+            slot.1.push(e.id);
+        }
+    }
+    items.extend(runs.into_iter().map(|(code, (len, ids))| QtoItem { description: format!("{code} runs"), code, unit: crate::qto::Unit::M, quantity: (len * 100.0).round() / 100.0, waste_pct: None, sources: ids, parts: Vec::new() }));
+    items
 }
