@@ -50,6 +50,10 @@ fn commit_with_sync(doc: &mut Document, so: &StructOpts, label: &str, cmds: Vec<
     // The edited level and every level below it: loads come down from above, so footings can change too.
     let from = level.and_then(|l| building::levels(&doc.model).iter().position(|(_, id)| *id == l));
     let (sync_cmds, _) = levels::settle(&mut scratch, so, from)?;
+    // A project that enforces the code refuses an edit that adds a violation; otherwise the page shows it.
+    if let Some(why) = nnx_core::sbc::refusal(&doc.model, &scratch.model) {
+        return Err(why);
+    }
     let mut all = cmds;
     all.extend(sync_cmds);
     doc.commit(label, Origin::User, all).map_err(|e| e.to_string())
@@ -139,8 +143,16 @@ pub fn move_partition(doc: &mut Document, brief: &Brief, so: &StructOpts, wall_i
         }
     }
 
-    // Rebuild the architecture from the new rooms, exactly as generation does.
-    let lookup = |key: &str| brief.rooms.iter().find(|q| q.key == key);
+    rebuild(doc, brief, so, level, &rooms, &moved_rects, &[], "move partition")?;
+    Ok(moved_rects.len())
+}
+
+/// Commits the rooms of one level as they now are: resized rooms get their new rectangles, `removed` rooms are
+/// deleted, and the walls, doors, windows and generated MEP points of the level are rebuilt from the rooms, exactly as
+/// generation does. `rooms` is the final set of rooms of the level (without the removed ones).
+#[allow(clippy::too_many_arguments)]
+fn rebuild(doc: &mut Document, brief: &Brief, so: &StructOpts, level: Option<Id>, rooms: &[Room], moved_rects: &BTreeMap<Id, Rect>, removed: &[Id], label: &str) -> Result<(), String> {
+    let lookup =|key: &str| brief.rooms.iter().find(|q| q.key == key);
     let placed: Vec<PlacedRoom> = rooms
         .iter()
         .map(|r| {
@@ -167,7 +179,7 @@ pub fn move_partition(doc: &mut Document, brief: &Brief, so: &StructOpts, wall_i
     let ids: BTreeMap<String, Id> = rooms.iter().map(|r| (r.key.clone(), r.id)).collect();
 
     let mut cmds: Vec<Command> = Vec::new();
-    for (id, r) in &moved_rects {
+    for (id, r) in moved_rects {
         let set = |key: &str, v: Value| Command::SetProp { id: *id, key: key.into(), value: Some(v) };
         cmds.push(set("x", json!(r.x)));
         cmds.push(set("y", json!(r.y)));
@@ -182,6 +194,8 @@ pub fn move_partition(doc: &mut Document, brief: &Brief, so: &StructOpts, wall_i
     }
     cmds.extend(walls::to_commands(&plan, &ids, level));
     cmds.extend(walls::window_commands(&plan, &wp, &ids, level));
+    let removed_keys: Vec<String> = removed.iter().filter_map(|id| doc.model.get(id)?.typed::<Space>().ok().map(|s| s.requirement_key)).collect();
+    cmds.extend(removed.iter().map(|id| Command::Delete(*id)));
     // MEP points sit inside rooms that this edit resizes. Generated ones are dropped in the same transaction
     // (one undo brings them back; recompute places them again); one the user placed or locked stays, so it
     // must still lie inside its room or the edit is refused.
@@ -189,14 +203,162 @@ pub fn move_partition(doc: &mut Document, brief: &Brief, so: &StructOpts, wall_i
         let Ok(p) = e.typed::<MepPoint>() else { continue };
         if e.provenance.source == Source::Generated && !e.provenance.locked {
             cmds.push(Command::Delete(e.id));
+        } else if removed_keys.contains(&p.room) {
+            return Err(format!("the {} point at ({}, {}) belongs to the room '{}' that this edit deletes; move or delete it first", p.role, p.x, p.y, p.room));
         } else if let Some(r) = rooms.iter().find(|r| r.key == p.room).map(|r| r.rect)
             && !(p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h)
         {
             return Err(format!("the {} point at ({}, {}) in '{}' would end up outside its room; move or delete it first", p.role, p.x, p.y, p.room));
         }
     }
-    commit_with_sync(doc, so, "move partition", cmds, level)?;
-    Ok(moved_rects.len())
+    commit_with_sync(doc, so, label, cmds, level)
+}
+
+/// A side of a room's rectangle, named by the coordinate it lies on: `X0` is the side at the smallest x, `X1` at the
+/// largest x, `Y0` at the smallest y, `Y1` at the largest y.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edge {
+    X0,
+    X1,
+    Y0,
+    Y1,
+}
+
+impl Edge {
+    pub fn parse(s: &str) -> Result<Edge, String> {
+        match s {
+            "x0" => Ok(Edge::X0),
+            "x1" => Ok(Edge::X1),
+            "y0" => Ok(Edge::Y0),
+            "y1" => Ok(Edge::Y1),
+            other => Err(format!("unknown edge '{other}' (x0, x1, y0 or y1)")),
+        }
+    }
+}
+
+/// The room element's rectangle, level and key.
+fn space_of(doc: &Document, id: Id) -> Result<(Rect, Option<Id>, String), String> {
+    let el = doc.model.get(&id).ok_or("that room no longer exists")?;
+    let s = el.typed::<Space>().map_err(|_| "that element is not a room")?;
+    Ok((Rect { x: s.x, y: s.y, w: s.w, h: s.h }, el.level_id, s.requirement_key))
+}
+
+/// True when the two rectangles touch along a full side of the same length (so they can trade places or merge and the
+/// plan keeps tiling with no gap or overlap).
+fn share_full_side(a: &Rect, b: &Rect) -> bool {
+    let side_by_side = a.y == b.y && a.h == b.h && (a.x + a.w == b.x || b.x + b.w == a.x);
+    let stacked = a.x == b.x && a.w == b.w && (a.y + a.h == b.y || b.y + b.h == a.y);
+    side_by_side || stacked
+}
+
+/// Makes a room `grow_mm` larger (negative: smaller) on one side by moving the interior wall on that side. The room on
+/// the other side of the wall gives up or gains the same strip. A side on the building outline cannot move.
+pub fn resize_room(doc: &mut Document, brief: &Brief, so: &StructOpts, room: Id, edge: Edge, grow_mm: i64) -> Result<usize, String> {
+    let (rect, level, key) = space_of(doc, room)?;
+    let vertical_wall = matches!(edge, Edge::X0 | Edge::X1);
+    let line = match edge {
+        Edge::X0 => rect.x,
+        Edge::X1 => rect.x + rect.w,
+        Edge::Y0 => rect.y,
+        Edge::Y1 => rect.y + rect.h,
+    };
+    let span = if vertical_wall { (rect.y, rect.y + rect.h) } else { (rect.x, rect.x + rect.w) };
+    // The outline is where the level's rooms end: a side there has no partition behind it.
+    let all = read_rooms(doc, level)?;
+    let outline = |f: &dyn Fn(&Rect) -> i64, pick_min: bool| all.iter().map(|r| f(&r.rect)).reduce(|a, b| if pick_min { a.min(b) } else { a.max(b) });
+    let on_outline = match edge {
+        Edge::X0 => outline(&|r| r.x, true) == Some(line),
+        Edge::X1 => outline(&|r| r.x + r.w, false) == Some(line),
+        Edge::Y0 => outline(&|r| r.y, true) == Some(line),
+        Edge::Y1 => outline(&|r| r.y + r.h, false) == Some(line),
+    };
+    if on_outline {
+        return Err("that side is on the building outline and cannot be moved".into());
+    }
+    let mut exterior_here = false;
+    let mut found: Option<Id> = None;
+    for e in doc.model.elements.values().filter(|e| e.kind == Wall::KIND && e.level_id == level) {
+        let Ok(w) = e.typed::<Wall>() else { continue };
+        let overlaps = w.start().max(span.0) < (w.start() + w.length).min(span.1);
+        if w.horizontal() == vertical_wall || w.centre_line() != line || !overlaps || (w.room_a != key && w.room_b.as_deref() != Some(&key)) {
+            continue;
+        }
+        if w.is_exterior || w.room_b.is_none() {
+            exterior_here = true;
+        } else {
+            found = Some(e.id);
+        }
+    }
+    let wall = match (found, exterior_here) {
+        (Some(w), _) => w,
+        (None, true) => return Err("that side is on the building outline and cannot be moved".into()),
+        (None, false) => return Err("there is no partition on that side of the room".into()),
+    };
+    let delta = if matches!(edge, Edge::X1 | Edge::Y1) { grow_mm } else { -grow_mm };
+    move_partition(doc, brief, so, wall, delta)
+}
+
+/// The two rooms exchange places. They must share a full side of the same length; each keeps its own size, so the plan
+/// still tiles. Walls, doors and windows are rebuilt around the new positions.
+pub fn swap_rooms(doc: &mut Document, brief: &Brief, so: &StructOpts, a: Id, b: Id) -> Result<(), String> {
+    if a == b {
+        return Err("choose two different rooms".into());
+    }
+    let (ra, la, ka) = space_of(doc, a)?;
+    let (rb, lb, kb) = space_of(doc, b)?;
+    if la != lb {
+        return Err("the rooms are on different levels".into());
+    }
+    if building::is_stair_block(&ka) || building::is_stair_block(&kb) {
+        return Err("the stair block is the same on every level and cannot be moved".into());
+    }
+    if !share_full_side(&ra, &rb) {
+        return Err("two rooms can only exchange places when they share a full wall of the same length".into());
+    }
+    let mut rooms = read_rooms(doc, la)?;
+    // The room that comes first along the shared direction takes the second one's size and moves after it.
+    let (nra, nrb) = if ra.y == rb.y && ra.h == rb.h {
+        let (first, second) = if ra.x < rb.x { (ra, rb) } else { (rb, ra) };
+        let (nf, ns) = (Rect { x: first.x, w: second.w, ..second }, Rect { x: first.x + second.w, w: first.w, ..first });
+        if ra.x < rb.x { (ns, nf) } else { (nf, ns) }
+    } else {
+        let (first, second) = if ra.y < rb.y { (ra, rb) } else { (rb, ra) };
+        let (nf, ns) = (Rect { y: first.y, h: second.h, ..second }, Rect { y: first.y + second.h, h: first.h, ..first });
+        if ra.y < rb.y { (ns, nf) } else { (nf, ns) }
+    };
+    let moved: BTreeMap<Id, Rect> = BTreeMap::from([(a, nra), (b, nrb)]);
+    for r in rooms.iter_mut() {
+        if let Some(n) = moved.get(&r.id) {
+            r.rect = *n;
+        }
+    }
+    rebuild(doc, brief, so, la, &rooms, &moved, &[], "swap rooms")
+}
+
+/// Deletes `room` by giving its space to `into`, a room that shares a full side with it, so no hole is left in the plan.
+pub fn delete_room(doc: &mut Document, brief: &Brief, so: &StructOpts, room: Id, into: Id) -> Result<(), String> {
+    if room == into {
+        return Err("choose a different room to take over the space".into());
+    }
+    let (rr, lr, kr) = space_of(doc, room)?;
+    let (rn, ln, kn) = space_of(doc, into)?;
+    if lr != ln {
+        return Err("the rooms are on different levels".into());
+    }
+    if building::is_stair_block(&kr) || building::is_stair_block(&kn) {
+        return Err("the stair block is the same on every level and cannot be changed".into());
+    }
+    if !share_full_side(&rr, &rn) {
+        return Err("the room can only be absorbed by a neighbour that shares a full wall of the same length".into());
+    }
+    let merged = Rect { x: rr.x.min(rn.x), y: rr.y.min(rn.y), w: if rr.y == rn.y { rr.w + rn.w } else { rn.w }, h: if rr.x == rn.x { rr.h + rn.h } else { rn.h } };
+    let mut rooms = read_rooms(doc, lr)?;
+    rooms.retain(|r| r.id != room);
+    for r in rooms.iter_mut().filter(|r| r.id == into) {
+        r.rect = merged;
+    }
+    let moved: BTreeMap<Id, Rect> = BTreeMap::from([(into, merged)]);
+    rebuild(doc, brief, so, lr, &rooms, &moved, &[room], "delete room")
 }
 
 /// Changes a door or window's width and/or its position along the wall (centre offset from the wall start).
@@ -257,7 +419,23 @@ pub fn describe(doc: &Document, id: Id) -> Result<Value, String> {
         }
         "Space" => {
             let s = el.typed::<Space>().map_err(|e| e.to_string())?;
-            json!({ "kind": "Space", "id": id.to_string(), "key": s.requirement_key, "func": s.func, "area": s.area, "target": s.target_area, "w": s.w, "h": s.h })
+            // Rooms that can trade places with this one or absorb it: they share a full wall of the same length.
+            let me = Rect { x: s.x, y: s.y, w: s.w, h: s.h };
+            let neighbours: Vec<Value> = if building::is_stair_block(&s.requirement_key) {
+                Vec::new()
+            } else {
+                doc.model
+                    .elements
+                    .values()
+                    .filter(|o| o.id != id && o.kind == Space::KIND && o.level_id == el.level_id)
+                    .filter_map(|o| {
+                        let q = o.typed::<Space>().ok()?;
+                        let rect = Rect { x: q.x, y: q.y, w: q.w, h: q.h };
+                        (share_full_side(&me, &rect) && !building::is_stair_block(&q.requirement_key)).then(|| json!({ "id": o.id.to_string(), "key": q.requirement_key }))
+                    })
+                    .collect()
+            };
+            json!({ "kind": "Space", "id": id.to_string(), "key": s.requirement_key, "func": s.func, "area": s.area, "target": s.target_area, "w": s.w, "h": s.h, "neighbours": neighbours })
         }
         other => json!({ "kind": other, "id": id.to_string() }),
     })

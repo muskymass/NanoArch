@@ -307,7 +307,9 @@ pub fn sync_all(doc: &mut Document, base: &StructOpts) -> Result<ChainReport, St
 }
 
 /// Spaces, walls, doors, windows and structure of the whole building, committed as one step.
-pub fn assemble(b: &Building, plan: &BuildingPlan, base: &StructOpts) -> Result<(Document, Vec<String>), String> {
+/// `project`, when given, becomes the model's project element inside the same step, so one undo of the generation
+/// removes the plan and its project together.
+pub fn assemble(b: &Building, plan: &BuildingPlan, base: &StructOpts, project: Option<&nnx_core::project::NanoArchProject>) -> Result<(Document, Vec<String>), String> {
     let n = b.levels.len();
     let multi = n > 1;
     let mut arch: Vec<Command> = Vec::new();
@@ -340,6 +342,9 @@ pub fn assemble(b: &Building, plan: &BuildingPlan, base: &StructOpts) -> Result<
     warnings.extend(rep.warnings);
     let mut all = arch;
     all.extend(cmds);
+    if let Some(p) = project {
+        all.push(nnx_core::project::create_command(p)?);
+    }
     let mut doc = Document::default();
     doc.commit("generate house", Origin::Generator, all).map_err(|e| e.to_string())?;
     Ok((doc, warnings))

@@ -15,82 +15,25 @@ use crate::levels::{self, Building, BuildingPlan};
 use nnx_core::building;
 use nnx_core::persist::Settings;
 use nnx_core::Document;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Deserialize)]
-pub struct RoomIn {
-    pub key: String,
-    /// Display name (for example Arabic); the key is used when absent.
-    pub name: Option<String>,
-    pub func: String,
-    pub area: f64,
-    pub zone: String,
-    #[serde(default)]
-    pub light: bool,
-    pub min_width_mm: Option<i64>,
-    /// 1 is the ground floor. Absent means the ground floor.
-    pub floor: Option<u32>,
-}
+pub use nnx_core::project::{BriefIn, NanoArchProject, RoomIn, StructIn};
 
-/// The stair of a building with several floors. Nothing here is defaulted.
-#[derive(Debug, Deserialize, Clone)]
-pub struct StairIn {
-    pub width_m: f64,
-    pub length_m: f64,
-    /// `west` or `east`.
-    pub side: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct BriefIn {
-    pub title: Option<String>,
-    pub width_m: f64,
-    pub length_m: f64,
-    #[serde(default)]
-    pub setback_front_m: f64,
-    #[serde(default)]
-    pub setback_back_m: f64,
-    #[serde(default)]
-    pub setback_side_m: f64,
-    pub entry: String,
-    pub rooms: Vec<RoomIn>,
-    pub seed: Option<u64>,
-    pub stair: Option<StairIn>,
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-pub struct StructIn {
-    pub dead_kpa: Option<f64>,
-    pub live_kpa: Option<f64>,
-    pub bearing_kpa: Option<f64>,
-    pub floors: Option<u32>,
-    pub max_span_mm: Option<i64>,
-    #[serde(default)]
-    pub show_structure: bool,
-}
-
+/// The application state. The project itself (metadata, brief, structure, MEP and BOQ inputs, room names, municipal
+/// limits) lives only inside the document's model as the `Project` element, so undo, redo, saving and every view agree.
+/// What is kept here is either input that exists before a document does, or view state that is not part of the project.
 #[derive(Default)]
 pub struct App {
     alternatives: Vec<Building>,
     plan: Option<BuildingPlan>,
-    brief: Option<Brief>,
+    /// The inputs entered before a layout is chosen. Once a document exists the project element is the only copy.
+    draft: Option<NanoArchProject>,
     /// Index of the level shown in the plan view.
     cur_level: usize,
-    title: String,
-    labels: BTreeMap<String, String>,
     doc: Option<Document>,
-    sopts: Option<StructOpts>,
     show_structure: bool,
     show_mep: bool,
-    /// MEP and insulation inputs exactly as entered; kept so quantities and saved projects use them.
-    raw_mep: Value,
-    /// BOQ inputs (specifications, rates, consumption factors, mark-ups) exactly as entered.
-    raw_boq: Value,
-    /// The inputs exactly as the user entered them, kept so they can be saved with the project.
-    raw_brief: Value,
-    raw_struct: Value,
 }
 
 /// The buildable rectangle (plot minus setbacks) and the entrance side.
@@ -161,6 +104,45 @@ impl App {
         self.doc.as_ref().ok_or_else(|| "choose a layout first".to_string())
     }
 
+    /// The project stored in the open model, if there is one.
+    fn project(&self) -> Option<NanoArchProject> {
+        self.doc.as_ref().and_then(|d| nnx_core::project::get(&d.model).ok().flatten())
+    }
+
+    fn title(&self) -> String {
+        self.project().map(|p| p.meta.title).unwrap_or_default()
+    }
+
+    fn display_title(&self) -> String {
+        let t = self.title();
+        if t.trim().is_empty() { "NanoArch project".into() } else { t }
+    }
+
+    fn labels(&self) -> BTreeMap<String, String> {
+        self.project().map(|p| p.labels).unwrap_or_default()
+    }
+
+    /// The structure options, from the structural inputs stored in the project.
+    fn sopts(&self) -> Result<StructOpts, String> {
+        self.project().map(|p| struct_opts(&p.structure)).ok_or_else(|| "choose a layout first".to_string())
+    }
+
+    /// The layout brief of the open project (plot, entrance, rooms of every level), rebuilt from its stored inputs.
+    fn layout_brief(&self) -> Result<Brief, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let b = p.brief.ok_or("this project has no saved brief: the entrance side is unknown, so partitions cannot be moved")?;
+        let n_levels = building::levels(&self.doc()?.model).len().max(1) as u32;
+        Ok(levels::plan_building(&b, n_levels)?.merged)
+    }
+
+    /// Code check of the open model, as JSON for the page.
+    fn sbc_json(&self) -> Value {
+        match &self.doc {
+            Some(d) => serde_json::to_value(nnx_core::sbc::check(&d.model)).unwrap_or(Value::Null),
+            None => Value::Null,
+        }
+    }
+
     /// Levels of the open model as `(index, id, name)`, lowest first. Empty for a single-storey model.
     fn level_list(&self) -> Vec<(i64, nnx_core::Id, String)> {
         let Some(d) = &self.doc else { return Vec::new() };
@@ -178,11 +160,11 @@ impl App {
     }
 
     fn draw_opts(&self, show_structure: bool) -> DrawOpts {
-        let mut title = self.title.clone();
+        let mut title = self.title();
         if let Some((_, _, name)) = self.level_list().get(self.cur_level) {
             title = format!("{title} — {name}");
         }
-        DrawOpts { title, labels: self.labels.clone(), show_structure, show_mep: self.show_mep, ..DrawOpts::default() }
+        DrawOpts { title, labels: self.labels(), show_structure, show_mep: self.show_mep, ..DrawOpts::default() }
     }
 
     fn render(&self) -> Result<String, String> {
@@ -217,10 +199,10 @@ impl App {
                 let doc = self.doc.as_mut().ok_or("nothing to undo")?;
                 let changed = if cmd == "undo" { doc.undo() } else { doc.redo() };
                 self.cur_level = self.cur_level.min(self.level_list().len().saturating_sub(1));
-                Ok(json!({ "changed": changed, "svg": self.render_or_null()?, "levels": self.levels_json(), "rooms": self.rooms_json() }))
+                Ok(json!({ "changed": changed, "svg": self.render_or_null()?, "levels": self.levels_json(), "rooms": self.rooms_json(), "settings": self.form_state(), "sbc": self.sbc_json() }))
             }
             "sync" => {
-                let so = self.sopts.clone().ok_or("choose a layout first")?;
+                let so = self.sopts()?;
                 let doc = self.doc.as_mut().ok_or("choose a layout first")?;
                 let r = levels::sync_all(doc, &so)?;
                 Ok(json!({ "created": r.created, "removed": r.removed, "unchanged": r.unchanged, "warnings": r.warnings, "svg": self.render()? }))
@@ -228,27 +210,52 @@ impl App {
             "describe" => editing::describe(self.doc()?, id_arg(args, "id")?),
             "move_partition" => {
                 let (id, delta) = (id_arg(args, "wall")?, args.get("delta_mm").and_then(Value::as_i64).ok_or("delta_mm is required")?);
-                let brief = self.brief.clone().ok_or("this project has no saved brief: the entrance side is unknown, so partitions cannot be moved")?;
-                let so = self.sopts.clone().ok_or("choose a layout first")?;
+                let brief = self.layout_brief()?;
+                let so = self.sopts()?;
                 let doc = self.doc.as_mut().ok_or("choose a layout first")?;
                 let points_before = doc.model.elements.values().filter(|e| e.kind == "MepPoint").count();
                 let moved = editing::move_partition(doc, &brief, &so, id, delta)?;
                 let points_after = doc.model.elements.values().filter(|e| e.kind == "MepPoint").count();
-                Ok(json!({ "moved": moved, "mep_cleared": points_before - points_after, "svg": self.render_or_null()?, "rooms": self.rooms_json() }))
+                Ok(json!({ "moved": moved, "mep_cleared": points_before - points_after, "svg": self.render_or_null()?, "rooms": self.rooms_json(), "sbc": self.sbc_json() }))
+            }
+            "resize_room" | "swap_rooms" | "delete_room" => {
+                let brief = self.layout_brief()?;
+                let so = self.sopts()?;
+                let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+                let mep_before = doc.model.elements.values().filter(|e| e.kind == "MepPoint").count();
+                let mut out = json!({});
+                match cmd {
+                    "resize_room" => {
+                        let edge = editing::Edge::parse(args.get("edge").and_then(Value::as_str).ok_or("edge is required")?)?;
+                        let grow = args.get("grow_mm").and_then(Value::as_i64).ok_or("grow_mm is required")?;
+                        out["moved"] = json!(editing::resize_room(doc, &brief, &so, id_arg(args, "room")?, edge, grow)?);
+                    }
+                    "swap_rooms" => editing::swap_rooms(doc, &brief, &so, id_arg(args, "a")?, id_arg(args, "b")?)?,
+                    _ => editing::delete_room(doc, &brief, &so, id_arg(args, "room")?, id_arg(args, "into")?)?,
+                }
+                let mep_after = doc.model.elements.values().filter(|e| e.kind == "MepPoint").count();
+                out["mep_cleared"] = json!(mep_before.saturating_sub(mep_after));
+                out["svg"] = self.render_or_null()?;
+                out["rooms"] = json!(self.rooms_json());
+                out["sbc"] = self.sbc_json();
+                Ok(out)
             }
             "set_opening" => {
                 let id = id_arg(args, "id")?;
                 let (width, offset) = (args.get("width").and_then(Value::as_i64), args.get("offset").and_then(Value::as_i64));
-                let so = self.sopts.clone().ok_or("choose a layout first")?;
+                let so = self.sopts()?;
                 editing::set_opening(self.doc.as_mut().ok_or("choose a layout first")?, &so, id, width, offset)?;
-                Ok(json!({ "svg": self.render_or_null()? }))
+                Ok(json!({ "svg": self.render_or_null()?, "sbc": self.sbc_json() }))
             }
             "delete_opening" => {
                 let id = id_arg(args, "id")?;
-                let so = self.sopts.clone().ok_or("choose a layout first")?;
+                let so = self.sopts()?;
                 editing::delete_opening(self.doc.as_mut().ok_or("choose a layout first")?, &so, id)?;
-                Ok(json!({ "svg": self.render_or_null()? }))
+                Ok(json!({ "svg": self.render_or_null()?, "sbc": self.sbc_json() }))
             }
+            "project" => Ok(json!({ "settings": self.form_state(), "sbc": self.sbc_json(), "plan_outdated": self.plan_outdated() })),
+            "project_set" => self.project_set(args),
+            "sbc_check" => Ok(self.sbc_json()),
             "status" => Ok(json!({ "has_doc": self.doc.is_some(), "dirty": self.is_dirty() })),
             "assumptions" => Ok(assumptions()),
             "qto" => self.qto(),
@@ -280,21 +287,27 @@ impl App {
             None => false,
         };
         let so = struct_opts(&s);
+        let mut draft = NanoArchProject {
+            meta: serde_json::from_value(args.get("meta").cloned().unwrap_or(json!({}))).map_err(|e| format!("project details: {e}"))?,
+            limits: serde_json::from_value(args.get("limits").cloned().unwrap_or(json!({}))).map_err(|e| format!("municipal limits: {e}"))?,
+            labels: plan.labels.clone(),
+            structure: s.clone(),
+            brief: Some(b.clone()),
+            ..NanoArchProject::default()
+        };
+        draft.meta.title = b.title.clone().unwrap_or_default();
+        draft.check()?;
         let mut thumbs = Vec::new();
         for (i, alt) in alts.iter().enumerate() {
-            let (doc, _) = levels::assemble(alt, &plan, &so)?;
+            let (doc, _) = levels::assemble(alt, &plan, &so, None)?;
             let opts = DrawOpts { title: String::new(), labels: plan.labels.clone(), px_per_m: 16.0, margin_px: 14.0, show_dims: false, show_structure: false, show_mep: false };
             let ground = building::levels(&doc.model).first().map(|(_, id)| *id);
             let svg = plan_svg(&doc.model, ground, &opts).map_err(|e| e.to_string())?;
             let ground_layout = &alt.levels[0];
             thumbs.push(json!({ "index": i, "cost": (ground_layout.cost * 100.0).round() / 100.0, "reserve_m2": (ground_layout.reserve_m2 * 10.0).round() / 10.0, "from_sketch": from_sketch && i == 0, "svg": svg }));
         }
-        self.raw_brief = args.get("brief").cloned().unwrap_or(Value::Null);
-        self.raw_struct = args.get("struct").cloned().unwrap_or(json!({}));
-        self.title = b.title.unwrap_or_default();
-        self.labels = plan.labels.clone();
+        self.draft = Some(draft);
         self.alternatives = alts;
-        self.brief = Some(plan.merged.clone());
         self.plan = Some(plan);
         self.doc = None;
         self.cur_level = 0;
@@ -307,26 +320,31 @@ impl App {
         let alt = self.alternatives.get(i).ok_or("no such alternative")?.clone();
         let plan = self.plan.as_ref().ok_or("generate first")?;
         let so = struct_opts(&s);
-        let (doc, mut warnings) = levels::assemble(&alt, plan, &so)?;
+        // The project is created inside the generation step: undoing the whole generation removes it with the plan.
+        let mut project = self.draft.clone().ok_or("generate first")?;
+        project.structure = s.clone();
+        let (doc, mut warnings) = levels::assemble(&alt, plan, &so, Some(&project))?;
         warnings.splice(0..0, plan.notes.iter().cloned());
         let n = alt.levels.len();
         if n > 1 && s.floors.unwrap_or(1) as usize != n {
             warnings.push(format!("the floors input ({}) differs from the {n} levels drawn: generate again", s.floors.unwrap_or(1)));
         }
         self.show_structure = s.show_structure;
-        self.raw_struct = args.get("struct").cloned().unwrap_or(json!({}));
-        self.sopts = Some(so);
         self.doc = Some(doc);
         self.cur_level = 0;
-        Ok(json!({ "svg": self.render()?, "warnings": warnings, "rooms": self.rooms_json(), "levels": self.levels_json() }))
+        Ok(json!({ "svg": self.render()?, "warnings": warnings, "rooms": self.rooms_json(), "levels": self.levels_json(), "sbc": self.sbc_json() }))
     }
 
     /// Computes MEP and insulation from the user's inputs. With `apply`, the generated points become model
     /// elements in one undoable step; `show` switches the overlay. Missing inputs are reported by name.
     fn mep(&mut self, args: &Value) -> Result<Value, String> {
         let inputs_json = args.get("inputs").cloned().unwrap_or(json!({}));
-        let inputs: nnx_core::mep::MepInputs = serde_json::from_value(inputs_json.clone()).map_err(|e| format!("MEP inputs: {e}"))?;
-        self.raw_mep = inputs_json;
+        let inputs: nnx_core::mep::MepInputs = serde_json::from_value(inputs_json).map_err(|e| format!("MEP inputs: {e}"))?;
+        // The inputs are part of the project: stored through the command stack (a no-op when unchanged).
+        nnx_core::project::update(self.doc.as_mut().ok_or("choose a layout first")?, "MEP inputs", |p| {
+            p.mep = Some(inputs.clone());
+            Ok(())
+        })?;
         if let Some(show) = args.get("show").and_then(Value::as_bool) {
             self.show_mep = show;
         }
@@ -350,10 +368,10 @@ impl App {
     /// The model as an IFC4 file (text) with the count of each product class written.
     fn export_ifc(&self) -> Result<Value, String> {
         let opts = nnx_core::ifc::IfcOpts {
-            project_name: if self.title.trim().is_empty() { "NanoArch project".into() } else { self.title.clone() },
+            project_name: self.display_title(),
             author: "NanoArch".into(),
             timestamp: utc_now(),
-            labels: self.labels.clone(),
+            labels: self.labels(),
         };
         let out = nnx_core::ifc::export_ifc(&self.doc()?.model, &opts)?;
         Ok(json!({ "ifc": out.text, "counts": out.counts }))
@@ -362,8 +380,8 @@ impl App {
     /// The printable plan set (one A3 sheet per level) as HTML; the shell prints it to PDF.
     fn pdf_html(&self, arabic: bool) -> Result<Value, String> {
         let opts = nnx_core::printdoc::PrintOpts {
-            title: if self.title.trim().is_empty() { "NanoArch project".into() } else { self.title.clone() },
-            labels: self.labels.clone(),
+            title: self.display_title(),
+            labels: self.labels(),
             arabic,
             show_structure: self.show_structure,
             show_mep: self.show_mep,
@@ -382,15 +400,18 @@ impl App {
         } else {
             vec![self.current_level()]
         };
-        let opts = nnx_core::dxf::DxfOpts { title: if self.title.trim().is_empty() { "NanoArch project".into() } else { self.title.clone() }, labels: self.labels.clone(), mep: true };
+        let opts = nnx_core::dxf::DxfOpts { title: self.display_title(), labels: self.labels(), mep: true };
         let out = nnx_core::dxf::export_dxf(model, &levels, &opts)?;
         Ok(json!({ "dxf": out.text, "counts": out.counts, "levels": levels.len() }))
     }
 
     fn boq(&mut self, args: &Value) -> Result<Value, String> {
         let inputs = args.get("inputs").cloned().unwrap_or(json!({}));
-        let lib: nnx_core::boq::BoqLib = serde_json::from_value(inputs.clone()).map_err(|e| format!("BOQ inputs: {e}"))?;
-        self.raw_boq = inputs;
+        let lib: nnx_core::boq::BoqLib = serde_json::from_value(inputs).map_err(|e| format!("BOQ inputs: {e}"))?;
+        nnx_core::project::update(self.doc.as_mut().ok_or("choose a layout first")?, "BOQ inputs", |p| {
+            p.boq = Some(lib.clone());
+            Ok(())
+        })?;
         let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
         let model = &self.doc()?.model;
         let mut items = qto::compute(model, &QtoOpts::default()).items;
@@ -402,7 +423,7 @@ impl App {
     /// Insulation and MEP-point items for the quantity table, from the saved inputs and the model's points.
     fn extra_items(&self, model: &nnx_core::Model) -> Vec<nnx_core::qto::QtoItem> {
         let mut v = Vec::new();
-        if let Ok(inp) = serde_json::from_value::<nnx_core::mep::MepInputs>(self.raw_mep.clone())
+        if let Some(inp) = self.project().and_then(|p| p.mep)
             && let Some(lib) = inp.insulation
         {
             v.extend(nnx_core::insulation::analyze(model, &lib).items);
@@ -443,7 +464,7 @@ impl App {
                     .collect();
                 Ok(json!({
                     "ok": true, "project_days": s.project_days, "finish": s.finish.iso(), "tasks": tasks, "warnings": s.warnings,
-                    "svg": s.gantt_svg(&cal, &self.title), "csv": s.to_csv()
+                    "svg": s.gantt_svg(&cal, &self.title()), "csv": s.to_csv()
                 }))
             }
             Err(schedule::ScheduleError::MissingRates(keys)) => Ok(json!({ "ok": false, "missing": keys })),
@@ -478,48 +499,47 @@ impl App {
     /// The room table (name, target and actual area) read from the model's spaces.
     fn rooms_json(&self) -> Vec<Value> {
         let level = self.current_level();
+        let labels = self.labels();
         self.doc
             .iter()
             .flat_map(|d| d.model.elements.values())
             .filter(|e| level.is_none() || e.level_id == level)
             .filter_map(|e| e.typed::<nnx_core::typed::Space>().ok())
-            .map(|s| json!({ "name": self.labels.get(&s.requirement_key).cloned().unwrap_or(s.requirement_key.clone()), "func": s.func, "area": s.area, "target": s.target_area }))
+            .map(|s| json!({ "name": labels.get(&s.requirement_key).cloned().unwrap_or(s.requirement_key.clone()), "func": s.func, "area": s.area, "target": s.target_area }))
             .collect()
     }
 
-    /// Everything besides the model that a project needs to be reopened as it was.
+    /// What a saved file keeps besides the model. The project is a model element, so only view state is left here.
     pub fn settings(&self) -> Settings {
         let mut s = Settings::new();
-        s.insert("title".into(), json!(self.title));
-        s.insert("labels".into(), json!(self.labels));
-        s.insert("brief".into(), self.raw_brief.clone());
-        s.insert("structure".into(), self.raw_struct.clone());
         s.insert("show_structure".into(), json!(self.show_structure));
-        s.insert("mep".into(), self.raw_mep.clone());
         s.insert("show_mep".into(), json!(self.show_mep));
-        s.insert("boq".into(), self.raw_boq.clone());
         s
     }
 
-    /// Opens a saved project: the model becomes the document (clean, nothing unsaved) and the user's
-    /// inputs are restored. Generated alternatives are not saved, so they are cleared.
-    pub fn open(&mut self, model: nnx_core::Model, settings: &Settings) -> Result<Value, String> {
-        let doc = Document::new(model);
-        if !doc.model.elements.values().any(|e| e.kind == "Space") {
+    /// Opens a saved project: the model becomes the document (clean, nothing unsaved). A file written before the project
+    /// was stored in the model carries its inputs as settings; they are moved into a project element, and anything that
+    /// cannot be read is reported. Generated alternatives are not saved, so they are cleared.
+    pub fn open(&mut self, mut model: nnx_core::Model, settings: &Settings) -> Result<Value, String> {
+        if !model.elements.values().any(|e| e.kind == "Space") {
             return Err("this file has no plan (no spaces)".into());
         }
-        self.title = settings.get("title").and_then(Value::as_str).unwrap_or("").to_string();
-        self.labels = settings.get("labels").and_then(Value::as_object).map(|o| o.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect()).unwrap_or_default();
-        self.raw_brief = settings.get("brief").cloned().unwrap_or(Value::Null);
-        self.raw_struct = settings.get("structure").cloned().unwrap_or(json!({}));
+        let mut warnings: Vec<String> = Vec::new();
+        if nnx_core::project::find(&model).is_none() {
+            let (project, notes) = legacy_project(settings);
+            warnings.extend(notes);
+            let cmd = nnx_core::project::create_command(&project).map_err(|e| format!("the saved inputs are not valid: {e}"))?;
+            let mut empty = Document::lenient();
+            empty.model = model;
+            empty.commit("project", nnx_core::Origin::User, vec![cmd]).map_err(|e| e.to_string())?;
+            model = empty.model;
+        }
+        let doc = Document::new(model);
         self.show_structure = settings.get("show_structure").and_then(Value::as_bool).unwrap_or(false);
-        self.raw_mep = settings.get("mep").cloned().unwrap_or(Value::Null);
         self.show_mep = settings.get("show_mep").and_then(Value::as_bool).unwrap_or(false);
-        self.raw_boq = settings.get("boq").cloned().unwrap_or(Value::Null);
-        let s: StructIn = serde_json::from_value(self.raw_struct.clone()).unwrap_or_default();
-        let so = struct_opts(&s);
+        let so = struct_opts(&nnx_core::project::get(&doc.model)?.map(|p| p.structure).unwrap_or_default());
         // Say plainly what is wrong with the file instead of hiding it.
-        let mut warnings: Vec<String> = nnx_core::typed::validate_model(&doc.model).iter().take(5).map(|i| format!("{} {}: {}", i.kind, i.id, i.message)).collect();
+        warnings.extend(nnx_core::typed::validate_model(&doc.model).iter().take(5).map(|i| format!("{} {}: {}", i.kind, i.id, i.message)));
         {
             let mut probe = Document::new(doc.model.clone());
             match levels::settle(&mut probe, &so, None) {
@@ -528,17 +548,73 @@ impl App {
                 Err(e) => warnings.push(format!("the structure cannot be checked: {e}")),
             }
         }
-        // A file without a saved brief (made elsewhere) still opens; only regenerating alternatives needs it.
-        let n_levels = building::levels(&doc.model).len().max(1) as u32;
-        self.brief = serde_json::from_value::<BriefIn>(self.raw_brief.clone()).ok().and_then(|b| levels::plan_building(&b, n_levels).ok()).map(|p| p.merged);
         self.alternatives.clear();
         self.plan = None;
+        self.draft = None;
         self.cur_level = 0;
-        self.sopts = Some(so);
         self.doc = Some(doc);
-        Ok(json!({ "svg": self.render_or_null()?, "warnings": warnings, "rooms": self.rooms_json(), "levels": self.levels_json(), "settings": settings }))
+        Ok(json!({ "svg": self.render_or_null()?, "warnings": warnings, "rooms": self.rooms_json(), "levels": self.levels_json(), "settings": self.form_state(), "sbc": self.sbc_json() }))
     }
 
+    /// True when the plot minus the setbacks no longer matches the building outline drawn on the ground level: the
+    /// brief was changed after the plan was generated, so the plan must be generated again to follow it.
+    fn plan_outdated(&self) -> bool {
+        let (Some(d), Some(b)) = (&self.doc, self.project().and_then(|p| p.brief)) else { return false };
+        let Ok((env, _)) = envelope_and_entry(&b) else { return true };
+        let ground = building::levels(&d.model).first().map(|(_, id)| *id);
+        let (mut x1, mut y1) = (0i64, 0i64);
+        for s in d.model.elements.values().filter(|e| e.kind == "Space" && (ground.is_none() || e.level_id == ground)).filter_map(|e| e.typed::<nnx_core::typed::Space>().ok()) {
+            x1 = x1.max(s.x + s.w);
+            y1 = y1.max(s.y + s.h);
+        }
+        x1 != env.w || y1 != env.h
+    }
+
+    /// Changes project details, municipal limits or setbacks as ONE undoable step. Setbacks only change the stored
+    /// brief: the drawn plan follows after it is generated again, and `plan_outdated` says so.
+    fn project_set(&mut self, args: &Value) -> Result<Value, String> {
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let outcome = nnx_core::project::update(doc, "edit project", |p| {
+            if let Some(Value::Object(patch)) = args.get("meta") {
+                // Only the given keys change (the plot outline, for one, is not on the page's form).
+                let Ok(Value::Object(mut merged)) = serde_json::to_value(&p.meta) else { return Err("project details cannot be read".into()) };
+                merged.extend(patch.clone());
+                p.meta = serde_json::from_value(Value::Object(merged)).map_err(|e| format!("project details: {e}"))?;
+            }
+            if let Some(l) = args.get("limits") {
+                p.limits = serde_json::from_value(l.clone()).map_err(|e| format!("municipal limits: {e}"))?;
+            }
+            if let Some(s) = args.get("setbacks") {
+                let b = p.brief.as_mut().ok_or("this project has no brief")?;
+                for (key, slot) in [("front_m", &mut b.setback_front_m), ("back_m", &mut b.setback_back_m), ("side_m", &mut b.setback_side_m)] {
+                    if let Some(v) = s.get(key) {
+                        *slot = v.as_f64().ok_or_else(|| format!("setbacks.{key} must be a number of metres"))?;
+                    }
+                }
+            }
+            Ok(())
+        })?;
+        Ok(json!({ "changed": outcome.changed, "new_violations": outcome.new_violations, "settings": self.form_state(), "sbc": self.sbc_json(), "plan_outdated": self.plan_outdated() }))
+    }
+
+    /// The inputs the page shows in its forms, read from the project (and the view state). Computed on demand; the
+    /// project element stays the only stored copy.
+    fn form_state(&self) -> Value {
+        let p = self.project().unwrap_or_default();
+        let mut v = json!({
+            "title": p.meta.title,
+            "labels": p.labels,
+            "structure": p.structure,
+            "show_structure": self.show_structure,
+            "show_mep": self.show_mep,
+            "meta": p.meta,
+            "limits": p.limits,
+        });
+        v["brief"] = serde_json::to_value(&p.brief).unwrap_or(Value::Null);
+        v["mep"] = serde_json::to_value(&p.mep).unwrap_or(Value::Null);
+        v["boq"] = serde_json::to_value(&p.boq).unwrap_or(Value::Null);
+        v
+    }
     /// True when the open plan has changes that were never saved.
     pub fn is_dirty(&self) -> bool {
         self.doc.as_ref().is_some_and(|d| d.is_dirty())
@@ -551,6 +627,40 @@ impl App {
     }
 }
 
+/// The project of a file saved before projects were stored in the model: rebuilt from its settings, with a note for
+/// every part that could not be read (nothing is dropped silently).
+fn legacy_project(settings: &Settings) -> (NanoArchProject, Vec<String>) {
+    let mut notes = Vec::new();
+    let mut p = NanoArchProject::default();
+    p.meta.title = settings.get("title").and_then(Value::as_str).unwrap_or("").to_string();
+    p.labels = settings.get("labels").and_then(Value::as_object).map(|o| o.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect()).unwrap_or_default();
+    match settings.get("brief").filter(|v| !v.is_null()) {
+        Some(v) => match serde_json::from_value::<BriefIn>(v.clone()) {
+            Ok(b) => p.brief = Some(b),
+            Err(e) => notes.push(format!("the saved brief could not be read ({e}): partitions cannot be moved until you generate again")),
+        },
+        None => notes.push("this file has no saved brief: partitions cannot be moved".into()),
+    }
+    if let Some(v) = settings.get("structure").filter(|v| !v.is_null()) {
+        match serde_json::from_value::<StructIn>(v.clone()) {
+            Ok(s) => p.structure = s,
+            Err(e) => notes.push(format!("the saved structural inputs could not be read ({e})")),
+        }
+    }
+    if let Some(v) = settings.get("mep").filter(|v| !v.is_null()) {
+        match serde_json::from_value(v.clone()) {
+            Ok(m) => p.mep = Some(m),
+            Err(e) => notes.push(format!("the saved MEP inputs could not be read ({e})")),
+        }
+    }
+    if let Some(v) = settings.get("boq").filter(|v| !v.is_null()) {
+        match serde_json::from_value(v.clone()) {
+            Ok(b) => p.boq = Some(b),
+            Err(e) => notes.push(format!("the saved BOQ inputs could not be read ({e})")),
+        }
+    }
+    (p, notes)
+}
 /// The current UTC time as `YYYY-MM-DDTHH:MM:SS` (for file headers).
 fn utc_now() -> String {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
@@ -814,6 +924,13 @@ mod tests {
         app.doc.as_ref().unwrap().model.state_hash()
     }
 
+    /// Hash of the drawing alone: every element except the project element.
+    fn drawing_hash(app: &App) -> u64 {
+        let mut m = app.doc.as_ref().unwrap().model.clone();
+        m.elements.retain(|_, e| e.kind != "Project");
+        m.state_hash()
+    }
+
     /// The plan still tiles the buildable rectangle (14 m x 18 m here) with no gaps or overlaps.
     fn assert_tiles(app: &App) {
         let rects: Vec<(i64, i64, i64, i64)> = app
@@ -936,13 +1053,18 @@ mod tests {
     #[test]
     fn mep_computes_applies_draws_counts_saves_and_undoes() {
         let mut app = started();
-        let before = hash(&app);
-        // Compute only: nothing enters the model.
+        let before = drawing_hash(&app);
+        // Compute only: no drawing element is added. The inputs themselves are part of the project, so they are stored
+        // (one undoable step), and entering the same inputs again changes nothing.
         let r = app.handle("mep", &json!({ "inputs": mep_inputs(), "apply": false, "show": true })).unwrap();
         assert!(r["report"]["electrical"].is_object() && r["report"]["plumbing"].is_object() && r["report"]["hvac"].is_object());
         assert_eq!(r["report"]["missing"], json!({}));
         assert_eq!(mep_points(&app), 0);
-        assert_eq!(hash(&app), before);
+        assert_eq!(drawing_hash(&app), before);
+        assert!(app.project().unwrap().mep.is_some(), "the inputs are stored in the project");
+        let stored = hash(&app);
+        app.handle("mep", &json!({ "inputs": mep_inputs(), "apply": false, "show": true })).unwrap();
+        assert_eq!(hash(&app), stored, "the same inputs again change nothing");
         // Apply: points enter the model, the overlay draws them, quantities count them and the insulation.
         let r = app.handle("mep", &json!({ "inputs": mep_inputs(), "apply": true, "show": true })).unwrap();
         let n = mep_points(&app);
@@ -961,12 +1083,16 @@ mod tests {
         let (model, settings) = (app.model().unwrap().clone(), app.settings());
         let mut second = App::default();
         let opened = second.open(model, &settings).unwrap();
-        assert_eq!(opened["settings"]["mep"]["electrical"]["voltage_v"], 230);
+        assert_eq!(opened["settings"]["mep"]["electrical"]["voltage_v"].as_f64(), Some(230.0));
         assert_eq!(mep_points(&second), n);
         assert_eq!(second.handle("qto", &json!({})).unwrap()["csv"], q["csv"]);
         // One undo removes every point.
         assert_eq!(app.handle("undo", &json!({})).unwrap()["changed"], true);
-        assert_eq!(hash(&app), before);
+        assert_eq!(hash(&app), stored, "the points are gone and the stored inputs remain");
+        assert_eq!(drawing_hash(&app), before);
+        // A second undo takes the inputs back out of the project.
+        assert_eq!(app.handle("undo", &json!({})).unwrap()["changed"], true);
+        assert!(app.project().unwrap().mep.is_none());
     }
 
     #[test]
@@ -1040,7 +1166,7 @@ mod tests {
         let (model, settings) = (app.model().unwrap().clone(), app.settings());
         let mut second = App::default();
         let opened = second.open(model, &settings).unwrap();
-        assert_eq!(opened["settings"]["boq"]["markups"][0]["pct"], 15);
+        assert_eq!(opened["settings"]["boq"]["markups"][0]["pct"].as_f64(), Some(15.0));
     }
 
     #[test]
@@ -1241,10 +1367,10 @@ mod tests {
         let opened = second.open(model, &settings).unwrap();
         assert_eq!(opened["levels"]["list"].as_array().unwrap().len(), 2);
         assert!(opened["warnings"].as_array().unwrap().is_empty(), "{}", opened["warnings"]);
-        assert_eq!(opened["settings"]["brief"]["stair"]["side"], "west");
+        assert_eq!(second.project().unwrap().brief.unwrap().stair.unwrap().side, "west");
         assert_eq!(second.handle("sync", &json!({})).unwrap()["created"], 0);
         assert_eq!(second.handle("qto", &json!({})).unwrap()["csv"], q["csv"]);
-        assert!(second.brief.is_some(), "edits still work after reopening");
+        assert!(second.layout_brief().is_ok(), "edits still work after reopening");
     }
 
     #[test]
@@ -1402,6 +1528,351 @@ mod tests {
         let on = on["html"].as_str().unwrap();
         assert!(on.contains("class=\"column\"") && on.contains("dir=\"ltr\"") && on.contains("Sheet <bdi dir=\"ltr\">1/2</bdi>"));
         assert!(App::default().handle("pdf_html", &json!({})).is_err());
+    }
+
+    // ------------------------------------------------------------------ project (single source of truth)
+
+    fn started_with_project() -> App {
+        let mut app = App::default();
+        let meta = json!({ "title": "x", "buildingType": "villa", "style": "najdi", "smartTech": ["lighting"], "climateZone": "zone-a" });
+        app.handle("generate", &json!({ "brief": brief(), "struct": {}, "meta": meta })).unwrap();
+        app.handle("select", &json!({ "index": 0, "struct": {} })).unwrap();
+        app
+    }
+
+    fn setbacks(front: f64, back: f64, side: f64) -> Value {
+        json!({ "setbacks": { "front_m": front, "back_m": back, "side_m": side } })
+    }
+
+    #[test]
+    fn the_project_lives_in_the_model_and_the_page_state_is_derived_from_it() {
+        let app = started_with_project();
+        let p = app.project().expect("generation stores the project in the model");
+        assert_eq!(p.meta.building_type, Some(nnx_core::project::BuildingType::Villa));
+        assert_eq!(p.meta.climate_zone.as_deref(), Some("zone-a"));
+        assert_eq!(p.meta.smart_tech, vec!["lighting".to_string()]);
+        assert_eq!(p.brief.as_ref().unwrap().setback_front_m, 2.0);
+        assert_eq!(p.labels.get("majlis").map(String::as_str), Some("المجلس"));
+        // Only view state is left outside the model.
+        let keys: Vec<String> = app.settings().keys().cloned().collect();
+        assert_eq!(keys, vec!["show_mep".to_string(), "show_structure".to_string()]);
+        assert_eq!(app.form_state()["brief"]["title"], "فيلا تجريبية");
+    }
+
+    #[test]
+    fn a_setback_change_is_one_undoable_step_and_marks_the_plan_outdated() {
+        let mut app = started_with_project();
+        let (before, clean) = (hash(&app), app.is_dirty());
+        assert!(app.is_dirty(), "a generated plan is unsaved");
+        app.mark_saved();
+        assert!(!app.is_dirty());
+        assert_eq!(app.handle("project", &json!({})).unwrap()["plan_outdated"], false);
+
+        let r = app.handle("project_set", &setbacks(3.0, 2.0, 2.0)).unwrap();
+        assert_eq!(r["changed"], true);
+        assert!(app.is_dirty(), "a project change makes the file dirty");
+        assert_eq!(r["plan_outdated"], true, "the drawn plan no longer matches plot minus setbacks");
+        assert_eq!(app.project().unwrap().brief.unwrap().setback_front_m, 3.0);
+
+        // The same value again is not a change.
+        let again = app.handle("project_set", &setbacks(3.0, 2.0, 2.0)).unwrap();
+        assert_eq!(again["changed"], false);
+
+        let u = app.handle("undo", &json!({})).unwrap();
+        assert_eq!(u["changed"], true);
+        assert_eq!(app.project().unwrap().brief.unwrap().setback_front_m, 2.0);
+        assert!(!app.is_dirty(), "undoing back to the saved state is clean again");
+        assert_eq!(app.handle("project", &json!({})).unwrap()["plan_outdated"], false);
+        app.handle("redo", &json!({})).unwrap();
+        assert_eq!(app.project().unwrap().brief.unwrap().setback_front_m, 3.0);
+        app.handle("undo", &json!({})).unwrap();
+        let _ = (before, clean);
+        assert!(!app.is_dirty());
+    }
+
+    #[test]
+    fn impossible_or_unsourced_project_inputs_are_refused_and_change_nothing() {
+        let mut app = started_with_project();
+        let before = hash(&app);
+        let e = app.handle("project_set", &setbacks(2.0, 2.0, 12.0)).unwrap_err();
+        assert!(e.contains("no buildable area"), "{e}");
+        let e = app.handle("project_set", &setbacks(-1.0, 2.0, 2.0)).unwrap_err();
+        assert!(e.contains("zero or more"), "{e}");
+        let e = app.handle("project_set", &json!({ "limits": { "minSetbackFrontM": { "value": 3.0, "source": "" } } })).unwrap_err();
+        assert!(e.contains("source"), "{e}");
+        let e = app.handle("project_set", &json!({ "limits": { "maxCoverageRatio": { "value": 1.5, "source": "x" } } })).unwrap_err();
+        assert!(e.contains("out of range"), "{e}");
+        // Only a rectangle is supported as plot outline: another shape is refused, not replaced by its bounding box.
+        let l_shape = json!({ "meta": { "plotPolygonM": [[0, 0], [18, 0], [18, 10], [8, 10], [8, 22], [0, 22]] } });
+        assert!(app.handle("project_set", &l_shape).unwrap_err().contains("rectangle"));
+        let wrong = json!({ "meta": { "plotPolygonM": [[0, 0], [10, 0], [10, 10], [0, 10]] } });
+        assert!(app.handle("project_set", &wrong).unwrap_err().contains("brief says"));
+        assert_eq!(hash(&app), before);
+        assert!(app.handle("project_set", &json!({ "meta": { "plotPolygonM": [[0, 0], [18, 0], [18, 22], [0, 22]] } })).is_ok());
+    }
+
+    #[test]
+    fn every_project_input_survives_save_and_reopen_and_stays_in_step_with_undo() {
+        let mut app = started_with_project();
+        app.handle("project_set", &json!({ "meta": { "title": "x", "buildingType": "apartment_building", "climateZone": "zone-b", "smartTech": [] },
+            "limits": { "minSetbackFrontM": { "value": 2.0, "source": "test municipal circular" }, "enforce": false } })).unwrap();
+        app.handle("mep", &json!({ "inputs": mep_inputs(), "apply": false })).unwrap();
+        let project = app.project().unwrap();
+
+        let dir = std::env::temp_dir().join(format!("nanoarch-ssot-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("p.nnx");
+        nnx_core::persist::save_with_settings(app.model().unwrap(), &app.settings(), &file).unwrap();
+        let (loaded, back) = nnx_core::persist::load_with_settings(&file).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let mut second = App::default();
+        let opened = second.open(loaded, &back).unwrap();
+        assert!(opened["warnings"].as_array().unwrap().is_empty(), "{}", opened["warnings"]);
+        let reopened = second.project().unwrap();
+        assert_eq!(serde_json::to_value(&reopened).unwrap(), serde_json::to_value(&project).unwrap(), "the project is identical after a round trip");
+        assert!(!second.is_dirty());
+        assert_eq!(second.handle("project_set", &setbacks(2.0, 2.0, 2.0)).unwrap()["changed"], false);
+        second.handle("project_set", &setbacks(2.5, 2.0, 2.0)).unwrap();
+        assert!(second.is_dirty());
+        second.handle("undo", &json!({})).unwrap();
+        assert!(!second.is_dirty(), "undo after reopening returns to the file's state");
+    }
+
+    #[test]
+    fn a_file_saved_before_projects_were_in_the_model_is_migrated_and_nothing_is_dropped_silently() {
+        let mut app = started_with_project();
+        let mut model = app.model().unwrap().clone();
+        model.elements.retain(|_, e| e.kind != "Project");
+        let mut legacy = Settings::new();
+        legacy.insert("title".into(), json!("قديم"));
+        legacy.insert("labels".into(), json!({ "majlis": "المجلس" }));
+        legacy.insert("brief".into(), brief());
+        legacy.insert("structure".into(), json!({ "bearing_kpa": 150.0 }));
+        legacy.insert("mep".into(), json!({ "electrical": "not an object" }));
+        let mut old = App::default();
+        let opened = old.open(model, &legacy).unwrap();
+        let p = old.project().expect("the inputs were moved into a project element");
+        assert_eq!(p.meta.title, "قديم");
+        assert_eq!(p.structure.bearing_kpa, Some(150.0));
+        assert!(p.brief.is_some() && p.mep.is_none());
+        let warnings = opened["warnings"].to_string();
+        assert!(warnings.contains("MEP inputs could not be read"), "the unreadable part is reported: {warnings}");
+        assert!(!old.is_dirty(), "the migrated file opens clean");
+        let _ = app.handle("level", &json!({ "index": 0 }));
+    }
+
+    #[test]
+    fn municipal_limits_are_checked_with_their_source_and_a_missing_limit_is_skipped_not_passed() {
+        let mut app = started_with_project();
+        let r = app.handle("sbc_check", &json!({})).unwrap();
+        assert!(r["violations"].as_array().unwrap().iter().all(|v| !v["rule"].as_str().unwrap().starts_with("setback") && v["rule"] != "coverage"), "no municipal limit is entered yet, so none can be broken");
+        let skipped: Vec<String> = r["skipped"].as_array().unwrap().iter().map(|s| s["rule"].as_str().unwrap().to_string()).collect();
+        for rule in ["setback.front", "setback.back", "setback.side", "coverage"] {
+            assert!(skipped.contains(&rule.to_string()), "{rule} is reported as not checked: {skipped:?}");
+        }
+        let limits = json!({ "limits": {
+            "minSetbackFrontM": { "value": 3.0, "source": "municipal circular (test data)" },
+            "minSetbackBackM": { "value": 2.0, "source": "municipal circular (test data)" },
+            "maxCoverageRatio": { "value": 0.5, "source": "municipal circular (test data)" } } });
+        let r = app.handle("project_set", &limits).unwrap();
+        let rules: Vec<String> = r["sbc"]["violations"].as_array().unwrap().iter().map(|v| v["rule"].as_str().unwrap().to_string()).collect();
+        assert!(rules.contains(&"setback.front".to_string()), "2 m given, 3 m required: {rules:?}");
+        assert!(!rules.contains(&"setback.back".to_string()), "2 m given, 2 m required passes");
+        assert!(rules.contains(&"coverage".to_string()), "252 m2 on a 396 m2 plot is 63.6%, above 50%: {rules:?}");
+        let v = r["sbc"]["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "setback.front").unwrap().clone();
+        assert!(v["en"].as_str().unwrap().contains("front setback") && v["ar"].as_str().unwrap().contains("الارتداد الأمامي"));
+        assert_eq!(v["source"], "municipal circular (test data)");
+        assert_eq!(r["new_violations"].as_array().unwrap().len(), 2, "the edit itself introduced both");
+    }
+
+    #[test]
+    fn a_project_that_enforces_the_limits_refuses_an_edit_that_breaks_them() {
+        let mut app = started_with_project();
+        app.handle("project_set", &json!({ "limits": { "minSetbackFrontM": { "value": 2.0, "source": "municipal circular (test data)" }, "enforce": true } })).unwrap();
+        let before = hash(&app);
+        let e = app.handle("project_set", &setbacks(1.5, 2.0, 2.0)).unwrap_err();
+        assert!(e.contains("front setback") && e.contains("الارتداد الأمامي"), "{e}");
+        assert_eq!(hash(&app), before, "a refused edit changes nothing");
+        assert!(app.handle("project_set", &setbacks(2.5, 2.0, 2.0)).is_ok());
+    }
+
+    // ------------------------------------------------------------------ room tools
+
+    /// Ids of two rooms that share a full wall of the same length, found the way the editor decides.
+    fn adjacent_pair(app: &App) -> (nnx_core::Id, nnx_core::Id) {
+        let rooms: Vec<(nnx_core::Id, nnx_core::layout::Rect, String)> = app
+            .doc
+            .as_ref()
+            .unwrap()
+            .model
+            .elements
+            .values()
+            .filter_map(|e| e.typed::<nnx_core::typed::Space>().ok().map(|s| (e.id, nnx_core::layout::Rect { x: s.x, y: s.y, w: s.w, h: s.h }, s.func)))
+            .collect();
+        for (i, a) in rooms.iter().enumerate() {
+            for b in &rooms[i + 1..] {
+                let (ra, rb) = (a.1, b.1);
+                let side = ra.y == rb.y && ra.h == rb.h && (ra.x + ra.w == rb.x || rb.x + rb.w == ra.x);
+                let stack = ra.x == rb.x && ra.w == rb.w && (ra.y + ra.h == rb.y || rb.y + rb.h == ra.y);
+                if side || stack {
+                    return (a.0, b.0);
+                }
+            }
+        }
+        panic!("the fixture plan has no two rooms sharing a full wall");
+    }
+
+    fn room_rects(app: &App) -> std::collections::BTreeMap<nnx_core::Id, (i64, i64, i64, i64)> {
+        app.doc.as_ref().unwrap().model.elements.values().filter_map(|e| Some((e.id, e.typed::<nnx_core::typed::Space>().ok()?))).map(|(id, s)| (id, (s.x, s.y, s.w, s.h))).collect()
+    }
+
+    fn assert_valid(app: &App) {
+        let issues = nnx_core::typed::validate_model(&app.doc.as_ref().unwrap().model);
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
+    fn two_rooms_can_exchange_places_in_one_undoable_step_and_the_plan_still_tiles() {
+        let mut app = started_with_project();
+        let (a, b) = adjacent_pair(&app);
+        let (before, rects) = (hash(&app), room_rects(&app));
+        app.handle("swap_rooms", &json!({ "a": a.to_string(), "b": b.to_string() })).unwrap();
+        let now = room_rects(&app);
+        assert_ne!(now[&a], rects[&a], "the first room moved");
+        assert_eq!((now[&a].2, now[&a].3), (rects[&a].2, rects[&a].3), "and kept its size");
+        assert_eq!((now[&b].2, now[&b].3), (rects[&b].2, rects[&b].3));
+        assert_tiles(&app);
+        assert_valid(&app);
+        assert!(app.is_dirty());
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(hash(&app), before, "one undo restores the whole plan");
+        app.handle("redo", &json!({})).unwrap();
+        assert_eq!(room_rects(&app), now);
+    }
+
+    #[test]
+    fn a_room_is_deleted_by_giving_its_space_to_a_neighbour_and_one_undo_brings_it_back() {
+        let mut app = started_with_project();
+        let (a, b) = adjacent_pair(&app);
+        let (before, rects) = (hash(&app), room_rects(&app));
+        app.handle("delete_room", &json!({ "room": a.to_string(), "into": b.to_string() })).unwrap();
+        let now = room_rects(&app);
+        assert!(!now.contains_key(&a), "the room is gone");
+        assert_eq!(now.len(), rects.len() - 1);
+        assert_eq!(now[&b].2 * now[&b].3, rects[&a].2 * rects[&a].3 + rects[&b].2 * rects[&b].3, "the neighbour took the space");
+        assert_tiles(&app);
+        assert_valid(&app);
+        assert_eq!(app.rooms_json().len(), rects.len() - 1);
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(hash(&app), before);
+        assert_eq!(room_rects(&app), rects);
+        // A room that does not share a full wall cannot absorb it.
+        let far = rects.keys().copied().find(|id| *id != a && *id != b && !{
+            let (ra, rf) = (rects[&a], rects[id]);
+            (ra.1 == rf.1 && ra.3 == rf.3 && (ra.0 + ra.2 == rf.0 || rf.0 + rf.2 == ra.0)) || (ra.0 == rf.0 && ra.2 == rf.2 && (ra.1 + ra.3 == rf.1 || rf.1 + rf.3 == ra.1))
+        });
+        if let Some(far) = far {
+            let e = app.handle("delete_room", &json!({ "room": a.to_string(), "into": far.to_string() })).unwrap_err();
+            assert!(e.contains("full wall"), "{e}");
+            assert_eq!(hash(&app), before);
+        }
+        assert!(app.handle("delete_room", &json!({ "room": a.to_string(), "into": a.to_string() })).is_err());
+    }
+
+    #[test]
+    fn a_room_is_resized_through_its_interior_wall_and_the_outline_stays_fixed() {
+        let mut app = started_with_project();
+        let rects = room_rects(&app);
+        let before = hash(&app);
+        let mut done = None;
+        'search: for (&id, r) in &rects {
+            for edge in ["x0", "x1", "y0", "y1"] {
+                if let Ok(out) = app.handle("resize_room", &json!({ "room": id.to_string(), "edge": edge, "grow_mm": 300 })) {
+                    done = Some((id, edge, *r, out));
+                    break 'search;
+                }
+            }
+        }
+        let (id, edge, old, out) = done.expect("at least one room has an interior side that can move");
+        assert!(out["moved"].as_u64().unwrap() >= 2, "the room and its neighbour both changed");
+        let now = room_rects(&app)[&id];
+        let grown = (now.2 * now.3) - (old.2 * old.3);
+        assert_eq!(grown, 300 * if edge.starts_with('x') { old.3 } else { old.2 }, "the room grew by exactly the strip moved");
+        assert_tiles(&app);
+        assert_valid(&app);
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(hash(&app), before);
+        // A side on the building outline cannot move, and a refused edit leaves everything as it was.
+        let outer = rects.iter().find(|(_, r)| r.0 == 0).map(|(id, _)| *id).unwrap();
+        let e = app.handle("resize_room", &json!({ "room": outer.to_string(), "edge": "x0", "grow_mm": 300 })).unwrap_err();
+        assert!(e.contains("outline"), "{e}");
+        assert!(app.handle("resize_room", &json!({ "room": outer.to_string(), "edge": "north", "grow_mm": 300 })).is_err());
+        assert_eq!(hash(&app), before);
+    }
+
+    /// Shrinks a bathroom until it is 1.3 m wide (the minimum in the code files is 1.4 m); returns the answer of the
+    /// first edit that the geometry allows, with the hash before it.
+    fn squeeze_a_bathroom(app: &mut App) -> (u64, Result<Value, String>) {
+        let rooms: Vec<(nnx_core::Id, (i64, i64, i64, i64))> = app
+            .doc
+            .as_ref()
+            .unwrap()
+            .model
+            .elements
+            .values()
+            .filter_map(|e| Some((e.id, e.typed::<nnx_core::typed::Space>().ok()?)))
+            .filter(|(_, s)| s.func == "bathroom")
+            .map(|(id, s)| (id, (s.x, s.y, s.w, s.h)))
+            .collect();
+        for (id, (_, _, w, h)) in rooms {
+            for (edge, size) in [("x0", w), ("x1", w), ("y0", h), ("y1", h)] {
+                let before = hash(app);
+                let r = app.handle("resize_room", &json!({ "room": id.to_string(), "edge": edge, "grow_mm": 1300 - size }));
+                match &r {
+                    Err(e) if e.contains("outline") || e.contains("no partition") || e.contains("ends against") || e.contains("minimum for an edit") => continue,
+                    _ => return (before, r),
+                }
+            }
+        }
+        panic!("no bathroom side could be moved");
+    }
+
+    #[test]
+    fn code_minimums_are_reported_with_their_page_and_refuse_the_edit_only_when_the_project_enforces_them() {
+        // Not enforced: the edit goes through and the violation is shown with its citation.
+        let mut app = started_with_project();
+        let first = app.handle("sbc_check", &json!({})).unwrap();
+        let rule_of = |r: &Value, prefix: &str| r["violations"].as_array().unwrap().iter().any(|v| v["rule"].as_str().unwrap().starts_with(prefix));
+        assert!(!rule_of(&first, "room_min"), "the generated plan meets the area and width minimums: {}", first["violations"]);
+        // The default windows give the dining room 7.5% glazing against the code's 8%: the check finds it, with its page.
+        assert!(rule_of(&first, "daylight_min_ratio.dining"), "{}", first["violations"]);
+        let (_, r) = squeeze_a_bathroom(&mut app);
+        let out = r.expect("accepted while the code is not enforced");
+        let v = out["sbc"]["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "room_min_width_m.bathroom").expect("the narrow bathroom is reported").clone();
+        assert_eq!(v["limit"], 1.4);
+        assert!(v["source"].as_str().unwrap().contains("5-1-4") && v["source"].as_str().unwrap().contains("p.26"), "{}", v["source"]);
+        assert!(v["ar"].as_str().unwrap().contains("العرض") && v["en"].as_str().unwrap().contains("below the minimum"));
+
+        // Enforced: the same edit is refused and nothing changes.
+        let mut strict = started_with_project();
+        strict.handle("project_set", &json!({ "limits": { "enforce": true } })).unwrap();
+        let (before, r) = squeeze_a_bathroom(&mut strict);
+        let e = r.unwrap_err();
+        // The refusal names the first new violation, with the clause it comes from (the rebuilt windows can add a
+        // daylight shortfall next to the width one).
+        assert!(e.contains(" / ") && e.contains("Ministry residential guidelines 5-1-"), "{e}");
+        assert_eq!(hash(&strict), before);
+        assert!(!rule_of(&strict.handle("sbc_check", &json!({})).unwrap(), "room_min"), "the refused edit left the plan as it was");
+    }
+
+    #[test]
+    fn thermal_and_unread_limits_are_listed_as_not_checked() {
+        let mut app = started_with_project();
+        let r = app.handle("sbc_check", &json!({})).unwrap();
+        let skipped: Vec<&str> = r["skipped"].as_array().unwrap().iter().map(|s| s["rule"].as_str().unwrap()).collect();
+        assert!(skipped.contains(&"thermal"), "{skipped:?}");
+        assert!(!skipped.contains(&"room_min_area_m2.majlis"), "a value that was read is checked, not skipped");
+        assert!(r["checked"].as_u64().unwrap() > 10, "the generated rooms were compared with the minimums");
     }
 
     #[test]
