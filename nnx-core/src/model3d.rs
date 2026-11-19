@@ -11,11 +11,13 @@
 //! - Columns run from the floor to the tallest wall, beams hang below the slab, the slab sits on top of the walls.
 //! - Levels stack: the floor of level n+1 is the top of the slab of level n, so a level's elevation is the sum of the
 //!   storey heights and slab thicknesses below it (derived here, never stored).
+//! - Every box also carries its discipline (`DISCIPLINES`), so a viewer can isolate or hide architecture, structure,
+//!   electrical, plumbing (with drainage) and HVAC; `Scene::filter` does the same on the data.
 //! - Floor plates (one per room) are a visual aid 50 mm thick under the floor line. Footings have no designed depth in
 //!   this application, so their 3D thickness is a fixed VISUAL value and is flagged `visual`.
 
 use crate::model::{Id, Model};
-use crate::typed::{Beam, Column, Door, Footing, MepPoint, Slab, Space, Typed, Wall, Window};
+use crate::typed::{Beam, Column, Door, Footing, MepPoint, MepRun, Slab, Space, Typed, Wall, Window};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -32,6 +34,25 @@ pub struct Box3 {
     pub visual: bool,
     /// Index of the level the element belongs to (`None` for a model without levels).
     pub level: Option<i64>,
+    /// One of `DISCIPLINES`.
+    pub discipline: &'static str,
+}
+
+/// The layers a scene can be isolated by.
+pub const DISCIPLINES: [&str; 5] = ["architectural", "structural", "electrical", "plumbing", "hvac"];
+
+/// The layer of an element kind and class (an MEP point's role, a run's system).
+fn discipline_of(kind: &str, class: &str) -> &'static str {
+    match kind {
+        "Column" | "Beam" | "Footing" | "Slab" => "structural",
+        "MepPoint" => match class {
+            "light" | "socket" | "panel" => "electrical",
+            "ac_indoor" => "hvac",
+            _ => "plumbing",
+        },
+        "MepRun" => if class == "duct" { "hvac" } else { "plumbing" },
+        _ => "architectural",
+    }
 }
 
 impl Box3 {
@@ -59,6 +80,26 @@ pub struct Scene {
     pub storey_height: f64,
 }
 
+impl Scene {
+    /// The scene with only the boxes of the given disciplines (names from `DISCIPLINES`; unknown names match nothing).
+    pub fn filter(&self, keep: &[&str]) -> Scene {
+        let boxes: Vec<Box3> = self.boxes.iter().filter(|b| keep.contains(&b.discipline)).cloned().collect();
+        let mut min = [f64::MAX; 3];
+        let mut max = [f64::MIN; 3];
+        for b in &boxes {
+            for i in 0..3 {
+                min[i] = min[i].min(b.min[i]);
+                max[i] = max[i].max(b.max[i]);
+            }
+        }
+        if boxes.is_empty() {
+            min = [0.0; 3];
+            max = [0.0; 3];
+        }
+        Scene { levels: self.levels.clone(), boxes, min, max, storey_height: self.storey_height }
+    }
+}
+
 /// One opening in a wall: start and end along the wall, sill, head, is-door, element id.
 type Opening = (f64, f64, f64, f64, bool, Id);
 
@@ -70,7 +111,7 @@ const PANE: f64 = 0.02;
 const MEP_SIZE: f64 = 0.12;
 
 fn bx(id: Id, kind: &'static str, class: &str, min: [f64; 3], max: [f64; 3], visual: bool) -> Box3 {
-    Box3 { id: id.to_string(), kind, class: class.to_string(), min, max, visual, level: None }
+    Box3 { id: id.to_string(), kind, class: class.to_string(), min, max, visual, level: None, discipline: discipline_of(kind, class) }
 }
 
 /// A box along a wall: `s0..s1` along its length, `z0..z1` up, centred on the wall's centre line, of its thickness.
@@ -214,6 +255,23 @@ pub fn build(model: &Model) -> Scene {
                     };
                     let h = if p.role == "ac_indoor" { 0.5 } else { MEP_SIZE / 2.0 };
                     boxes.push(bx(e.id, MepPoint::KIND, &p.role, [cx - h, cy - MEP_SIZE / 2.0, z0], [cx + h, cy + MEP_SIZE / 2.0, z1], false));
+                }
+            }
+            MepRun::KIND => {
+                if let Ok(r) = e.typed::<MepRun>() {
+                    let (hw, hh) = (r.width as f64 / M / 2.0, r.height as f64 / M / 2.0);
+                    let (x0, x1) = (r.x1.min(r.x2) as f64 / M, r.x1.max(r.x2) as f64 / M);
+                    let (y0, y1) = (r.y1.min(r.y2) as f64 / M, r.y1.max(r.y2) as f64 / M);
+                    let (z0, z1) = (r.z1.min(r.z2) as f64 / M, r.z1.max(r.z2) as f64 / M);
+                    // The two axes across the run grow by the half-section; heights are centre lines.
+                    let (lo, hi) = if r.x1 != r.x2 {
+                        ([x0, y0 - hw, z0 - hh], [x1, y0 + hw, z0 + hh])
+                    } else if r.y1 != r.y2 {
+                        ([x0 - hw, y0, z0 - hh], [x0 + hw, y1, z0 + hh])
+                    } else {
+                        ([x0 - hw, y0 - hh, z0], [x0 + hw, y0 + hh, z1])
+                    };
+                    boxes.push(bx(e.id, MepRun::KIND, &r.system, lo, hi, false));
                 }
             }
             _ => {}

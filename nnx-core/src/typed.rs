@@ -477,6 +477,75 @@ impl Typed for Level {
     }
 }
 
+// ---------------------------------------------------------------- MEP runs
+
+/// A straight duct, pipe or drain between two points, an axis-aligned box in 3D. Heights are millimetres above the floor
+/// top of the element's level (negative: below the floor, for drains). The cross-section is `width` x `height`; a round
+/// pipe uses its outer diameter for both. Runs are entered or imported: the application does not route them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MepRun {
+    /// `duct`, `pipe` or `drain`.
+    pub system: String,
+    #[serde(deserialize_with = "mm")]
+    pub x1: i64,
+    #[serde(deserialize_with = "mm")]
+    pub y1: i64,
+    #[serde(deserialize_with = "mm")]
+    pub z1: i64,
+    #[serde(deserialize_with = "mm")]
+    pub x2: i64,
+    #[serde(deserialize_with = "mm")]
+    pub y2: i64,
+    #[serde(deserialize_with = "mm")]
+    pub z2: i64,
+    #[serde(deserialize_with = "mm")]
+    pub width: i64,
+    #[serde(deserialize_with = "mm")]
+    pub height: i64,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl MepRun {
+    /// The discipline a run belongs to: ducts are HVAC, pipes plumbing, drains drainage.
+    pub fn discipline_of(system: &str) -> Option<Discipline> {
+        match system {
+            "duct" => Some(Discipline::Hvac),
+            "pipe" => Some(Discipline::Plb),
+            "drain" => Some(Discipline::Drn),
+            _ => None,
+        }
+    }
+}
+
+impl Typed for MepRun {
+    const KIND: &'static str = "MepRun";
+    const DISCIPLINE: Discipline = Discipline::Hvac;
+    fn validate(&self, _m: &Model, el: &Element) -> Result<(), String> {
+        let expected = MepRun::discipline_of(&self.system).ok_or_else(|| format!("unknown run system '{}' (duct, pipe or drain)", self.system))?;
+        if el.discipline != expected {
+            return Err(format!("a {} belongs to the {:?} discipline", self.system, expected));
+        }
+        if self.width <= 0 || self.height <= 0 {
+            return Err("run cross-section must be positive".into());
+        }
+        let differing = [self.x1 != self.x2, self.y1 != self.y2, self.z1 != self.z2].iter().filter(|d| **d).count();
+        if differing != 1 {
+            return Err("a run must be straight along one axis and not zero-length".into());
+        }
+        Ok(())
+    }
+}
+
+/// A new run element of the right discipline.
+pub fn run_element(run: &MepRun, level: Option<Id>, source: Source) -> Result<Element, String> {
+    let mut el = element_of(run, source);
+    el.discipline = MepRun::discipline_of(&run.system).ok_or_else(|| format!("unknown run system '{}' (duct, pipe or drain)", run.system))?;
+    el.level_id = level;
+    Ok(el)
+}
+
 // ---------------------------------------------------------------- model-level checks
 
 /// Validates one element if its kind is a known typed kind; unknown kinds pass.
@@ -495,6 +564,7 @@ pub fn validate_element(model: &Model, el: &Element) -> Result<(), String> {
         Footing::KIND => run::<Footing>(model, el),
         MepPoint::KIND => run::<MepPoint>(model, el),
         Level::KIND => run::<Level>(model, el),
+        MepRun::KIND => run::<MepRun>(model, el),
         crate::project::NanoArchProject::KIND => run::<crate::project::NanoArchProject>(model, el),
         _ => Ok(()),
     }

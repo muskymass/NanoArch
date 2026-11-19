@@ -53,6 +53,8 @@ pub struct ProjectMeta {
     /// The plot outline in metres. Only an axis-aligned rectangle is supported by the planner, so any other outline
     /// is refused rather than silently replaced by its bounding box.
     pub plot_polygon_m: Option<Vec<[f64; 2]>>,
+    /// Height of the roof parapet in metres, drawn on elevations and sections. Unset draws none (it is not defaulted).
+    pub parapet_height_m: Option<f64>,
 }
 
 /// Limits set by the municipality for this plot. Each carries the source the user took it from. A limit without a
@@ -162,6 +164,11 @@ impl NanoArchProject {
             if let Some(r) = b.rooms.iter().find(|r| !r.area.is_finite() || r.area <= 0.0) {
                 return Err(format!("room '{}' needs a positive area", r.key));
             }
+        }
+        if let Some(p) = self.meta.parapet_height_m
+            && (!p.is_finite() || p <= 0.0 || p > 5.0)
+        {
+            return Err("the parapet height must be between 0 and 5 metres".into());
         }
         if let Some(poly) = &self.meta.plot_polygon_m {
             let (w, l) = rectangle_size(poly).ok_or("the plot outline must be an axis-aligned rectangle: other outlines are not supported yet")?;

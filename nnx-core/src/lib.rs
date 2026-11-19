@@ -5,9 +5,11 @@
 
 pub mod boq;
 pub mod building;
+pub mod clash;
 pub mod command;
 pub mod drawing;
 pub mod dxf;
+pub mod elevation;
 pub mod expr;
 pub mod history;
 pub mod ifc;

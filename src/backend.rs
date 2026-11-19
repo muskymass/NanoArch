@@ -253,6 +253,20 @@ impl App {
                 editing::delete_opening(self.doc.as_mut().ok_or("choose a layout first")?, &so, id)?;
                 Ok(json!({ "svg": self.render_or_null()?, "sbc": self.sbc_json() }))
             }
+            "elevation" => self.elevation(args),
+            "section" => self.section(args),
+            "clashes" => Ok(self.clash_json()),
+            "runs" => Ok(json!(self.runs_json())),
+            "add_run" => self.add_run(args),
+            "delete_run" => {
+                let id = id_arg(args, "id")?;
+                let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+                if doc.model.get(&id).is_none_or(|e| e.kind != "MepRun") {
+                    return Err("that element is not a duct, pipe or drain".into());
+                }
+                doc.commit("delete run", nnx_core::Origin::User, vec![nnx_core::Command::Delete(id)]).map_err(|e| e.to_string())?;
+                Ok(json!({ "runs": self.runs_json(), "clashes": self.clash_json() }))
+            }
             "project" => Ok(json!({ "settings": self.form_state(), "sbc": self.sbc_json(), "plan_outdated": self.plan_outdated() })),
             "project_set" => self.project_set(args),
             "sbc_check" => Ok(self.sbc_json()),
@@ -554,6 +568,79 @@ impl App {
         self.cur_level = 0;
         self.doc = Some(doc);
         Ok(json!({ "svg": self.render_or_null()?, "warnings": warnings, "rooms": self.rooms_json(), "levels": self.levels_json(), "settings": self.form_state(), "sbc": self.sbc_json() }))
+    }
+
+    fn view_opts(&self) -> nnx_core::elevation::ViewOpts {
+        nnx_core::elevation::ViewOpts { title: self.title(), parapet_m: self.project().and_then(|p| p.meta.parapet_height_m), ..Default::default() }
+    }
+
+    /// An elevation of one side: `{ "side": "north" | "south" | "east" | "west" }`.
+    fn elevation(&self, args: &Value) -> Result<Value, String> {
+        let name = args.get("side").and_then(Value::as_str).ok_or("side is required")?;
+        let side = nnx_core::elevation::Side::parse(name).ok_or_else(|| format!("unknown side '{name}' (north, south, east or west)"))?;
+        let svg = nnx_core::elevation::elevation_svg(&self.doc()?.model, side, &self.view_opts()).map_err(|e| e.to_string())?;
+        Ok(json!({ "svg": svg, "name": format!("elevation-{name}.svg") }))
+    }
+
+    /// A section: `{ "name": "A-A" | "B-B", "at": metres }`. Without `at` the plane is cut through the middle of the building.
+    fn section(&self, args: &Value) -> Result<Value, String> {
+        let name = args.get("name").and_then(Value::as_str).ok_or("name is required (A-A or B-B)")?;
+        let model = &self.doc()?.model;
+        let mut cut = nnx_core::elevation::default_cut(model, name).ok_or_else(|| format!("unknown section '{name}' (A-A or B-B)"))?;
+        if let Some(at) = args.get("at").and_then(Value::as_f64) {
+            match &mut cut {
+                nnx_core::elevation::Cut::AtY { at: a, .. } | nnx_core::elevation::Cut::AtX { at: a, .. } => *a = at,
+            }
+        }
+        let svg = nnx_core::elevation::section_svg(model, &cut, &self.view_opts()).map_err(|e| e.to_string())?;
+        Ok(json!({ "svg": svg, "name": format!("section-{name}.svg"), "cut": format!("{cut:?}") }))
+    }
+
+    /// Clashes between ducts, pipes and drains and the structure.
+    fn clash_json(&self) -> Value {
+        match &self.doc {
+            Some(d) => serde_json::to_value(nnx_core::clash::detect(&nnx_core::model3d::build(&d.model), &nnx_core::clash::ClashOpts::default())).unwrap_or(Value::Null),
+            None => Value::Null,
+        }
+    }
+
+    fn runs_json(&self) -> Vec<Value> {
+        self.doc
+            .iter()
+            .flat_map(|d| d.model.elements.values())
+            .filter_map(|e| Some((e, e.typed::<nnx_core::typed::MepRun>().ok()?)))
+            .map(|(e, r)| json!({ "id": e.id.to_string(), "system": r.system, "x1": r.x1, "y1": r.y1, "z1": r.z1, "x2": r.x2, "y2": r.y2, "z2": r.z2, "width": r.width, "height": r.height, "level": e.level_id.and_then(|l| building::levels(&self.doc.as_ref()?.model).iter().find(|(_, id)| *id == l).map(|(i, _)| *i)) }))
+            .collect()
+    }
+
+    /// Adds a duct, pipe or drain the user entered (millimetres; heights above the level's floor top) as one undoable step.
+    fn add_run(&mut self, args: &Value) -> Result<Value, String> {
+        let mm = |k: &str| args.get(k).and_then(Value::as_i64).ok_or_else(|| format!("{k} is required (whole millimetres)"));
+        let run = nnx_core::typed::MepRun {
+            system: args.get("system").and_then(Value::as_str).ok_or("system is required (duct, pipe or drain)")?.to_string(),
+            x1: mm("x1")?,
+            y1: mm("y1")?,
+            z1: mm("z1")?,
+            x2: mm("x2")?,
+            y2: mm("y2")?,
+            z2: mm("z2")?,
+            width: mm("width")?,
+            height: mm("height")?,
+            extra: Default::default(),
+        };
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let levels = building::levels(&doc.model);
+        let level = match args.get("level").and_then(Value::as_i64) {
+            Some(i) => Some(levels.iter().find(|(n, _)| *n == i).map(|(_, id)| *id).ok_or_else(|| format!("no level {i}"))?),
+            None if levels.is_empty() => None,
+            None => return Err("this building has several levels: say which level the run is on".into()),
+        };
+        let el = nnx_core::typed::run_element(&run, level, nnx_core::Source::User)?;
+        let id = el.id;
+        doc.commit("add run", nnx_core::Origin::User, vec![nnx_core::Command::Create(el)]).map_err(|e| e.to_string())?;
+        let clashes = self.clash_json();
+        let mine: Vec<Value> = clashes["clashes"].as_array().map(|a| a.iter().filter(|c| c["run_id"] == id.to_string()).cloned().collect()).unwrap_or_default();
+        Ok(json!({ "id": id.to_string(), "runs": self.runs_json(), "clashes": clashes, "new_clashes": mine }))
     }
 
     /// True when the plot minus the setbacks no longer matches the building outline drawn on the ground level: the
@@ -1844,8 +1931,8 @@ mod tests {
         let first = app.handle("sbc_check", &json!({})).unwrap();
         let rule_of = |r: &Value, prefix: &str| r["violations"].as_array().unwrap().iter().any(|v| v["rule"].as_str().unwrap().starts_with(prefix));
         assert!(!rule_of(&first, "room_min"), "the generated plan meets the area and width minimums: {}", first["violations"]);
-        // The default windows give the dining room 7.5% glazing against the code's 8%: the check finds it, with its page.
-        assert!(rule_of(&first, "daylight_min_ratio.dining"), "{}", first["violations"]);
+        // The generator sizes windows to the code's 8%, so the plan as generated has no daylight shortfall either.
+        assert!(first["violations"].as_array().unwrap().is_empty(), "{}", first["violations"]);
         let (_, r) = squeeze_a_bathroom(&mut app);
         let out = r.expect("accepted while the code is not enforced");
         let v = out["sbc"]["violations"].as_array().unwrap().iter().find(|v| v["rule"] == "room_min_width_m.bathroom").expect("the narrow bathroom is reported").clone();
@@ -1863,6 +1950,117 @@ mod tests {
         assert!(e.contains(" / ") && e.contains("Ministry residential guidelines 5-1-"), "{e}");
         assert_eq!(hash(&strict), before);
         assert!(!rule_of(&strict.handle("sbc_check", &json!({})).unwrap(), "room_min"), "the refused edit left the plan as it was");
+    }
+
+    #[test]
+    fn generated_windows_reach_the_codes_glazing_ratio_in_every_alternative_and_after_edits() {
+        let mut app = App::default();
+        let g = app.handle("generate", &json!({ "brief": brief(), "struct": {} })).unwrap();
+        let n = g["alternatives"].as_array().unwrap().len();
+        for i in 0..n {
+            let sel = app.handle("select", &json!({ "index": i, "struct": {} })).unwrap();
+            let bad: Vec<&Value> = sel["sbc"]["violations"].as_array().unwrap().iter().filter(|v| v["rule"].as_str().unwrap().starts_with("daylight")).collect();
+            // A room that stays under the ratio is one whose exterior walls are too short, and the plan says so by name.
+            for v in &bad {
+                let key = v["en"].as_str().unwrap().split(' ').next().unwrap();
+                assert!(sel["warnings"].to_string().contains(&format!("room '{key}' cannot reach")), "alternative {i}: {v} is not explained by {}", sel["warnings"]);
+            }
+            if i == 0 {
+                assert!(bad.is_empty(), "the first alternative reaches the ratio everywhere: {bad:?}");
+            }
+        }
+        // Moving a partition rebuilds the windows with the same target.
+        app.handle("select", &json!({ "index": 0, "struct": {} })).unwrap();
+        let wall = app.doc.as_ref().unwrap().model.elements.values().find(|e| e.kind == "Wall" && e.props["isExterior"] == json!(false)).map(|e| e.id.to_string()).unwrap();
+        for delta in [300, -300] {
+            if let Ok(r) = app.handle("move_partition", &json!({ "wall": wall, "delta_mm": delta })) {
+                let any = r["sbc"]["violations"].as_array().unwrap().iter().any(|v| v["rule"].as_str().unwrap().starts_with("daylight"));
+                assert!(!any, "{}", r["sbc"]["violations"]);
+            }
+        }
+        // A two-storey building as well.
+        let two = started2();
+        assert!(!two.sbc_json()["violations"].to_string().contains("daylight"), "{}", two.sbc_json()["violations"]);
+    }
+
+    // ------------------------------------------------------------------ elevations, sections, layers, clashes
+
+    #[test]
+    fn elevations_and_sections_follow_the_model_and_the_parapet_comes_from_the_project() {
+        let mut app = started_with_project();
+        for side in ["north", "south", "east", "west"] {
+            let r = app.handle("elevation", &json!({ "side": side })).unwrap();
+            let svg = r["svg"].as_str().unwrap();
+            assert!(svg.starts_with("<svg") && svg.contains("class=\"wall\"") && svg.contains("±0.00"), "{side}");
+            assert!(!svg.contains("class=\"parapet\""), "no parapet until the project has a height");
+        }
+        // The entrance is on the south: the south elevation has the door leaf, the north one does not.
+        assert!(app.handle("elevation", &json!({ "side": "south" })).unwrap()["svg"].as_str().unwrap().contains("class=\"leaf\""));
+        assert!(!app.handle("elevation", &json!({ "side": "north" })).unwrap()["svg"].as_str().unwrap().contains("class=\"leaf\""));
+        // Every window pane is a window of the model, by id.
+        let south = app.handle("elevation", &json!({ "side": "south" })).unwrap()["svg"].as_str().unwrap().to_string();
+        let windows = app.doc.as_ref().unwrap().model.elements.values().filter(|e| e.kind == "Window").count();
+        assert!(windows > 0 && south.matches("class=\"glass\"").count() > 0);
+
+        app.handle("project_set", &json!({ "meta": { "parapetHeightM": 1.0 } })).unwrap();
+        assert!(app.handle("elevation", &json!({ "side": "east" })).unwrap()["svg"].as_str().unwrap().contains("class=\"parapet\""));
+        let aa = app.handle("section", &json!({ "name": "A-A" })).unwrap();
+        assert!(aa["svg"].as_str().unwrap().contains("A-A") && aa["svg"].as_str().unwrap().contains("class=\"wall cut\"") && aa["svg"].as_str().unwrap().contains("class=\"parapet\""));
+        let bb = app.handle("section", &json!({ "name": "B-B", "at": 5.0 })).unwrap();
+        assert!(bb["svg"].as_str().unwrap().contains("x = 5.00"));
+        // Errors name the problem.
+        assert!(app.handle("section", &json!({ "name": "A-A", "at": 99.0 })).unwrap_err().contains("outside the building"));
+        assert!(app.handle("section", &json!({ "name": "Z-Z" })).unwrap_err().contains("A-A or B-B"));
+        assert!(app.handle("elevation", &json!({ "side": "up" })).unwrap_err().contains("unknown side"));
+        assert!(app.handle("project_set", &json!({ "meta": { "parapetHeightM": -1.0 } })).unwrap_err().contains("parapet"));
+        assert!(App::default().handle("elevation", &json!({ "side": "south" })).is_err());
+        // Two storeys: the level marks of the upper floor appear.
+        let two = started2();
+        let mut two = two;
+        let svg = two.handle("elevation", &json!({ "side": "south" })).unwrap()["svg"].as_str().unwrap().to_string();
+        assert!(svg.contains("Floor 1 +") && svg.contains("Ground floor ±0.00"), "{}", &svg[..svg.len().min(200)]);
+    }
+
+    #[test]
+    fn runs_are_undoable_model_elements_and_clashes_name_the_run_and_the_structure() {
+        let mut app = started_with_project();
+        let model = &app.doc.as_ref().unwrap().model;
+        let col = model.elements.values().find(|e| e.kind == "Column").expect("the generated plan has columns");
+        let c = col.typed::<nnx_core::typed::Column>().unwrap();
+        let (cid, cx, cy) = (col.id.to_string(), c.x, c.y);
+        assert!(app.handle("clashes", &json!({})).unwrap()["clashes"].as_array().unwrap().is_empty(), "no runs, no clashes");
+
+        let before = hash(&app);
+        let r = app.handle("add_run", &json!({ "system": "pipe", "x1": cx - 600, "y1": cy, "z1": 1000, "x2": cx + 600, "y2": cy, "z2": 1000, "width": 100, "height": 100 })).unwrap();
+        let run_id = r["id"].as_str().unwrap().to_string();
+        let mine = r["new_clashes"].as_array().unwrap();
+        assert!(mine.iter().any(|k| k["struct_id"] == cid.as_str() && k["run_id"] == run_id.as_str() && k["struct_kind"] == "Column"), "{mine:?}");
+        assert!(mine.iter().all(|k| k["run_discipline"] == "plumbing" && k["struct_discipline"] == "structural"));
+        assert_eq!(app.handle("runs", &json!({})).unwrap().as_array().unwrap().len(), 1);
+        // The run is in the 3D scene with its discipline, and filtering by discipline works on the same data.
+        let scene = app.handle("model3d", &json!({})).unwrap();
+        assert!(scene["boxes"].as_array().unwrap().iter().any(|b| b["id"] == run_id.as_str() && b["discipline"] == "plumbing" && b["kind"] == "MepRun"));
+        assert!(scene["boxes"].as_array().unwrap().iter().all(|b| ["architectural", "structural", "electrical", "plumbing", "hvac"].contains(&b["discipline"].as_str().unwrap())));
+        // One undo removes the run and every clash it made.
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(hash(&app), before);
+        assert!(app.handle("clashes", &json!({})).unwrap()["clashes"].as_array().unwrap().is_empty());
+        app.handle("redo", &json!({})).unwrap();
+        let del = app.handle("delete_run", &json!({ "id": run_id })).unwrap();
+        assert!(del["runs"].as_array().unwrap().is_empty() && del["clashes"]["clashes"].as_array().unwrap().is_empty());
+        // What is not a run, and a bad run, are refused by name and change nothing.
+        let wall = app.doc.as_ref().unwrap().model.elements.values().find(|e| e.kind == "Wall").map(|e| e.id.to_string()).unwrap();
+        let h = hash(&app);
+        assert!(app.handle("delete_run", &json!({ "id": wall })).unwrap_err().contains("not a duct"));
+        assert!(app.handle("add_run", &json!({ "system": "steam", "x1": 0, "y1": 0, "z1": 0, "x2": 100, "y2": 0, "z2": 0, "width": 10, "height": 10 })).unwrap_err().contains("unknown run system"));
+        assert!(app.handle("add_run", &json!({ "system": "duct", "x1": 0, "y1": 0, "z1": 0, "x2": 100, "y2": 100, "z2": 0, "width": 10, "height": 10 })).unwrap_err().contains("straight"));
+        assert!(app.handle("add_run", &json!({ "system": "duct" })).unwrap_err().contains("required"));
+        assert_eq!(hash(&app), h);
+        // A building with several levels needs the level of the run.
+        let mut two = started2();
+        let e = two.handle("add_run", &json!({ "system": "duct", "x1": 0, "y1": 0, "z1": 2500, "x2": 500, "y2": 0, "z2": 2500, "width": 100, "height": 100 })).unwrap_err();
+        assert!(e.contains("which level"), "{e}");
+        assert!(two.handle("add_run", &json!({ "system": "duct", "level": 1, "x1": 0, "y1": 0, "z1": 2500, "x2": 500, "y2": 0, "z2": 2500, "width": 100, "height": 100 })).is_ok());
     }
 
     #[test]

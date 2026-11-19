@@ -126,6 +126,8 @@ ul.clean li{margin:3px 0}
       <label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="showstruct"><span data-i="show_struct"></span></label>
       <button id="sync" disabled data-i="sync"></button>
       <button id="to3d" disabled></button>
+      <select id="viewsel" disabled style="width:auto"><option value="plan" data-i="v_plan"></option><option value="north" data-i="v_north"></option><option value="south" data-i="v_south"></option><option value="east" data-i="v_east"></option><option value="west" data-i="v_west"></option><option value="A-A" data-i="v_aa"></option><option value="B-B" data-i="v_bb"></option></select>
+      <input id="sec-at" type="number" step="0.1" style="width:90px" data-title="sec_at" placeholder="m">
       <span style="flex:1"></span>
       <span id="savestate" class="badge"></span>
       <button id="exportsvg" disabled data-i="export_svg"></button><button id="exportifc" disabled data-i="export_ifc"></button><button id="exportdxf" disabled data-i="export_dxf"></button><button id="exportdxfall" disabled style="display:none" data-i="export_dxf_all"></button><button id="exportpdf" disabled data-i="export_pdf"></button><button id="saveproj" disabled data-i="save_proj"></button>
@@ -141,6 +143,7 @@ ul.clean li{margin:3px 0}
         <label><input type="checkbox" id="v-floor"><span data-i="v_floor"></span></label>
         <label><input type="checkbox" id="v-glass"><span data-i="v_glass"></span></label>
         <label><input type="checkbox" id="v-mep"><span data-i="v_mep"></span></label>
+        <label><input type="checkbox" id="v-d-architectural"><span data-i="d_architectural"></span></label><label><input type="checkbox" id="v-d-structural"><span data-i="d_structural"></span></label><label><input type="checkbox" id="v-d-electrical"><span data-i="d_electrical"></span></label><label><input type="checkbox" id="v-d-plumbing"><span data-i="d_plumbing"></span></label><label><input type="checkbox" id="v-d-hvac"><span data-i="d_hvac"></span></label>
         <label id="v-level-wrap" style="display:none"><span data-i="v_level"></span> <select id="v-level"></select></label>
         <button id="v-top" data-i="v_top"></button><button id="v-reset" data-i="v_reset"></button>
         <span id="v3-info" class="note"></span>
@@ -154,7 +157,7 @@ ul.clean li{margin:3px 0}
   <section class="col">
     <div class="tabs">
       <button class="tab on" data-tab="notes" data-i="t_notes"></button><button class="tab" data-tab="qto" data-i="t_qto"></button>
-      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button>
+      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button>
     </div>
     <div class="scroll">
       <div class="pane" id="p-sketch">
@@ -214,12 +217,24 @@ ul.clean li{margin:3px 0}
         <div class="row"><div><label data-i="bt"></label><select id="p-btype"><option value=""></option><option value="villa" data-i="bt_villa"></option><option value="house" data-i="bt_house"></option><option value="palace" data-i="bt_palace"></option><option value="apartment_building" data-i="bt_apartment_building"></option></select></div>
           <div><label data-i="p_style"></label><input id="p-style"></div></div>
         <div class="row"><div><label data-i="p_climate"></label><input id="p-climate"></div><div><label data-i="p_smart"></label><input id="p-smart"></div></div>
+        <label data-i="p_parapet"></label><input id="p-parapet" type="number" step="0.1" min="0">
         <h2 data-i="lim_h"></h2>
         <div class="row3"><div><label data-i="lim_f"></label><input id="lim-f" type="number" step="0.1" min="0"></div><div><label data-i="lim_b"></label><input id="lim-b" type="number" step="0.1" min="0"></div><div><label data-i="lim_s"></label><input id="lim-s" type="number" step="0.1" min="0"></div></div>
         <div class="row"><div><label data-i="lim_c"></label><input id="lim-c" type="number" step="1" min="0" max="100"></div><div><label data-i="lim_src"></label><input id="lim-src"></div></div>
         <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="lim-enforce"><span data-i="lim_enforce"></span></label>
         <div class="bar" style="padding:10px 0;border:0"><button id="proj-save" class="primary" data-i="proj_save"></button></div>
         <div id="sbcout"></div>
+      </div>
+      <div class="pane" id="p-bim">
+        <div class="note" data-i="bim_note"></div>
+        <div class="row"><div><label data-i="run_sys"></label><select id="run-sys"><option value="duct" data-i="sys_duct"></option><option value="pipe" data-i="sys_pipe"></option><option value="drain" data-i="sys_drain"></option></select></div><div><label data-i="run_level"></label><input id="run-level" type="number" step="1" min="0"></div></div>
+        <label data-i="run_from"></label><div class="row3"><input id="run-x1" type="number" step="10"><input id="run-y1" type="number" step="10"><input id="run-z1" type="number" step="10"></div>
+        <label data-i="run_to"></label><div class="row3"><input id="run-x2" type="number" step="10"><input id="run-y2" type="number" step="10"><input id="run-z2" type="number" step="10"></div>
+        <label data-i="run_size"></label><div class="row"><input id="run-w" type="number" step="10" min="1"><input id="run-h" type="number" step="10" min="1"></div>
+        <div class="bar" style="padding:8px 0;border:0"><button id="run-add" class="primary" data-i="run_add"></button><button id="clash-run" data-i="clash_run"></button></div>
+        <div id="runs-out"></div>
+        <h2 data-i="clash_h"></h2>
+        <div id="clash-out"></div>
       </div>
       <div class="pane" id="p-rules">
         <div class="note" data-i="rules_note"></div>
@@ -269,6 +284,7 @@ ar: {
   m_missing:"مدخلات ناقصة", m_circuits:"الدوائر الكهربائية", m_circuit:"الدائرة", m_points:"نقاط", m_watts:"واط", m_amps:"أمبير", m_breaker:"القاطع (A)", m_cable:"الكابل (مم²)", m_len:"الطول (م)", m_vd:"هبوط الجهد %", m_total:"المجموع", m_demand:"الطلب", m_main:"القاطع الرئيسي (A)",
   m_plumb:"السباكة", m_flow:"التدفق (L/s)", m_pipe:"الأنبوب", m_dfu:"وحدات التصريف", m_drain:"المصرف (مم)", m_tank:"الخزان (م³)", m_design:"تدفق التصميم (L/s)", m_hvac:"التكييف", m_load:"الحمل (W)", m_units:"الوحدات", m_tons:"طن تبريد", m_ins:"العزل", m_scope:"النطاق", m_area:"المساحة (م²)", m_u:"U", m_limit:"الحد", m_status:"الحالة", m_applied:"أُضيفت {c} نقطة وأُزيلت {r}", m_pts:"النقاط في النموذج: {n}",
   export_pdf:"تصدير PDF",
+  t_bim:"BIM والتعارضات", bim_note:"أدخل المجاري والأنابيب والمصارف (مم؛ الارتفاع فوق سطح أرضية الدور). التطبيق لا يرسم مساراتها. يُفحص تقاطعها مع الكمرات والأعمدة والقواعد بالهندسة الفعلية، وتُلوَّن العناصر المتعارضة بالأحمر في العرض ثلاثي الأبعاد.", run_sys:"النظام", sys_duct:"مجرى تكييف", sys_pipe:"أنبوب", sys_drain:"مصرف", run_from:"من (x, y, z)", run_to:"إلى (x, y, z)", run_size:"العرض × الارتفاع (مم)", run_level:"الدور (رقم)", run_add:"أضف", run_none:"لا مجاري ولا أنابيب بعد", clash_run:"افحص التعارضات", clash_h:"التعارضات", clash_none:"لا تعارض", clash_new:"تعارض جديد: {n}", d_architectural:"معماري", d_structural:"إنشائي", d_electrical:"كهرباء", d_plumbing:"سباكة", d_hvac:"تكييف", v_plan:"المخطط", v_north:"واجهة شمالية", v_south:"واجهة جنوبية", v_east:"واجهة شرقية", v_west:"واجهة غربية", v_aa:"مقطع A-A", v_bb:"مقطع B-B", sec_at:"موضع المقطع (م)", p_parapet:"ارتفاع الجدار الاستنادي للسطح (م)",
   t_sbc:"المشروع والكود", sbc_note:"تفاصيل المشروع وحدود البلدية (الارتدادات ونسبة البناء) تُدخل من أنظمة البلدية مع مصدرها. فحص الكود أولي ولا يغني عن الجهة المعتمدة.", bt:"نوع المبنى", bt_villa:"فيلا", bt_house:"منزل", bt_palace:"قصر", bt_apartment_building:"عمارة سكنية", p_style:"الطراز المعماري", p_climate:"المنطقة المناخية", p_smart:"التقنيات الذكية (مفصولة بفاصلة)",
   lim_h:"حدود البلدية", lim_f:"أدنى ارتداد أمامي (م)", lim_b:"أدنى ارتداد خلفي (م)", lim_s:"أدنى ارتداد جانبي (م)", lim_c:"أقصى نسبة بناء (%)", lim_src:"مصدر هذه الحدود (النظام، المادة، البلدية)", lim_enforce:"ارفض أي تعديل يضيف مخالفة", proj_save:"احفظ تفاصيل المشروع", proj_saved:"حُفظت تفاصيل المشروع", plan_outdated:"تغيرت الارتدادات بعد توليد المخطط: ولّد البدائل من جديد ليتبعها المخطط.",
   edge_x0:"يسار", edge_x1:"يمين", edge_y0:"أسفل", edge_y1:"أعلى", i_grow:"غيّر الضلع (مم)", i_swap:"بدّل المكان مع", i_merge:"احذف وادمج في", i_nb:"جار", i_nb_none:"لا جار يشاركه ضلعاً كاملاً: لا تبديل ولا دمج.",
@@ -306,6 +322,7 @@ en: {
   m_missing:"Missing inputs", m_circuits:"Electrical circuits", m_circuit:"Circuit", m_points:"Points", m_watts:"W", m_amps:"A", m_breaker:"Breaker (A)", m_cable:"Cable (mm²)", m_len:"Length (m)", m_vd:"Voltage drop %", m_total:"Total", m_demand:"Demand", m_main:"Main breaker (A)",
   m_plumb:"Plumbing", m_flow:"Flow (L/s)", m_pipe:"Pipe", m_dfu:"Drain fixture units", m_drain:"Drain (mm)", m_tank:"Tank (m³)", m_design:"Design flow (L/s)", m_hvac:"HVAC", m_load:"Load (W)", m_units:"Units", m_tons:"Tons of refrigeration", m_ins:"Insulation", m_scope:"Scope", m_area:"Area (m²)", m_u:"U", m_limit:"Limit", m_status:"Status", m_applied:"Added {c} points, removed {r}", m_pts:"Points in the model: {n}",
   export_pdf:"Export PDF",
+  t_bim:"BIM and clashes", bim_note:"Enter the ducts, pipes and drains (mm; heights above the level's floor top). The application does not route them. Their intersections with beams, columns and footings are tested on the real geometry, and the clashing elements turn red in the 3D view.", run_sys:"System", sys_duct:"HVAC duct", sys_pipe:"Pipe", sys_drain:"Drain", run_from:"From (x, y, z)", run_to:"To (x, y, z)", run_size:"Width x height (mm)", run_level:"Level (number)", run_add:"Add", run_none:"No ducts or pipes yet", clash_run:"Detect clashes", clash_h:"Clashes", clash_none:"No clash", clash_new:"New clashes: {n}", d_architectural:"Architectural", d_structural:"Structural", d_electrical:"Electrical", d_plumbing:"Plumbing", d_hvac:"HVAC", v_plan:"Plan", v_north:"North elevation", v_south:"South elevation", v_east:"East elevation", v_west:"West elevation", v_aa:"Section A-A", v_bb:"Section B-B", sec_at:"Section position (m)", p_parapet:"Roof parapet height (m)",
   t_sbc:"Project and code", sbc_note:"Project details and the municipality's limits (setbacks, plot coverage) are entered from the municipal regulations with their source. The code check is preliminary and does not replace the approving authority.", bt:"Building type", bt_villa:"Villa", bt_house:"House", bt_palace:"Palace", bt_apartment_building:"Apartment building", p_style:"Architectural style", p_climate:"Climate zone", p_smart:"Smart technology (comma separated)",
   lim_h:"Municipal limits", lim_f:"Minimum front setback (m)", lim_b:"Minimum rear setback (m)", lim_s:"Minimum side setback (m)", lim_c:"Maximum coverage (%)", lim_src:"Source of these limits (regulation, article, municipality)", lim_enforce:"Refuse any edit that adds a violation", proj_save:"Save project details", proj_saved:"Project details saved", plan_outdated:"The setbacks changed after the plan was generated: generate again so the plan follows them.",
   edge_x0:"Left", edge_x1:"Right", edge_y0:"Bottom", edge_y1:"Top", i_grow:"Change the side (mm)", i_swap:"Swap places with", i_merge:"Delete and merge into", i_nb:"neighbour", i_nb_none:"No neighbour shares a full wall: no swap or merge.",
@@ -325,7 +342,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 function applyLang() {
   document.documentElement.lang = lang; document.documentElement.dir = lang === "ar" ? "rtl" : "ltr";
-  document.querySelectorAll("[data-i]").forEach(e => e.textContent = t(e.dataset.i));
+  document.querySelectorAll("[data-i]").forEach(e => e.textContent = t(e.dataset.i)); document.querySelectorAll("[data-title]").forEach(e => { e.title = t(e.dataset.title); });
   $("lang").textContent = lang === "ar" ? "English" : "العربية";
   if (state.levels) setLevels(state.levels);
   $("to3d").textContent = (typeof V3 !== "undefined" && V3.on) ? t("to2d") : t("to3d");
@@ -498,11 +515,11 @@ function renderAlts() {
 }
 async function choose(i) {
   const res = await call("select", { index: i, struct: structInputs() });
-  state.sel = i; showPlan(res.svg); state.notes = res.warnings; state.rooms_out = res.rooms; state.qto = null; state.sched = null; renderSbc(res.sbc);
+  state.sel = i; showPlan(res.svg); state.notes = res.warnings; state.rooms_out = res.rooms; state.qto = null; state.sched = null; renderSbc(res.sbc); refreshBim();
   renderAlts(); renderNotes(); setPlanButtons(true); $("p-qto").innerHTML = `<div class="empty">${t("working")}</div>`; $("schedout").innerHTML = "";
   loadQto(); refreshStatus();
 }
-function setPlanButtons(on) { ["undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportpdf", "saveproj", "to3d"].forEach(id => $(id).disabled = !on); }
+function setPlanButtons(on) { ["viewsel", "undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportpdf", "saveproj", "to3d"].forEach(id => $(id).disabled = !on); }
 
 // ---------------------------------------------------------------- toolbar
 // The generated SVG text is kept as is, so an export is the real file and not the browser's re-serialisation.
@@ -515,11 +532,11 @@ function setLevels(l) {
   bar.innerHTML = list.map(x => `<button class="${x.index === l.current ? "primary" : ""}" data-lv="${x.index}">${levelLabel(x.index)}</button>`).join("");
   bar.querySelectorAll("[data-lv]").forEach(b => b.onclick = () => busy(async () => { const r = await call("level", { index: Number(b.dataset.lv) }); showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } }));
 }
-const showPlan = svg => { state.svgText = svg || ""; $("viewer").innerHTML = svg || `<div class="empty">${t("viewer_empty")}</div>`; clearSel(); if (V3.on) refresh3d(false); };
+const showPlan = svg => { state.viewName = "plan.svg"; $("viewsel").value = "plan"; state.svgText = svg || ""; $("viewer").innerHTML = svg || `<div class="empty">${t("viewer_empty")}</div>`; clearSel(); if (V3.on) refresh3d(false); };
 $("showstruct").onchange = () => busy(async () => { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); });
-for (const k of ["undo", "redo"]) $(k).onclick = () => busy(async () => { const r = await call(k); showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } if (r.settings) { applyProject(r.settings); applySetbacks(r.settings); } renderSbc(r.sbc); await refreshStatus(); });
+for (const k of ["undo", "redo"]) $(k).onclick = () => busy(async () => { const r = await call(k); showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } if (r.settings) { applyProject(r.settings); applySetbacks(r.settings); } renderSbc(r.sbc); refreshBim(); await refreshStatus(); });
 $("sync").onclick = () => busy(async () => { const r = await call("sync"); showPlan(r.svg); refreshStatus(); toast(t("sync_done").replace("{c}", r.created).replace("{r}", r.removed).replace("{u}", r.unchanged)); });
-$("exportsvg").onclick = () => busy(async () => { const r = await call("export", { name: "plan.svg", data: '<?xml version="1.0" encoding="UTF-8"?>\n' + (state.svgText || "") }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
+$("exportsvg").onclick = () => busy(async () => { const r = await call("export", { name: state.viewName || "plan.svg", data: '<?xml version="1.0" encoding="UTF-8"?>\n' + (state.svgText || "") }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
 $("saveproj").onclick = () => busy(async () => { const r = await call("save_project"); refreshStatus(); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
 $("lang").onclick = () => { lang = lang === "ar" ? "en" : "ar"; applyLang(); };
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
@@ -733,8 +750,9 @@ function renderBoq() {
 
 // ---------------------------------------------------------------- 3D view (WebGL, no external library)
 // The geometry comes from the model (command "model3d"); every solid names its element, so a click on it is a click on the model.
-const V3 = { on: false, gl: null, prog: null, boxes: [], sel: null, yaw: -0.8, pitch: 0.55, dist: 30, target: [0, 0, 1.5], show: { slab: false, struct: true, floor: true, glass: true, mep: true }, buf: null, drag: null, size: [1, 1] };
+const V3 = { on: false, gl: null, prog: null, boxes: [], sel: null, yaw: -0.8, pitch: 0.55, dist: 30, target: [0, 0, 1.5], show: { slab: false, struct: true, floor: true, glass: true, mep: true }, disc: {}, clash: new Set(), buf: null, drag: null, size: [1, 1] };
 const FLOOR_COL = { stair: [0.78, 0.78, 0.86], hall: [0.9, 0.88, 0.8], bedroom: [0.81, 0.89, 0.95], bathroom: [0.74, 0.88, 0.85], kitchen: [0.95, 0.89, 0.72], majlis: [0.91, 0.83, 0.93], living: [0.94, 0.85, 0.78], dining: [0.91, 0.88, 0.75] };
+const RUN_COL = { duct: [0.5, 0.77, 0.83], pipe: [0.56, 0.82, 0.62], drain: [0.73, 0.63, 0.49] };
 const MEP_COL = { light: [0.95, 0.72, 0.02], socket: [0.1, 0.42, 0.66], panel: [0.42, 0.1, 0.6], fixture: [0.16, 0.62, 0.56], ac_indoor: [0.04, 0.45, 0.52] };
 function colorOf(b) {
   switch (b.kind) {
@@ -746,10 +764,11 @@ function colorOf(b) {
     case "Door": return [0.54, 0.35, 0.17, 1];
     case "Window": return [0.31, 0.59, 0.78, 0.38];
     case "Space": return [...(FLOOR_COL[b.class] || [0.87, 0.87, 0.87]), 1];
+    case "MepRun": return [...(RUN_COL[b.class] || [0.3, 0.3, 0.3]), 1];
     default: return [...(MEP_COL[b.class] || [0.3, 0.3, 0.3]), 1];
   }
 }
-const visible3 = b => (V3.maxLevel == null || b.level == null || b.level <= V3.maxLevel) && (b.kind === "Slab" ? V3.show.slab : (b.kind === "Column" || b.kind === "Beam" || b.kind === "Footing") ? V3.show.struct : b.kind === "Space" ? V3.show.floor : b.kind === "Window" ? V3.show.glass : b.kind === "MepPoint" ? V3.show.mep : true);
+const visible3 = b => V3.disc[b.discipline] !== false && (V3.maxLevel == null || b.level == null || b.level <= V3.maxLevel) && (b.kind === "Slab" ? V3.show.slab : (b.kind === "Column" || b.kind === "Beam" || b.kind === "Footing") ? V3.show.struct : b.kind === "Space" ? V3.show.floor : b.kind === "Window" ? V3.show.glass : b.kind === "MepPoint" ? V3.show.mep : true);
 function pushBox(out, b, col) {
   const [x0, y0, z0] = b.min, [x1, y1, z1] = b.max, f = [
     [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [0, 0, -1]], [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [0, 0, 1]],
@@ -763,6 +782,7 @@ function build3() {
   for (const b of V3.boxes) {
     if (!visible3(b)) continue;
     let c = colorOf(b);
+    if (V3.clash.has(b.id)) c = [0.9, 0.1, 0.1, 1];
     if (V3.sel && b.id === V3.sel) c = [0.9, 0.63, 0, c[3] < 1 ? 0.6 : 1];
     pushBox(c[3] < 1 ? tr : op, b, c);
   }
@@ -876,7 +896,7 @@ $("runrules").onclick = () => busy(async () => {
 const PX_PER_MM = 0.05; // the plan is drawn at 50 px per metre (DrawOpts::default)
 function clearSel() { const i = $("inspector"); if (i) { i.style.display = "none"; i.innerHTML = ""; } document.querySelectorAll("#viewer .sel").forEach(e => e.classList.remove("sel")); }
 async function afterEdit(r) {
-  showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } if (r.sbc) renderSbc(r.sbc);
+  showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } if (r.sbc) renderSbc(r.sbc); refreshBim();
   state.qto = null; state.sched = null; state.mep = null; state.boq = null; if ($("mepout")) $("mepout").innerHTML = ""; if ($("boqout")) $("boqout").innerHTML = ""; refreshStatus(); loadQto();
   toast(r.mep_cleared ? t("m_cleared").replace("{n}", r.mep_cleared) : t("i_done"));
 }
@@ -959,13 +979,13 @@ function projectPayload() {
   const src = $("lim-src").value.trim();
   const lim = (id, k = 1) => { const v = num(id); return v === null ? null : { value: v * k, source: src }; };
   return {
-    meta: { title: $("title").value, buildingType: $("p-btype").value || null, style: $("p-style").value.trim() || null, smartTech: $("p-smart").value.split(",").map(s => s.trim()).filter(Boolean), climateZone: $("p-climate").value.trim() || null },
+    meta: { title: $("title").value, buildingType: $("p-btype").value || null, style: $("p-style").value.trim() || null, smartTech: $("p-smart").value.split(",").map(s => s.trim()).filter(Boolean), climateZone: $("p-climate").value.trim() || null, parapetHeightM: num("p-parapet") },
     limits: { minSetbackFrontM: lim("lim-f"), minSetbackBackM: lim("lim-b"), minSetbackSideM: lim("lim-s"), maxCoverageRatio: lim("lim-c", 0.01), enforce: $("lim-enforce").checked },
   };
 }
 function applyProject(s) {
   const m = s.meta || {}, l = s.limits || {}, v = p => (p && p.value != null ? p.value : "");
-  $("p-btype").value = m.buildingType || ""; $("p-style").value = m.style || ""; $("p-climate").value = m.climateZone || ""; $("p-smart").value = (m.smartTech || []).join(", ");
+  $("p-btype").value = m.buildingType || ""; $("p-style").value = m.style || ""; $("p-climate").value = m.climateZone || ""; $("p-smart").value = (m.smartTech || []).join(", "); $("p-parapet").value = m.parapetHeightM ?? "";
   $("lim-f").value = v(l.minSetbackFrontM); $("lim-b").value = v(l.minSetbackBackM); $("lim-s").value = v(l.minSetbackSideM);
   $("lim-c").value = l.maxCoverageRatio && l.maxCoverageRatio.value != null ? Math.round(l.maxCoverageRatio.value * 10000) / 100 : "";
   $("lim-src").value = [l.minSetbackFrontM, l.minSetbackBackM, l.minSetbackSideM, l.maxCoverageRatio].map(p => p && p.source).find(Boolean) || "";
@@ -986,6 +1006,40 @@ $("proj-save").onclick = () => busy(async () => {
   const r = await call("project_set", { meta: p.meta, limits: p.limits, setbacks: { front_m: num("sbf") || 0, back_m: num("sbb") || 0, side_m: num("sbs") || 0 } });
   applyProject(r.settings); renderSbc(r.sbc); refreshStatus();
   toast(r.plan_outdated ? t("plan_outdated") : t("proj_saved"));
+});
+// ---------------------------------------------------------------- views, layers, runs and clashes
+async function showView() {
+  const v = $("viewsel").value;
+  if (v === "plan") { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); return; }
+  const r = ["north", "south", "east", "west"].includes(v) ? await call("elevation", { side: v }) : await call("section", { name: v, at: num("sec-at") ?? undefined });
+  state.svgText = r.svg; state.viewName = r.name; $("viewer").innerHTML = r.svg; clearSel();
+}
+$("viewsel").onchange = () => { if (V3.on) setView3(false); busy(showView); };
+$("sec-at").onchange = () => { if (["A-A", "B-B"].includes($("viewsel").value)) busy(showView); };
+for (const d of ["architectural", "structural", "electrical", "plumbing", "hvac"]) { $("v-d-" + d).checked = true; $("v-d-" + d).onchange = () => { V3.disc[d] = $("v-d-" + d).checked; build3(); draw3(); }; }
+function renderRuns(rs) {
+  $("runs-out").innerHTML = rs.length
+    ? `<table class="rooms"><tbody>${rs.map(r => `<tr><td>${t("sys_" + r.system)}</td><td dir="ltr">(${r.x1}, ${r.y1}, ${r.z1}) → (${r.x2}, ${r.y2}, ${r.z2})</td><td dir="ltr">${r.width}×${r.height}</td><td>${r.level ?? ""}</td><td><button data-del="${esc(r.id)}">×</button></td></tr>`).join("")}</tbody></table>`
+    : `<div class="note">${t("run_none")}</div>`;
+  $("runs-out").querySelectorAll("[data-del]").forEach(b => b.onclick = () => busy(async () => { const r = await call("delete_run", { id: b.dataset.del }); renderRuns(r.runs); renderClashes(r.clashes); }));
+}
+function renderClashes(c) {
+  const list = (c && c.clashes) || [];
+  V3.clash = new Set(list.flatMap(k => [k.run_id, k.struct_id]));
+  $("clash-out").innerHTML = list.length
+    ? `<ul class="clean">${list.map(k => `<li class="bad" data-run="${esc(k.run_id)}" data-st="${esc(k.struct_id)}" style="cursor:pointer">${t("sys_" + k.run_system)} <code dir="ltr">${esc(k.run_id)}</code> × ${esc(k.struct_kind)} <code dir="ltr">${esc(k.struct_id)}</code> · ${k.volume_m3.toFixed(4)} m³</li>`).join("")}</ul>`
+    : `<ul class="clean"><li class="ok">${t("clash_none")}</li></ul>`;
+  $("clash-out").querySelectorAll("li[data-run]").forEach(li => li.onclick = () => { if (!V3.on) setView3(true); V3.sel = li.dataset.st; build3(); draw3(); $("v3-pick").textContent = li.dataset.st; });
+  if (V3.on) { build3(); draw3(); }
+}
+async function refreshBim() { try { renderRuns(await call("runs")); renderClashes(await call("clashes")); } catch (e) { /* no document yet */ } }
+$("clash-run").onclick = () => busy(async () => renderClashes(await call("clashes")));
+$("run-add").onclick = () => busy(async () => {
+  const n = id => { const v = $(id).value.trim(); if (v === "") throw new Error(lang === "ar" ? "أكمل الإحداثيات والأبعاد" : "Fill in the coordinates and size"); return Math.round(Number(v)); };
+  const a = { system: $("run-sys").value, x1: n("run-x1"), y1: n("run-y1"), z1: n("run-z1"), x2: n("run-x2"), y2: n("run-y2"), z2: n("run-z2"), width: n("run-w"), height: n("run-h") };
+  if ($("run-level").value.trim() !== "") a.level = Number($("run-level").value);
+  const r = await call("add_run", a); renderRuns(r.runs); renderClashes(r.clashes);
+  toast(r.new_clashes.length ? t("clash_new").replace("{n}", r.new_clashes.length) : t("i_done"));
 });
 // ---------------------------------------------------------------- open a saved project
 function applySettings(s) {
@@ -1009,7 +1063,7 @@ $("openproj").onclick = () => busy(async () => {
   applySettings(r.settings || {});
   state.alts = []; state.sel = -1; state.qto = null; state.sched = null;
   $("alts").innerHTML = `<div class="empty">${t("alts_empty")}</div>`;
-  showPlan(r.svg); state.notes = r.warnings; state.rooms_out = r.rooms; applyProject(r.settings || {}); renderSbc(r.sbc);
+  showPlan(r.svg); state.notes = r.warnings; state.rooms_out = r.rooms; applyProject(r.settings || {}); renderSbc(r.sbc); refreshBim();
   renderNotes(); setPlanButtons(true); refreshStatus(); loadQto(); toast(t("opened") + ": " + r.opened);
 });
 
