@@ -130,7 +130,7 @@ ul.clean li{margin:3px 0}
       <input id="sec-at" type="number" step="0.1" style="width:90px" data-title="sec_at" placeholder="m">
       <span style="flex:1"></span>
       <span id="savestate" class="badge"></span>
-      <button id="exportsvg" disabled data-i="export_svg"></button><button id="exportifc" disabled data-i="export_ifc"></button><button id="exportdxf" disabled data-i="export_dxf"></button><button id="exportdxfall" disabled style="display:none" data-i="export_dxf_all"></button><button id="exportpdf" disabled data-i="export_pdf"></button><button id="saveproj" disabled data-i="save_proj"></button>
+      <button id="exportsvg" disabled data-i="export_svg"></button><button id="exportifc" disabled data-i="export_ifc"></button><button id="exportdxf" disabled data-i="export_dxf"></button><button id="exportdxfall" disabled style="display:none" data-i="export_dxf_all"></button><label style="display:flex;gap:4px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="dxfviews"><span data-i="dxf_views"></span></label><button id="exportrep" disabled data-i="rep_pdf"></button><button id="exportrepx" disabled data-i="rep_xlsx"></button><button id="exportpdf" disabled data-i="export_pdf"></button><button id="saveproj" disabled data-i="save_proj"></button>
     </div>
     <div class="alts" id="alts"><div class="empty" data-i="alts_empty"></div></div>
     <div id="levelbar" class="bar" style="display:none;gap:6px;padding:6px 8px"></div>
@@ -145,6 +145,9 @@ ul.clean li{margin:3px 0}
         <label><input type="checkbox" id="v-mep"><span data-i="v_mep"></span></label>
         <label><input type="checkbox" id="v-d-architectural"><span data-i="d_architectural"></span></label><label><input type="checkbox" id="v-d-structural"><span data-i="d_structural"></span></label><label><input type="checkbox" id="v-d-electrical"><span data-i="d_electrical"></span></label><label><input type="checkbox" id="v-d-plumbing"><span data-i="d_plumbing"></span></label><label><input type="checkbox" id="v-d-hvac"><span data-i="d_hvac"></span></label>
         <label id="v-level-wrap" style="display:none"><span data-i="v_level"></span> <select id="v-level"></select></label>
+        <label><input type="checkbox" id="v-4d"><span data-i="v_4d"></span></label>
+        <button id="v-play" data-i="v_play"></button><input type="range" id="v-day" min="0" max="0" value="0" style="width:170px">
+        <span id="v-day-info" class="note"></span>
         <button id="v-top" data-i="v_top"></button><button id="v-reset" data-i="v_reset"></button>
         <span id="v3-info" class="note"></span>
       </div>
@@ -291,6 +294,7 @@ ar: {
   m_missing:"مدخلات ناقصة", m_circuits:"الدوائر الكهربائية", m_circuit:"الدائرة", m_points:"نقاط", m_watts:"واط", m_amps:"أمبير", m_breaker:"القاطع (A)", m_cable:"الكابل (مم²)", m_len:"الطول (م)", m_vd:"هبوط الجهد %", m_total:"المجموع", m_demand:"الطلب", m_main:"القاطع الرئيسي (A)",
   m_plumb:"السباكة", m_flow:"التدفق (L/s)", m_pipe:"الأنبوب", m_dfu:"وحدات التصريف", m_drain:"المصرف (مم)", m_tank:"الخزان (م³)", m_design:"تدفق التصميم (L/s)", m_hvac:"التكييف", m_load:"الحمل (W)", m_units:"الوحدات", m_tons:"طن تبريد", m_ins:"العزل", m_scope:"النطاق", m_area:"المساحة (م²)", m_u:"U", m_limit:"الحد", m_status:"الحالة", m_applied:"أُضيفت {c} نقطة وأُزيلت {r}", m_pts:"النقاط في النموذج: {n}",
   export_pdf:"تصدير PDF",
+  dxf_views:"مع الواجهات والمقاطع", rep_pdf:"تقرير هندسي (PDF)", rep_xlsx:"تقرير هندسي (Excel)", v_4d:"4D", v_4d_need:"احسب الجدول الزمني أولاً (تبويب الجدول)", v_play:"تشغيل", v_pause:"إيقاف", v_day:"اليوم", s_wbs:"WBS", s_phase:"المرحلة", s_active:"قيد التنفيذ", phase:{"Substructure":"الأساسات","Superstructure":"الهيكل","Insulation":"العزل","MEP rough-in":"تمديدات الكهروميكانيك","Finishing":"التشطيبات","Commissioning":"الاختبار والتشغيل"},
   t_str:"الجداول الإنشائية", str_note:"أحمال الأعمدة بالمساحة المساهمة، والقواعد مقابل تحمل التربة (من المدخلات الإنشائية)، والميدات الرابطة، والخرسانة وجدول ثني الحديد. الحديد يُجدول من نماذج تحددها أنت (أقطار وأعداد وتباعد وغطاء)؛ التطبيق لا يصمم التسليح. أولي ولا يغني عن مهندس إنشائي مرخّص.", str_example:"املأ بقيم اصطناعية (للاختبار فقط)", str_run:"احسب الجداول", str_cols:"الأعمدة", str_fnd:"القواعد", str_tb:"الميدات الرابطة", str_conc:"الخرسانة (م³)", str_bbs:"جدول ثني الحديد", s_trib:"المساحة المساهمة (م²)", s_axial:"الحمل المحوري (kN)", s_req:"المطلوب (م²)", s_prov:"المقاس القائم", s_status:"الحالة", s_span:"البحر (مم)", s_clear:"الصافي (مم)", s_size:"المقطع", s_vol:"الحجم (م³)", s_mark:"العلامة", s_dia:"القطر", s_num:"العدد", s_cut:"طول القص (مم)", s_kg:"كغ", s_soil:"تحمل التربة (kPa)", s_csv_members:"تصدير العناصر (CSV)", s_csv_conc:"تصدير الخرسانة (CSV)", s_csv_bbs:"تصدير ثني الحديد (CSV)", m_btu:"BTU/ساعة", m_tons:"طن تبريد", m_air:"تدفق الهواء (L/s)", m_kva:"kVA", m_board:"اللوحة", m_boards:"لوحات التوزيع", m_routes:"المسارات المولّدة", m_sys:"النظام", m_role:"الدور", m_from:"من", m_to:"إلى", m_slope:"ميل %",
   t_bim:"BIM والتعارضات", bim_note:"أدخل المجاري والأنابيب والمصارف (مم؛ الارتفاع فوق سطح أرضية الدور). التطبيق لا يرسم مساراتها. يُفحص تقاطعها مع الكمرات والأعمدة والقواعد بالهندسة الفعلية، وتُلوَّن العناصر المتعارضة بالأحمر في العرض ثلاثي الأبعاد.", run_sys:"النظام", sys_duct:"مجرى تكييف", sys_pipe:"أنبوب", sys_drain:"مصرف", run_from:"من (x, y, z)", run_to:"إلى (x, y, z)", run_size:"العرض × الارتفاع (مم)", run_level:"الدور (رقم)", run_add:"أضف", run_none:"لا مجاري ولا أنابيب بعد", clash_run:"افحص التعارضات", clash_h:"التعارضات", clash_none:"لا تعارض", clash_new:"تعارض جديد: {n}", d_architectural:"معماري", d_structural:"إنشائي", d_electrical:"كهرباء", d_plumbing:"سباكة", d_hvac:"تكييف", v_plan:"المخطط", v_north:"واجهة شمالية", v_south:"واجهة جنوبية", v_east:"واجهة شرقية", v_west:"واجهة غربية", v_aa:"مقطع A-A", v_bb:"مقطع B-B", sec_at:"موضع المقطع (م)", p_parapet:"ارتفاع الجدار الاستنادي للسطح (م)",
   t_sbc:"المشروع والكود", sbc_note:"تفاصيل المشروع وحدود البلدية (الارتدادات ونسبة البناء) تُدخل من أنظمة البلدية مع مصدرها. فحص الكود أولي ولا يغني عن الجهة المعتمدة.", bt:"نوع المبنى", bt_villa:"فيلا", bt_house:"منزل", bt_palace:"قصر", bt_apartment_building:"عمارة سكنية", p_style:"الطراز المعماري", p_climate:"المنطقة المناخية", p_smart:"التقنيات الذكية (مفصولة بفاصلة)",
@@ -330,6 +334,7 @@ en: {
   m_missing:"Missing inputs", m_circuits:"Electrical circuits", m_circuit:"Circuit", m_points:"Points", m_watts:"W", m_amps:"A", m_breaker:"Breaker (A)", m_cable:"Cable (mm²)", m_len:"Length (m)", m_vd:"Voltage drop %", m_total:"Total", m_demand:"Demand", m_main:"Main breaker (A)",
   m_plumb:"Plumbing", m_flow:"Flow (L/s)", m_pipe:"Pipe", m_dfu:"Drain fixture units", m_drain:"Drain (mm)", m_tank:"Tank (m³)", m_design:"Design flow (L/s)", m_hvac:"HVAC", m_load:"Load (W)", m_units:"Units", m_tons:"Tons of refrigeration", m_ins:"Insulation", m_scope:"Scope", m_area:"Area (m²)", m_u:"U", m_limit:"Limit", m_status:"Status", m_applied:"Added {c} points, removed {r}", m_pts:"Points in the model: {n}",
   export_pdf:"Export PDF",
+  dxf_views:"with elevations and sections", rep_pdf:"Engineering report (PDF)", rep_xlsx:"Engineering report (Excel)", v_4d:"4D", v_4d_need:"Compute the schedule first (Schedule tab)", v_play:"Play", v_pause:"Pause", v_day:"Day", s_wbs:"WBS", s_phase:"Phase", s_active:"active", phase:{"Substructure":"Substructure","Superstructure":"Superstructure","Insulation":"Insulation","MEP rough-in":"MEP rough-in","Finishing":"Finishing","Commissioning":"Commissioning"},
   t_str:"Structural schedules", str_note:"Column loads by tributary area, footings against the soil bearing value (from the structural inputs), tie beams, concrete and the bar bending schedule. Steel is scheduled from templates YOU give (diameters, counts, spacing, cover); the application does not design reinforcement. Preliminary: a licensed structural engineer must check it.", str_example:"Fill with synthetic values (testing only)", str_run:"Compute schedules", str_cols:"Columns", str_fnd:"Footings", str_tb:"Tie beams", str_conc:"Concrete (m³)", str_bbs:"Bar bending schedule", s_trib:"Tributary area (m²)", s_axial:"Axial load (kN)", s_req:"Required (m²)", s_prov:"Provided", s_status:"Status", s_span:"Span (mm)", s_clear:"Clear (mm)", s_size:"Section", s_vol:"Volume (m³)", s_mark:"Mark", s_dia:"Dia", s_num:"No.", s_cut:"Cut length (mm)", s_kg:"kg", s_soil:"Soil bearing (kPa)", s_csv_members:"Export members (CSV)", s_csv_conc:"Export concrete (CSV)", s_csv_bbs:"Export bar schedule (CSV)", m_btu:"Btu/hr", m_tons:"Tons", m_air:"Airflow (L/s)", m_kva:"kVA", m_board:"Board", m_boards:"Distribution boards", m_routes:"Generated routes", m_sys:"System", m_role:"Role", m_from:"From", m_to:"To", m_slope:"Slope %",
   t_bim:"BIM and clashes", bim_note:"Enter the ducts, pipes and drains (mm; heights above the level's floor top). The application does not route them. Their intersections with beams, columns and footings are tested on the real geometry, and the clashing elements turn red in the 3D view.", run_sys:"System", sys_duct:"HVAC duct", sys_pipe:"Pipe", sys_drain:"Drain", run_from:"From (x, y, z)", run_to:"To (x, y, z)", run_size:"Width x height (mm)", run_level:"Level (number)", run_add:"Add", run_none:"No ducts or pipes yet", clash_run:"Detect clashes", clash_h:"Clashes", clash_none:"No clash", clash_new:"New clashes: {n}", d_architectural:"Architectural", d_structural:"Structural", d_electrical:"Electrical", d_plumbing:"Plumbing", d_hvac:"HVAC", v_plan:"Plan", v_north:"North elevation", v_south:"South elevation", v_east:"East elevation", v_west:"West elevation", v_aa:"Section A-A", v_bb:"Section B-B", sec_at:"Section position (m)", p_parapet:"Roof parapet height (m)",
   t_sbc:"Project and code", sbc_note:"Project details and the municipality's limits (setbacks, plot coverage) are entered from the municipal regulations with their source. The code check is preliminary and does not replace the approving authority.", bt:"Building type", bt_villa:"Villa", bt_house:"House", bt_palace:"Palace", bt_apartment_building:"Apartment building", p_style:"Architectural style", p_climate:"Climate zone", p_smart:"Smart technology (comma separated)",
@@ -528,7 +533,7 @@ async function choose(i) {
   renderAlts(); renderNotes(); setPlanButtons(true); $("p-qto").innerHTML = `<div class="empty">${t("working")}</div>`; $("schedout").innerHTML = "";
   loadQto(); refreshStatus();
 }
-function setPlanButtons(on) { ["viewsel", "undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportpdf", "saveproj", "to3d"].forEach(id => $(id).disabled = !on); }
+function setPlanButtons(on) { ["exportrep", "exportrepx", "viewsel", "undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportpdf", "saveproj", "to3d"].forEach(id => $(id).disabled = !on); }
 
 // ---------------------------------------------------------------- toolbar
 // The generated SVG text is kept as is, so an export is the real file and not the browser's re-serialisation.
@@ -611,9 +616,12 @@ function renderSched() {
   const r = state.sched, out = $("schedout");
   $("exportsched").disabled = !(r && r.ok);
   document.querySelectorAll("#rates tr").forEach(tr => tr.classList.toggle("missing", !!(r && !r.ok && r.missing.includes(tr.dataset.k))));
+  if (V3.fourD && V3.fourD.on) { if (load4d()) redraw4d(); else { V3.fourD.on = false; $("v-4d").checked = false; stop4d(); redraw4d(); } }
   if (!r) { out.innerHTML = ""; return; }
   if (!r.ok) { out.innerHTML = `<h2 class="bad">${t("missing")} (${r.missing.length})</h2><div class="bad">${r.missing.map(esc).join("، ")}</div>`; return; }
-  out.innerHTML = `<h2>${r.project_days} ${t("days")} · ${t("finish")} ${r.finish}</h2><div class="gantt">${r.svg}</div>${r.warnings.length ? `<h2>${t("warnings")}</h2><ul class="clean">${r.warnings.map(x => `<li class="warn">${esc(x)}</li>`).join("")}</ul>` : ""}`;
+  const q = (v, d = 2) => (v == null ? "" : Number(v).toFixed(d)), ph = p => (t("phase")[p] || p);
+  const table = `<table><thead><tr><th>${t("s_wbs")}</th><th>${t("activity")}</th><th>${t("s_phase")}</th><th>${t("qty")}</th><th>${t("days")}</th><th>${t("start")}</th><th>${t("finish")}</th></tr></thead><tbody>${r.tasks.map(x => `<tr class="${x.critical ? "missing" : ""}"><td>${esc(x.wbs)}</td><td>${esc(x.name)}</td><td>${esc(ph(x.phase))}</td><td class="num" dir="ltr">${x.quantity == null ? "" : q(x.quantity) + " " + esc(x.unit || "")}${(x.also || []).map(m => ` · ${q(m.quantity)} ${esc(m.unit)} ${esc(m.label)}`).join("")}</td><td class="num">${x.duration}</td><td>${x.start}</td><td>${x.finish}</td></tr>`).join("")}</tbody></table>`;
+  out.innerHTML = `<h2>${r.project_days} ${t("days")} · ${t("finish")} ${r.finish}</h2><div class="gantt">${r.svg}</div>${table}${r.warnings.length ? `<h2>${t("warnings")}</h2><ul class="clean">${r.warnings.map(x => `<li class="warn">${esc(x)}</li>`).join("")}</ul>` : ""}`;
 }
 $("exportsched").onclick = () => busy(async () => { const r = await call("export", { name: "schedule.csv", data: state.sched.csv }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
 document.querySelector('[data-tab="sched"]').addEventListener("click", loadKeys);
@@ -627,13 +635,26 @@ $("exportpdf").onclick = () => busy(async () => {
 
 // ---------------------------------------------------------------- DXF export
 const exportDxf = all => busy(async () => {
-  const r = await call("export_dxf", { all }); state.dxf = r;
+  const views = $("dxfviews").checked;
+  const r = await call("export_dxf", { all, views }); state.dxf = r;
   const total = Object.values(r.counts).reduce((a, b) => a + b, 0);
-  const s = await call("export", { name: all ? "plan-all-levels.dxf" : "plan.dxf", data: r.dxf });
+  const s = await call("export", { name: (all ? "plan-all-levels" : "plan") + (views ? "-with-views" : "") + ".dxf", data: r.dxf });
   toast(s.saved ? t("dxf_done").replace("{n}", total).replace("{l}", Object.keys(r.counts).length) : t("cancelled"));
 });
 $("exportdxf").onclick = () => exportDxf(false);
 $("exportdxfall").onclick = () => exportDxf(true);
+
+// ---------------------------------------------------------------- engineering report (MEP loads and structural schedules)
+$("exportrep").onclick = () => busy(async () => {
+  const r = await call("report_html", { lang });
+  const s = await call("save_pdf", { html: r.html, name: r.name, size: "A4" });
+  toast(s.saved ? t("saved") + ": " + s.saved : t("cancelled"));
+});
+$("exportrepx").onclick = () => busy(async () => {
+  const r = await call("report_xlsx", { lang });
+  const s = await call("export", { name: r.name, b64: r.xlsx_b64 });
+  toast(s.saved ? t("saved") + ": " + s.saved : t("cancelled"));
+});
 
 // ---------------------------------------------------------------- IFC export
 $("exportifc").onclick = () => busy(async () => {
@@ -795,7 +816,7 @@ function renderBoq() {
 
 // ---------------------------------------------------------------- 3D view (WebGL, no external library)
 // The geometry comes from the model (command "model3d"); every solid names its element, so a click on it is a click on the model.
-const V3 = { on: false, gl: null, prog: null, boxes: [], sel: null, yaw: -0.8, pitch: 0.55, dist: 30, target: [0, 0, 1.5], show: { slab: false, struct: true, floor: true, glass: true, mep: true }, disc: {}, clash: new Set(), buf: null, drag: null, size: [1, 1] };
+const V3 = { on: false, gl: null, prog: null, boxes: [], sel: null, yaw: -0.8, pitch: 0.55, dist: 30, target: [0, 0, 1.5], show: { slab: false, struct: true, floor: true, glass: true, mep: true }, disc: {}, clash: new Set(), fourD: { on: false, day: 0, ids: new Map(), days: 0, cal: [], tasks: [], timer: null }, buf: null, drag: null, size: [1, 1] };
 const FLOOR_COL = { stair: [0.78, 0.78, 0.86], hall: [0.9, 0.88, 0.8], bedroom: [0.81, 0.89, 0.95], bathroom: [0.74, 0.88, 0.85], kitchen: [0.95, 0.89, 0.72], majlis: [0.91, 0.83, 0.93], living: [0.94, 0.85, 0.78], dining: [0.91, 0.88, 0.75] };
 const RUN_COL = { duct: [0.5, 0.77, 0.83], pipe: [0.56, 0.82, 0.62], drain: [0.73, 0.63, 0.49] };
 const MEP_COL = { light: [0.95, 0.72, 0.02], socket: [0.1, 0.42, 0.66], panel: [0.42, 0.1, 0.6], fixture: [0.16, 0.62, 0.56], ac_indoor: [0.04, 0.45, 0.52] };
@@ -813,7 +834,7 @@ function colorOf(b) {
     default: return [...(MEP_COL[b.class] || [0.3, 0.3, 0.3]), 1];
   }
 }
-const visible3 = b => V3.disc[b.discipline] !== false && (V3.maxLevel == null || b.level == null || b.level <= V3.maxLevel) && (b.kind === "Slab" ? V3.show.slab : (b.kind === "Column" || b.kind === "Beam" || b.kind === "Footing") ? V3.show.struct : b.kind === "Space" ? V3.show.floor : b.kind === "Window" ? V3.show.glass : b.kind === "MepPoint" ? V3.show.mep : true);
+const visible3 = b => V3.disc[b.discipline] !== false && status4d(b.id) !== "todo" && (V3.maxLevel == null || b.level == null || b.level <= V3.maxLevel) && (b.kind === "Slab" ? V3.show.slab : (b.kind === "Column" || b.kind === "Beam" || b.kind === "Footing") ? V3.show.struct : b.kind === "Space" ? V3.show.floor : b.kind === "Window" ? V3.show.glass : b.kind === "MepPoint" ? V3.show.mep : true);
 function pushBox(out, b, col) {
   const [x0, y0, z0] = b.min, [x1, y1, z1] = b.max, f = [
     [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [0, 0, -1]], [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [0, 0, 1]],
@@ -827,6 +848,7 @@ function build3() {
   for (const b of V3.boxes) {
     if (!visible3(b)) continue;
     let c = colorOf(b);
+    if (status4d(b.id) === "active") c = [0.95, 0.62, 0.12, c[3]];
     if (V3.clash.has(b.id)) c = [0.9, 0.1, 0.1, 1];
     if (V3.sel && b.id === V3.sel) c = [0.9, 0.63, 0, c[3] < 1 ? 0.6 : 1];
     pushBox(c[3] < 1 ? tr : op, b, c);
@@ -928,6 +950,46 @@ gl3.addEventListener("wheel", e => { e.preventDefault(); V3.dist = Math.max(2, M
 gl3.addEventListener("contextmenu", e => e.preventDefault());
 window.addEventListener("resize", () => draw3());
 
+// ---------------------------------------------------------------- 4D: the construction schedule on the 3D model
+// Each task of the schedule lists the elements it builds and the working days it occupies, [es, ef). At day d an element
+// is not yet built (hidden) until its first task starts, active (orange) while a task works on it, built (normal colour) when
+// all its tasks have finished. Elements no task cites are always shown.
+function load4d() {
+  const s = state.sched, f = V3.fourD; f.ids = new Map();
+  if (!(s && s.ok)) { f.days = 0; f.tasks = []; f.cal = []; return false; }
+  f.days = s.project_days; f.cal = s.calendar || []; f.tasks = s.tasks;
+  for (const task of s.tasks) for (const id of task.elements) { if (!f.ids.has(id)) f.ids.set(id, []); f.ids.get(id).push([task.es, task.ef]); }
+  const sl = $("v-day"); sl.max = f.days; f.day = Math.min(f.day, f.days); sl.value = f.day;
+  return true;
+}
+function status4d(id) {
+  const f = V3.fourD; if (!f || !f.on) return "done";
+  const l = f.ids.get(id); if (!l) return "done";
+  const d = f.day; if (!l.some(([a]) => a <= d)) return "todo";
+  // Active only while a task is working on it; between tasks it stands as built so far.
+  return l.some(([a, b]) => a <= d && d < b) ? "active" : "done";
+}
+function info4d() {
+  const f = V3.fourD; if (!f.on) { $("v-day-info").textContent = ""; return; }
+  const active = f.tasks.filter(x => x.es <= f.day && f.day < x.ef).map(x => x.name);
+  $("v-day-info").textContent = `${t("v_day")} ${f.day}/${f.days}${f.cal[f.day] ? " · " + f.cal[f.day] : ""}${active.length ? " · " + t("s_active") + ": " + active.slice(0, 3).join("، ") + (active.length > 3 ? "…" : "") : ""}`;
+}
+function redraw4d() { info4d(); if (V3.on) { build3(); draw3(); } }
+function stop4d() { const f = V3.fourD; if (f.timer) { clearInterval(f.timer); f.timer = null; } $("v-play").textContent = t("v_play"); }
+$("v-4d").onchange = () => {
+  const f = V3.fourD;
+  if ($("v-4d").checked) { if (!load4d()) { $("v-4d").checked = false; toast(t("v_4d_need")); return; } f.on = true; } else { f.on = false; stop4d(); }
+  redraw4d();
+};
+$("v-day").oninput = () => { V3.fourD.day = Number($("v-day").value); redraw4d(); };
+$("v-play").onclick = () => {
+  const f = V3.fourD;
+  if (f.timer) { stop4d(); return; }
+  if (!f.on) { $("v-4d").checked = true; $("v-4d").onchange(); if (!f.on) return; }
+  if (f.day >= f.days) f.day = 0;
+  $("v-play").textContent = t("v_pause");
+  f.timer = setInterval(() => { f.day = Math.min(f.days, f.day + Math.max(1, Math.round(f.days / 120))); $("v-day").value = f.day; redraw4d(); if (f.day >= f.days) stop4d(); }, 120);
+};
 // ---------------------------------------------------------------- code rules
 $("runrules").onclick = () => busy(async () => {
   const r = await call("check_rules", { pack: $("pack").value });

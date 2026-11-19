@@ -278,7 +278,9 @@ impl App {
             "boq" => self.boq(args),
             "model3d" => serde_json::to_value(nnx_core::model3d::build(&self.doc()?.model)).map_err(|e| e.to_string()),
             "export_ifc" => self.export_ifc(),
-            "export_dxf" => self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false)),
+            "export_dxf" => self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false)),
+            "report_html" => self.report(args).map(|(html, _)| json!({ "html": html, "name": "engineering-report.pdf" })),
+            "report_xlsx" => self.report(args).map(|(_, b64)| json!({ "xlsx_b64": b64, "name": "engineering-report.xlsx" })),
             "pdf_html" => self.pdf_html(args.get("lang").and_then(Value::as_str) != Some("en")),
             "template_keys" => Ok(json!(schedule::template_keys().iter().map(|(k, fixed)| json!({ "key": k, "fixed": fixed })).collect::<Vec<_>>())),
             "schedule" => self.schedule(args),
@@ -407,7 +409,7 @@ impl App {
     }
 
     /// The plan as a DXF file: the level on screen, or every level side by side when `all` is true.
-    fn export_dxf(&self, all: bool) -> Result<Value, String> {
+    fn export_dxf(&self, all: bool, views: bool) -> Result<Value, String> {
         let model = &self.doc()?.model;
         let levels: Vec<Option<nnx_core::Id>> = if all {
             let l = building::levels(model);
@@ -416,8 +418,17 @@ impl App {
             vec![self.current_level()]
         };
         let opts = nnx_core::dxf::DxfOpts { title: self.display_title(), labels: self.labels(), mep: true };
-        let out = nnx_core::dxf::export_dxf(model, &levels, &opts)?;
-        Ok(json!({ "dxf": out.text, "counts": out.counts, "levels": levels.len() }))
+        // With `views`, the four elevations and the sections A-A and B-B (through the middle of the building) follow the plans.
+        let specs: Vec<nnx_core::elevation::ViewSpec> = if views {
+            use nnx_core::elevation::{Side, ViewSpec, default_cut};
+            let mut v: Vec<ViewSpec> = [Side::North, Side::South, Side::East, Side::West].into_iter().map(ViewSpec::Elevation).collect();
+            v.extend(["A-A", "B-B"].into_iter().filter_map(|n| default_cut(model, n)).map(ViewSpec::Section));
+            v
+        } else {
+            Vec::new()
+        };
+        let out = nnx_core::dxf::export_dxf_views(model, &levels, &specs, &self.view_opts(), &opts)?;
+        Ok(json!({ "dxf": out.text, "counts": out.counts, "levels": levels.len(), "views": specs.len() }))
     }
 
     fn boq(&mut self, args: &Value) -> Result<Value, String> {
@@ -458,6 +469,9 @@ impl App {
             Ok(())
         })?;
         let soil = self.project().and_then(|p| p.structure.bearing_kpa);
+        // The tie beams become model elements (one undoable step), so the 3D view, quantities and schedule can cite them.
+        let first = nnx_core::sizing::compute(&self.doc()?.model, soil, &inputs);
+        nnx_core::sizing::apply_tie_beams(self.doc.as_mut().ok_or("choose a layout first")?, &first)?;
         let r = nnx_core::sizing::compute(&self.doc()?.model, soil, &inputs);
         Ok(json!({ "report": r, "members_csv": r.members_csv(), "concrete_csv": r.concrete_csv(), "bbs_csv": r.bbs_csv(), "soil_kpa": soil }))
     }
@@ -484,17 +498,31 @@ impl App {
             cal.holidays.insert(h);
         }
         let zones = args.get("zones").and_then(Value::as_u64).unwrap_or(1).max(1) as usize;
-        let q = qto::compute(&doc.model, &QtoOpts::default());
+        // The take-off, plus insulation, MEP devices and runs, and the concrete and steel of the structural schedules.
+        let mut q = qto::compute(&doc.model, &QtoOpts::default());
+        q.items.extend(self.extra_items(&doc.model));
+        if let Some(inputs) = self.project().and_then(|p| p.sizing.map(|s| (s, p.structure.bearing_kpa))) {
+            q.items.extend(nnx_core::sizing::schedule_items(&nnx_core::sizing::compute(&doc.model, inputs.1, &inputs.0)));
+        }
         match schedule::build_with_model(&doc.model, &q, &lib, &cal, zones) {
             Ok(s) => {
                 let tasks: Vec<Value> = s
                     .tasks
                     .iter()
-                    .map(|t| json!({ "id": t.id, "name": t.name, "duration": t.duration, "start": t.start.iso(), "finish": t.finish.iso(), "float": t.float, "critical": t.critical }))
+                    .map(|t| {
+                        json!({
+                            "id": t.id, "name": t.name, "wbs": t.wbs, "phase": t.phase, "duration": t.duration, "es": t.es, "ef": t.ef,
+                            "start": t.start.iso(), "finish": t.finish.iso(), "float": t.float, "critical": t.critical,
+                            "quantity": t.quantity, "unit": t.unit.map(|u| u.label()),
+                            "also": t.also.iter().map(|m| json!({ "label": m.label, "quantity": m.quantity, "unit": m.unit.label() })).collect::<Vec<_>>(),
+                            "elements": t.elements.iter().map(|e| e.to_string()).collect::<Vec<_>>(),
+                        })
+                    })
                     .collect();
                 Ok(json!({
                     "ok": true, "project_days": s.project_days, "finish": s.finish.iso(), "tasks": tasks, "warnings": s.warnings,
-                    "svg": s.gantt_svg(&cal, &self.title()), "csv": s.to_csv()
+                    "svg": s.gantt_svg(&cal, &self.title()), "csv": s.to_csv(),
+                    "calendar": (0..=s.project_days).map(|d| cal.nth_workday(d).iso()).collect::<Vec<_>>()
                 }))
             }
             Err(schedule::ScheduleError::MissingRates(keys)) => Ok(json!({ "ok": false, "missing": keys })),
@@ -519,6 +547,22 @@ impl App {
             "findings": r.findings.iter().map(|f| json!({ "rule": f.rule_id, "clause": f.clause, "severity": sev(f.severity), "message": f.message, "element": f.element.to_string() })).collect::<Vec<_>>(),
             "skipped": r.skipped.iter().map(|s| json!({ "rule": s.rule_id, "reason": s.reason })).collect::<Vec<_>>(),
         }))
+    }
+
+    /// The engineering report from the project's stored MEP and structural inputs: the printable HTML and the XLSX (base64).
+    fn report(&self, args: &Value) -> Result<(String, String), String> {
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        let model = &self.doc()?.model;
+        let p = self.project().ok_or("choose a layout first")?;
+        let mep = p.mep.as_ref().map(|i| nnx_core::mep::compute(model, i));
+        let sizing = p.sizing.as_ref().map(|i| nnx_core::sizing::compute(model, p.structure.bearing_kpa, i));
+        if mep.is_none() && sizing.is_none() {
+            return Err("enter the MEP inputs (MEP tab) or the structural schedule inputs (Structural tab) and compute them first".into());
+        }
+        let data = nnx_core::report::ReportData { title: self.display_title(), date: utc_now().chars().take(10).collect(), mep: mep.as_ref(), sizing: sizing.as_ref() };
+        let html = nnx_core::report::engineering_html(&data, arabic);
+        let b64 = nnx_core::xlsx::base64_encode(&nnx_core::report::engineering_workbook(&data, arabic).to_bytes());
+        Ok((html, b64))
     }
 
     /// The current model, for saving.
@@ -2181,12 +2225,110 @@ mod tests {
         let h = hash(&app);
         app.handle("sizing", &json!({ "inputs": sizing_inputs() })).unwrap();
         assert_eq!(hash(&app), h);
+        let ties = |a: &App| a.doc.as_ref().unwrap().model.elements.values().filter(|e| e.kind == "TieBeam").count();
+        assert_eq!(ties(&app), rep["tie_beams"].as_array().unwrap().len(), "the tie beams are model elements now");
+        assert!(rep["tie_beams"].as_array().unwrap().iter().all(|t| t["id"].is_string()));
         app.handle("undo", &json!({})).unwrap();
-        assert!(app.project().unwrap().sizing.is_none());
+        assert_eq!(ties(&app), 0, "the first undo takes the tie beams out");
+        assert!(app.project().unwrap().sizing.is_some());
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.project().unwrap().sizing.is_none(), "the second takes the inputs out");
         // Incomplete inputs are named, nothing is computed from nothing.
         let bare = app.handle("sizing", &json!({ "inputs": {} })).unwrap();
         assert!(bare["report"]["missing"]["tie beams"].is_array() && bare["report"]["missing"]["reinforcement"].is_array());
         assert!(app.handle("sizing", &json!({ "inputs": { "tie_beam": "x" } })).unwrap_err().contains("sizing inputs"));
+    }
+
+    // ------------------------------------------------------------------ 4D schedule, DXF and the engineering report
+
+    /// A sized building with its tie beams, its routed MEP runs and the stored inputs, ready to schedule and export.
+    fn complete_app() -> App {
+        let mut app = sized_app();
+        app.handle("sizing", &json!({ "inputs": sizing_inputs() })).unwrap();
+        let mut i = routing_inputs();
+        i["routing"]["tank"]["y_mm"] = json!(3000);
+        let r = app.handle("mep", &json!({ "inputs": i, "apply": true, "show": true })).unwrap();
+        assert!(!r["report"]["routes"].as_array().unwrap().is_empty());
+        app
+    }
+
+    fn all_rates(app: &mut App) -> Value {
+        let keys = app.handle("template_keys", &json!({})).unwrap();
+        let mut rates = serde_json::Map::new();
+        for k in keys.as_array().unwrap() {
+            let r = if k["fixed"] == true { json!({ "fixed_days": 2, "crews": 1, "source": "synthetic" }) } else { json!({ "per_crew_day": 5.0, "crews": 1, "source": "synthetic" }) };
+            rates.insert(k["key"].as_str().unwrap().to_string(), r);
+        }
+        Value::Object(rates)
+    }
+
+    fn schedule_args(rates: Value) -> Value {
+        json!({ "rates": rates, "start": "2026-11-15", "workdays": [true, true, true, true, false, false, true], "zones": 1 })
+    }
+
+    #[test]
+    fn the_4d_schedule_has_structural_and_mep_tasks_with_quantities_phases_and_element_ids() {
+        let mut app = complete_app();
+        let rates = all_rates(&mut app);
+        let r = app.handle("schedule", &schedule_args(rates)).unwrap();
+        assert_eq!(r["ok"], true, "{r}");
+        let tasks = r["tasks"].as_array().unwrap();
+        let by = |n: &str| tasks.iter().find(|t| t["name"] == n).unwrap_or_else(|| panic!("no task {n}"));
+        let model = &app.doc.as_ref().unwrap().model;
+        for (name, kind, unit) in [("Tie beams", "TieBeam", "m3"), ("HVAC ductwork", "MepRun", "m"), ("Below-slab drainage", "MepRun", "m"), ("Water supply pipework", "MepRun", "m"), ("Cable trays", "MepRun", "m"), ("Footing concrete pour", "Footing", "m2")] {
+            let t = by(name);
+            assert_eq!(t["unit"], unit, "{name}");
+            let ids = t["elements"].as_array().unwrap();
+            assert!(!ids.is_empty(), "{name} cites elements");
+            assert!(ids.iter().all(|id| model.get(&id.as_str().unwrap().parse().unwrap()).is_some_and(|e| e.kind == kind)), "{name}: {ids:?}");
+        }
+        // Concrete and steel of the same work.
+        let pour = by("Footing concrete pour");
+        assert!(pour["also"].as_array().unwrap().iter().any(|m| m["label"] == "concrete" && m["unit"] == "m3" && m["quantity"].as_f64().unwrap() > 0.0));
+        assert!(by("Footing reinforcement")["also"].as_array().unwrap().iter().any(|m| m["label"] == "steel" && m["unit"] == "kg"));
+        // Phases in order and working-day bounds for the 4D slider.
+        let order = ["Substructure", "Superstructure", "Insulation", "MEP rough-in", "Finishing", "Commissioning"];
+        for p in order {
+            assert!(tasks.iter().any(|t| t["phase"] == p), "{p}");
+        }
+        assert!(tasks.iter().all(|t| t["es"].as_i64().unwrap() <= t["ef"].as_i64().unwrap() && t["wbs"].as_str().unwrap().contains('.')));
+        assert!(r["project_days"].as_i64().unwrap() >= tasks.iter().map(|t| t["ef"].as_i64().unwrap()).max().unwrap());
+    }
+
+    #[test]
+    fn the_dxf_export_can_include_runs_tie_beams_elevations_and_sections() {
+        let mut app = complete_app();
+        let plain = app.handle("export_dxf", &json!({})).unwrap();
+        assert_eq!(plain["views"], 0);
+        assert!(plain["counts"]["M-DUCT"].as_u64().unwrap() > 0 && plain["counts"]["P-DRAN"].as_u64().unwrap() > 0 && plain["counts"]["E-TRAY"].as_u64().unwrap() > 0 && plain["counts"]["S-TIEB"].as_u64().unwrap() > 0);
+        assert!(plain["counts"].as_object().unwrap().keys().all(|k| !k.starts_with("V-")));
+        let with = app.handle("export_dxf", &json!({ "views": true })).unwrap();
+        assert_eq!(with["views"], 6, "four elevations and two sections");
+        for layer in ["V-WALL", "V-CUT", "V-FAR", "V-SLAB", "V-LEVEL", "V-TEXT"] {
+            assert!(with["counts"][layer].as_u64().unwrap() > 0, "{layer}");
+        }
+        assert!(with["dxf"].as_str().unwrap().len() > plain["dxf"].as_str().unwrap().len());
+        // Runs are left out when the MEP overlay is off in the plan? They follow the model: always exported.
+    }
+
+    #[test]
+    fn the_engineering_report_comes_as_html_and_xlsx_from_the_stored_inputs() {
+        let mut app = complete_app();
+        let h = app.handle("report_html", &json!({ "lang": "en" })).unwrap();
+        let html = h["html"].as_str().unwrap();
+        for needle in ["HVAC load schedule", "Btu/hr", "kVA", "Plumbing and drainage", "COL-1", "FND-1", "TB-1", "Bar bending schedule"] {
+            assert!(html.contains(needle), "{needle}");
+        }
+        assert_eq!(h["name"], "engineering-report.pdf");
+        let ar = app.handle("report_html", &json!({})).unwrap();
+        assert!(ar["html"].as_str().unwrap().contains("dir=\"rtl\""));
+        let x = app.handle("report_xlsx", &json!({ "lang": "en" })).unwrap();
+        let bytes = nnx_core::xlsx::base64_decode(x["xlsx_b64"].as_str().unwrap()).unwrap();
+        assert_eq!(&bytes[..2], b"PK");
+        assert!(bytes.len() > 3000);
+        // With nothing entered there is nothing to report, and it says what to enter.
+        let mut bare = started_with_project();
+        assert!(bare.handle("report_html", &json!({})).unwrap_err().contains("enter the MEP inputs"));
     }
 
     #[test]
