@@ -13,14 +13,18 @@
 //! | `S-FTNG` | footings (hidden line); their depth is not designed, only the plan size is drawn |
 //! | `A-ROOM`, `A-TEXT` | room outlines, names and areas |
 //! | `A-STAIR` | the stair shaft |
-//! | `E-LITE`, `E-POWR`, `E-PANL`, `P-FIXT`, `M-HVAC` | MEP points |
+//! | `E-LITE`, `E-POWR`, `E-PANL`, `P-FIXT`, `M-HVAC` | MEP points (diffusers and grilles on `M-HVAC`) |
+//! | `M-DUCT`, `P-PIPE`, `P-DRAN`, `E-TRAY` | generated or entered runs at their plan width: ducts, supply pipes, drains, cable trays |
+//! | `S-TIEB` | tie beams between footings (hidden line) |
+//! | `V-WALL`, `V-CUT`, `V-FAR`, `V-OPEN`, `V-SLAB`, `V-STRUC`, `V-MEP`, `V-LEVEL`, `V-TEXT` | elevations and sections, drawn to the right of the plans: walls, what a section cuts, what lies beyond it, openings, slab edges, structure, MEP runs, ground and level lines, titles |
 //! | `A-DIMS` | overall dimensions, title and the preliminary note |
 //!
 //! Several levels are laid side by side on one file, left to right, each under its own title. Text outside ASCII
 //! (Arabic names) uses the DXF `\U+XXXX` escape.
 
+use crate::elevation::{self, Shape, ViewOpts, ViewShapes, ViewSpec};
 use crate::model::{Id, Model};
-use crate::typed::{Beam, Column, Door, Footing, Level, MepPoint, Space, Typed, Wall, Window};
+use crate::typed::{Beam, Column, Door, Footing, Level, MepPoint, MepRun, Space, TieBeam, Typed, Wall, Window};
 use std::collections::BTreeMap;
 
 pub struct DxfOpts {
@@ -40,7 +44,7 @@ pub struct DxfOut {
 }
 
 /// Layer name, AutoCAD colour index, line type.
-const LAYERS: [(&str, i32, &str); 15] = [
+const LAYERS: [(&str, i32, &str); 29] = [
     ("A-WALL-EXT", 7, "CONTINUOUS"),
     ("A-WALL-INT", 8, "CONTINUOUS"),
     ("A-DOOR", 3, "CONTINUOUS"),
@@ -56,6 +60,20 @@ const LAYERS: [(&str, i32, &str); 15] = [
     ("E-PANL", 6, "CONTINUOUS"),
     ("P-FIXT", 3, "CONTINUOUS"),
     ("M-HVAC", 4, "CONTINUOUS"),
+    ("M-DUCT", 4, "CONTINUOUS"),
+    ("P-PIPE", 3, "CONTINUOUS"),
+    ("P-DRAN", 30, "DASHED"),
+    ("E-TRAY", 6, "DASHED"),
+    ("S-TIEB", 6, "HIDDEN"),
+    ("V-WALL", 7, "CONTINUOUS"),
+    ("V-CUT", 1, "CONTINUOUS"),
+    ("V-FAR", 8, "CONTINUOUS"),
+    ("V-OPEN", 5, "CONTINUOUS"),
+    ("V-SLAB", 9, "CONTINUOUS"),
+    ("V-STRUC", 30, "CONTINUOUS"),
+    ("V-MEP", 4, "CONTINUOUS"),
+    ("V-LEVEL", 5, "DASHED"),
+    ("V-TEXT", 7, "CONTINUOUS"),
 ];
 const DIMS_LAYER: (&str, i32, &str) = ("A-DIMS", 2, "CONTINUOUS");
 
@@ -164,7 +182,53 @@ fn on_level(e: &crate::model::Element, level: Option<Id>) -> bool {
     level.is_none() || e.level_id == level
 }
 
+/// The plans of `levels`, one sheet each, left to right.
 pub fn export_dxf(model: &Model, levels: &[Option<Id>], opts: &DxfOpts) -> Result<DxfOut, String> {
+    export_dxf_views(model, levels, &[], &ViewOpts::default(), opts)
+}
+
+/// Layer of a view rectangle by its class.
+fn view_layer(class: &str) -> &'static str {
+    if class.ends_with(" cut") {
+        "V-CUT"
+    } else if class.ends_with(" far") {
+        "V-FAR"
+    } else if class.starts_with("glass") || class.starts_with("leaf") {
+        "V-OPEN"
+    } else if class.starts_with("slab") {
+        "V-SLAB"
+    } else if matches!(class, "column" | "beam" | "footing") {
+        "V-STRUC"
+    } else if matches!(class, "duct" | "pipe" | "drain" | "cable") {
+        "V-MEP"
+    } else {
+        "V-WALL"
+    }
+}
+
+/// One elevation or section on the sheet starting at `ox` (mm): its rectangles, the ground line, the level marks and titles.
+fn draw_view(d: &mut D, v: &ViewShapes, ox: f64) {
+    let (h0, h1) = (v.h_range.0 - 1.5, v.h_range.1 + 1.5);
+    let m = |a: f64| a * 1000.0;
+    for Shape { class, h0: a, h1: b, z0, z1, .. } in &v.shapes {
+        d.rect(view_layer(class), ox + m(*a), m(*z0), ox + m(*b), m(*z1));
+    }
+    d.line("V-LEVEL", (ox + m(h0), 0.0), (ox + m(h1), 0.0));
+    for (name, z) in &v.levels {
+        d.line("V-LEVEL", (ox + m(h0), m(*z)), (ox + m(h1), m(*z)));
+        let label = if *z == 0.0 { format!("{name} +-0.00") } else { format!("{name} +{z:.2}") };
+        d.text("V-TEXT", (ox + m(h1) - 1500.0, m(*z) + 150.0), 150.0, &label);
+    }
+    let mid = ox + m((h0 + h1) / 2.0);
+    d.text("V-TEXT", (mid, m(v.bottom) - 900.0), 300.0, &v.title);
+    if !v.subtitle.is_empty() {
+        d.text("V-TEXT", (mid, m(v.bottom) - 1400.0), 180.0, &v.subtitle);
+    }
+    d.text("V-TEXT", (mid, m(v.bottom) - 1800.0), 180.0, "PRELIMINARY - NOT FOR CONSTRUCTION");
+}
+
+/// The plans of `levels` followed, to the right, by the elevations and sections in `views`.
+pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec], view_opts: &ViewOpts, opts: &DxfOpts) -> Result<DxfOut, String> {
     // The sheets: one per requested level, with the extent of its rooms.
     let mut sheets: Vec<Sheet> = Vec::new();
     for &lv in levels {
@@ -177,10 +241,19 @@ pub fn export_dxf(model: &Model, levels: &[Option<Id>], opts: &DxfOpts) -> Resul
         let name = lv.and_then(|l| model.get(&l)).and_then(|e| e.typed::<Level>().ok()).map_or(String::new(), |l| l.name);
         sheets.push(Sheet { level: lv, name, min, max });
     }
-    if sheets.is_empty() {
+    if sheets.is_empty() && views.is_empty() {
         return Err("nothing to export: no rooms on the requested level(s)".into());
     }
     let step = sheets.iter().map(|s| s.max.0 - s.min.0).max().unwrap_or(0) + 6000;
+    // The views, computed first so a bad one (a section outside the building) fails before anything is written.
+    let mut drawn: Vec<ViewShapes> = Vec::new();
+    for v in views {
+        drawn.push(match v {
+            ViewSpec::Elevation(side) => elevation::elevation_shapes(model, *side, view_opts),
+            ViewSpec::Section(cut) => elevation::section_shapes(model, cut, view_opts),
+        }
+        .map_err(|e| e.to_string())?);
+    }
 
     let mut d = D { body: String::new(), counts: BTreeMap::new() };
     let (mut gx0, mut gy0, mut gx1, mut gy1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
@@ -294,6 +367,14 @@ pub fn export_dxf(model: &Model, levels: &[Option<Id>], opts: &DxfOpts) -> Resul
                 d.rect("S-FTNG", px(f.x - f.length / 2), py(f.y - f.width / 2), px(f.x + f.length / 2), py(f.y + f.width / 2));
             }
         }
+        for e in model.elements.values().filter(|e| e.kind == TieBeam::KIND && on_level(e, sh.level)) {
+            if let Ok(b) = e.typed::<TieBeam>() {
+                let hw = b.width as f64 / 2.0;
+                let (x0, x1) = (b.x1.min(b.x2) as f64, b.x1.max(b.x2) as f64);
+                let (y0, y1) = (b.y1.min(b.y2) as f64, b.y1.max(b.y2) as f64);
+                if b.y1 == b.y2 { d.rect("S-TIEB", px(x0 as i64), py((y0 - hw) as i64), px(x1 as i64), py((y0 + hw) as i64)) } else { d.rect("S-TIEB", px((x0 - hw) as i64), py(y0 as i64), px((x0 + hw) as i64), py(y1 as i64)) }
+            }
+        }
         for e in model.elements.values().filter(|e| e.kind == Column::KIND && on_level(e, sh.level)) {
             if let Ok(c) = e.typed::<Column>() {
                 let (x0, y0, x1, y1) = (px(c.x - c.b / 2), py(c.y - c.h / 2), px(c.x + c.b / 2), py(c.y + c.h / 2));
@@ -312,6 +393,11 @@ pub fn export_dxf(model: &Model, levels: &[Option<Id>], opts: &DxfOpts) -> Resul
                     "socket" => d.rect("E-POWR", c.0 - 60.0, c.1 - 60.0, c.0 + 60.0, c.1 + 60.0),
                     "panel" => d.solid("E-PANL", c.0 - 150.0, c.1 - 150.0, c.0 + 150.0, c.1 + 150.0),
                     "fixture" => d.circle("P-FIXT", c, 120.0),
+                    "diffuser" => d.rect("M-HVAC", c.0 - 150.0, c.1 - 150.0, c.0 + 150.0, c.1 + 150.0),
+                    "grille" => {
+                        d.rect("M-HVAC", c.0 - 125.0, c.1 - 125.0, c.0 + 125.0, c.1 + 125.0);
+                        d.line("M-HVAC", (c.0 - 125.0, c.1 - 125.0), (c.0 + 125.0, c.1 + 125.0));
+                    }
                     _ => {
                         d.rect("M-HVAC", c.0 - 300.0, c.1 - 150.0, c.0 + 300.0, c.1 + 150.0);
                         if let Some(l) = &p.label {
@@ -319,6 +405,30 @@ pub fn export_dxf(model: &Model, levels: &[Option<Id>], opts: &DxfOpts) -> Resul
                         }
                     }
                 }
+            }
+        }
+
+        // Ducts, pipes, drains and cable trays at their plan width, with their section as text.
+        if opts.mep {
+            for e in model.elements.values().filter(|e| e.kind == MepRun::KIND && on_level(e, sh.level)) {
+                let Ok(r) = e.typed::<MepRun>() else { continue };
+                let layer = match r.system.as_str() {
+                    "duct" => "M-DUCT",
+                    "pipe" => "P-PIPE",
+                    "drain" => "P-DRAN",
+                    _ => "E-TRAY",
+                };
+                let hw = r.width as f64 / 2.0;
+                if r.x1 == r.x2 && r.y1 == r.y2 {
+                    d.circle(layer, (px(r.x1), py(r.y1)), hw);
+                } else if r.y1 == r.y2 {
+                    d.rect(layer, px(r.x1.min(r.x2)), py(r.y1) - hw, px(r.x1.max(r.x2)), py(r.y1) + hw);
+                } else {
+                    d.rect(layer, px(r.x1) - hw, py(r.y1.min(r.y2)), px(r.x1) + hw, py(r.y1.max(r.y2)));
+                }
+                d.line(layer, (px(r.x1), py(r.y1)), (px(r.x2), py(r.y2)));
+                let (mx, my) = ((px(r.x1) + px(r.x2)) / 2.0, (py(r.y1) + py(r.y2)) / 2.0);
+                d.text(layer, (mx, my + hw + 80.0), 70.0, &format!("{} {}x{}", r.system, r.width, r.height));
             }
         }
 
@@ -339,6 +449,17 @@ pub fn export_dxf(model: &Model, levels: &[Option<Id>], opts: &DxfOpts) -> Resul
         let title = if sh.name.is_empty() { opts.title.clone() } else { format!("{} - {}", opts.title, sh.name) };
         d.text(DIMS_LAYER.0, ((x0 + x1) / 2.0, py(sh.min.1) - 1500.0), 300.0, &title);
         d.text(DIMS_LAYER.0, ((x0 + x1) / 2.0, py(sh.min.1) - 2000.0), 180.0, "PRELIMINARY - NOT FOR CONSTRUCTION");
+    }
+
+    // Elevations and sections to the right of the plans, each in its own slot.
+    let view_step = drawn.iter().map(|v| ((v.h_range.1 - v.h_range.0 + 3.0) * 1000.0) as i64).max().unwrap_or(0) + 4000;
+    for (k, v) in drawn.iter().enumerate() {
+        let ox = (sheets.len() as i64 * step + k as i64 * view_step) as f64 - (v.h_range.0 - 1.5) * 1000.0;
+        draw_view(&mut d, v, ox);
+        gx0 = gx0.min(ox + (v.h_range.0 - 1.5) * 1000.0 - 600.0);
+        gx1 = gx1.max(ox + (v.h_range.1 + 1.5) * 1000.0 + 600.0);
+        gy0 = gy0.min(v.bottom * 1000.0 - 2400.0);
+        gy1 = gy1.max(v.top * 1000.0 + 600.0);
     }
 
     // Assemble the file.

@@ -22,6 +22,7 @@ pub mod persist;
 pub mod printdoc;
 pub mod project;
 pub mod qto;
+pub mod report;
 pub mod routing;
 pub mod rules;
 pub mod sbc;

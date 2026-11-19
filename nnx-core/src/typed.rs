@@ -477,6 +477,53 @@ impl Typed for Level {
     }
 }
 
+// ---------------------------------------------------------------- Tie beams
+
+/// A tie beam between two footings: a straight beam on the line joining them, from the edge of one footing to the edge of
+/// the other, hanging `depth` below the top of the footings. Made by the structural schedules (`sizing`) from your
+/// width and span-to-depth ratio; the footings it ties are named by id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TieBeam {
+    #[serde(deserialize_with = "mm")]
+    pub x1: i64,
+    #[serde(deserialize_with = "mm")]
+    pub y1: i64,
+    #[serde(deserialize_with = "mm")]
+    pub x2: i64,
+    #[serde(deserialize_with = "mm")]
+    pub y2: i64,
+    #[serde(deserialize_with = "mm")]
+    pub width: i64,
+    #[serde(deserialize_with = "mm")]
+    pub depth: i64,
+    /// Ids of the two footings it joins.
+    pub from: String,
+    pub to: String,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Typed for TieBeam {
+    const KIND: &'static str = "TieBeam";
+    const DISCIPLINE: Discipline = Discipline::Str;
+    fn validate(&self, model: &Model, _e: &Element) -> Result<(), String> {
+        if (self.x1 == self.x2) == (self.y1 == self.y2) {
+            return Err("a tie beam must be axis-aligned and not zero-length".into());
+        }
+        if self.width <= 0 || self.depth <= 0 {
+            return Err("tie beam width and depth must be positive".into());
+        }
+        for end in [&self.from, &self.to] {
+            let id: Id = end.parse().map_err(|_| format!("'{end}' is not a footing id"))?;
+            if model.get(&id).is_none_or(|e| e.kind != Footing::KIND) {
+                return Err(format!("footing {id} does not exist"));
+            }
+        }
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------- MEP runs
 
 /// A straight duct, pipe, drain or cable tray between two points, an axis-aligned box in 3D. Heights are millimetres above
@@ -581,6 +628,7 @@ pub fn validate_element(model: &Model, el: &Element) -> Result<(), String> {
         MepPoint::KIND => run::<MepPoint>(model, el),
         Level::KIND => run::<Level>(model, el),
         MepRun::KIND => run::<MepRun>(model, el),
+        TieBeam::KIND => run::<TieBeam>(model, el),
         crate::project::NanoArchProject::KIND => run::<crate::project::NanoArchProject>(model, el),
         _ => Ok(()),
     }

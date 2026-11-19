@@ -111,6 +111,13 @@ pub struct FootingRow {
 #[derive(Debug, Clone, Serialize)]
 pub struct TieBeamRow {
     pub name: String,
+    /// The `TieBeam` element once `apply_tie_beams` has put it in the model.
+    pub id: Option<String>,
+    /// Clear ends on the line between the two footings, mm.
+    pub x1: i64,
+    pub y1: i64,
+    pub x2: i64,
+    pub y2: i64,
     pub from: String,
     pub to: String,
     pub from_id: String,
@@ -289,8 +296,15 @@ pub fn compute(model: &Model, soil_kpa: Option<f64>, inp: &SizingInputs) -> Sizi
                 rep.warnings.push(format!("{na} and {nb} touch or overlap: no tie beam between them"));
                 continue;
             }
+            let (x1, y1, x2, y2) = if *along_x { (fa.x + fa.length / 2, fa.y, fb.x - fb.length / 2, fa.y) } else { (fa.x, fa.y + fa.width / 2, fa.x, fb.y - fb.width / 2) };
+            let existing = model.elements.values().find(|e| e.kind == crate::typed::TieBeam::KIND && e.props.get("from").and_then(|v| v.as_str()) == Some(&a.to_string()) && e.props.get("to").and_then(|v| v.as_str()) == Some(&b.to_string())).map(|e| e.id.to_string());
             rep.tie_beams.push(TieBeamRow {
                 name: format!("TB-{}", rep.tie_beams.len() + 1),
+                id: existing,
+                x1,
+                y1,
+                x2,
+                y2,
                 from: na,
                 to: nb,
                 from_id: a.to_string(),
@@ -336,7 +350,7 @@ pub fn compute(model: &Model, soil_kpa: Option<f64>, inp: &SizingInputs) -> Sizi
         beam_rows.push((name, e.id.to_string(), b.clone(), below));
     }
     for tb in rep.tie_beams.clone() {
-        add(&mut rep, tb.name.clone(), None, "TieBeam", tb.width_mm as f64 * tb.depth_mm as f64 * tb.clear_mm as f64 / 1e9, format!("{} x {} x {} mm clear between {} and {}", tb.width_mm, tb.depth_mm, tb.clear_mm, tb.from, tb.to));
+        add(&mut rep, tb.name.clone(), tb.id.clone(), "TieBeam", tb.width_mm as f64 * tb.depth_mm as f64 * tb.clear_mm as f64 / 1e9, format!("{} x {} x {} mm clear between {} and {}", tb.width_mm, tb.depth_mm, tb.clear_mm, tb.from, tb.to));
     }
     let mut slabs: Vec<(&crate::model::Element, Slab)> = model.elements.values().filter(|e| e.kind == Slab::KIND).filter_map(|e| Some((e, e.typed::<Slab>().ok()?))).collect();
     slabs.sort_by_key(|(e, s)| (level_index(model, e.level_id), s.y, s.x));
@@ -390,7 +404,7 @@ pub fn compute(model: &Model, soil_kpa: Option<f64>, inp: &SizingInputs) -> Sizi
             }
             if let Some(t) = rb.tie_beam.as_ref().or(rb.beam.as_ref()) {
                 for tb in rep.tie_beams.clone() {
-                    beam_bars(&mut rep, &tb.name, None, tb.width_mm as f64, tb.depth_mm as f64, tb.clear_mm as f64, t);
+                    beam_bars(&mut rep, &tb.name, tb.id.clone(), tb.width_mm as f64, tb.depth_mm as f64, tb.clear_mm as f64, t);
                 }
             }
             rep.steel_total_kg = round3(rep.bars.iter().map(|b| b.kg).sum());
@@ -400,6 +414,65 @@ pub fn compute(model: &Model, soil_kpa: Option<f64>, inp: &SizingInputs) -> Sizi
     }
     rep.warnings.push("preliminary: self-weight is not in the column loads, reinforcement is the bars you specified (not a design), footing depth is your input".into());
     rep
+}
+
+/// Puts the tie beams of the report into the model as `TieBeam` elements, replacing the ones generated before, as one undoable
+/// step. Identical beams keep their ids. Returns `(created, removed)`.
+pub fn apply_tie_beams(doc: &mut crate::history::Document, rep: &SizingReport) -> Result<(usize, usize), String> {
+    use crate::command::Command;
+    use crate::model::Source;
+    use crate::typed::{TieBeam, element_of};
+    let signature = |e: &crate::model::Element| format!("{}", serde_json::Value::Object(e.props.clone()));
+    let mut existing: BTreeMap<String, Vec<Id>> = BTreeMap::new();
+    let mut all: Vec<Id> = Vec::new();
+    for e in doc.model.elements.values().filter(|e| e.kind == TieBeam::KIND && e.provenance.source == Source::Generated && !e.provenance.locked) {
+        existing.entry(signature(e)).or_default().push(e.id);
+        all.push(e.id);
+    }
+    let (mut keep, mut creates): (Vec<Id>, Vec<Command>) = (Vec::new(), Vec::new());
+    for t in &rep.tie_beams {
+        let mut el = element_of(&TieBeam { x1: t.x1, y1: t.y1, x2: t.x2, y2: t.y2, width: t.width_mm, depth: t.depth_mm, from: t.from_id.clone(), to: t.to_id.clone(), extra: Default::default() }, Source::Generated);
+        // On the level of the footings it ties.
+        el.level_id = t.from_id.parse::<Id>().ok().and_then(|f| doc.model.get(&f)).and_then(|f| f.level_id);
+        match existing.get_mut(&signature(&el)).and_then(|v| v.pop()) {
+            Some(id) => keep.push(id),
+            None => creates.push(Command::Create(el)),
+        }
+    }
+    let mut cmds: Vec<Command> = all.iter().filter(|id| !keep.contains(id)).map(|id| Command::Delete(*id)).collect();
+    let (removed, created) = (cmds.len(), creates.len());
+    cmds.extend(creates);
+    if !cmds.is_empty() {
+        doc.commit("tie beams", crate::command::Origin::User, cmds).map_err(|e| e.to_string())?;
+    }
+    Ok((created, removed))
+}
+
+/// Concrete (m3) and steel (kg) of columns, footings and tie beams as take-off items for the schedule, each with the ids of the
+/// elements it was measured from: `COL.CONC`, `FND.CONC`, `TB.CONC`, `COL.STEEL`, `FND.STEEL`, `TB.STEEL`.
+pub fn schedule_items(rep: &SizingReport) -> Vec<crate::qto::QtoItem> {
+    use crate::qto::{QtoItem, Unit};
+    let parse = |s: &Option<String>| s.as_ref().and_then(|v| v.parse::<Id>().ok());
+    let mut out = Vec::new();
+    for (code, kind, label) in [("COL.CONC", "Column", "Column concrete"), ("FND.CONC", "Footing", "Footing concrete"), ("TB.CONC", "TieBeam", "Tie beam concrete")] {
+        let parts: Vec<(Id, f64)> = rep.concrete.iter().filter(|c| c.kind == kind).filter_map(|c| Some((parse(&c.id)?, c.volume_m3))).collect();
+        if !parts.is_empty() {
+            out.push(QtoItem { code: code.into(), description: label.into(), unit: Unit::M3, quantity: round3(parts.iter().map(|p| p.1).sum()), waste_pct: None, sources: parts.iter().map(|p| p.0).collect(), parts });
+        }
+    }
+    for (code, prefix, label) in [("COL.STEEL", "COL-", "Column reinforcement"), ("FND.STEEL", "FND-", "Footing reinforcement"), ("TB.STEEL", "TB-", "Tie beam reinforcement")] {
+        let mut per: BTreeMap<Id, f64> = BTreeMap::new();
+        for b in rep.bars.iter().filter(|b| b.element.starts_with(prefix)) {
+            if let Some(id) = parse(&b.id) {
+                *per.entry(id).or_default() += b.kg;
+            }
+        }
+        if !per.is_empty() {
+            let parts: Vec<(Id, f64)> = per.into_iter().collect();
+            out.push(QtoItem { code: code.into(), description: label.into(), unit: Unit::Kg, quantity: round3(parts.iter().map(|p| p.1).sum()), waste_pct: None, sources: parts.iter().map(|p| p.0).collect(), parts });
+        }
+    }
+    out
 }
 
 fn csv_cell(s: &str) -> String {
@@ -417,7 +490,7 @@ impl SizingReport {
             let _ = writeln!(o, "{},{},Footing,{} under {},{},,{}", f.name, f.id, f.provided_mm, f.column, f.load_kn, f.status);
         }
         for t in &self.tie_beams {
-            let _ = writeln!(o, "{},,TieBeam,{}x{} x {} mm from {} to {},,,", t.name, t.width_mm, t.depth_mm, t.clear_mm, t.from, t.to);
+            let _ = writeln!(o, "{},{},TieBeam,{}x{} x {} mm from {} to {},,,", t.name, t.id.clone().unwrap_or_default(), t.width_mm, t.depth_mm, t.clear_mm, t.from, t.to);
         }
         o
     }

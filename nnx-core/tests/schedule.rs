@@ -85,15 +85,17 @@ fn missing_rates_are_an_error_that_names_them() {
     let q = Qto::default();
     let cal = calendar("2026-11-15");
     let all = schedule::template_keys().len();
+    // Tasks that exist only when the take-off has the work (insulation, runs, devices) need no rate for an empty take-off.
+    let required = all - schedule::optional_keys().len();
 
     let ScheduleError::MissingRates(keys) = schedule::build(&q, &RateLib::default(), &cal, 1).unwrap_err() else { panic!() };
-    assert_eq!(keys.len(), all);
+    assert_eq!(keys.len(), required);
 
     // The shipped template has every key but no values: still an error, same keys.
     let tpl = RateLib::from_json(include_str!("../packs/schedule-rates-template.json")).unwrap();
     assert_eq!(tpl.rates.len(), all);
     let ScheduleError::MissingRates(keys) = schedule::build(&q, &tpl, &cal, 1).unwrap_err() else { panic!() };
-    assert_eq!(keys.len(), all);
+    assert_eq!(keys.len(), required);
 
     // One missing rate is reported alone.
     let mut lib = lib_for(3.0, 40.0);

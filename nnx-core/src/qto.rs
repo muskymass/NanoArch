@@ -25,6 +25,7 @@ pub enum Unit {
     M2,
     M3,
     Nr,
+    Kg,
 }
 
 impl Unit {
@@ -34,6 +35,7 @@ impl Unit {
             Unit::M2 => "m2",
             Unit::M3 => "m3",
             Unit::Nr => "nr",
+            Unit::Kg => "kg",
         }
     }
 }
@@ -280,6 +282,21 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
         acc.add("FOOTING.AREA", "Footings, plan area", Unit::M2, area, ids.clone());
         acc.add("FOOTING.COUNT", "Footings", Unit::Nr, footings.len() as f64, ids);
         warnings.push("footing depth is not designed: footing concrete, excavation and reinforcement are not quantified".into());
+    }
+    // ---- tie beams between footings: concrete from their own size ----
+    let ties: Vec<(Id, f64)> = model
+        .elements
+        .values()
+        .filter(|e| e.kind == crate::typed::TieBeam::KIND && (opts.level.is_none() || e.level_id == opts.level))
+        .filter_map(|e| {
+            let t = e.typed::<crate::typed::TieBeam>().ok()?;
+            let len = ((t.x2 - t.x1).abs() + (t.y2 - t.y1).abs()) as f64;
+            Some((e.id, t.width as f64 * t.depth as f64 * len / MM3_PER_M3))
+        })
+        .collect();
+    if !ties.is_empty() {
+        acc.add_parts("TIEBEAM.COUNT", "Tie beams", Unit::Nr, ties.iter().map(|(id, _)| (*id, 1.0)).collect());
+        acc.add_parts("TIEBEAM.VOL", "Tie beam concrete", Unit::M3, ties);
     }
     if !slabs.is_empty() || !beams.is_empty() || !columns.is_empty() {
         warnings.push("reinforcement is not quantified: it needs a structural design".into());

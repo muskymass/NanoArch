@@ -127,9 +127,43 @@ impl Frame {
     }
 }
 
+/// One rectangle of a view in view coordinates: `h0..h1` across (metres) and `z0..z1` up (metres), with the class it is drawn
+/// in (`wall`, `wall cut`, `wall far`, `glass`, `leaf`, `slab`, `column`, `beam`, `footing`, `duct`, `pipe`, `drain`, `cable`,
+/// `parapet`) and the id of the model element it comes from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Shape {
+    pub id: Option<String>,
+    pub class: String,
+    pub h0: f64,
+    pub h1: f64,
+    pub z0: f64,
+    pub z1: f64,
+}
+
+/// A drawn view as geometry, for exports other than SVG.
+#[derive(Debug, Clone)]
+pub struct ViewShapes {
+    pub title: String,
+    pub subtitle: String,
+    pub shapes: Vec<Shape>,
+    pub h_range: (f64, f64),
+    pub top: f64,
+    pub bottom: f64,
+    /// Level names with their elevation above the ground floor top, metres.
+    pub levels: Vec<(String, f64)>,
+}
+
+/// What an export asks for: an elevation or a section.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ViewSpec {
+    Elevation(Side),
+    Section(Cut),
+}
+
 struct Canvas {
     o: String,
     f: Frame,
+    shapes: Vec<Shape>,
 }
 
 impl Canvas {
@@ -139,6 +173,7 @@ impl Canvas {
         if w <= 0.0 || h <= 0.0 {
             return;
         }
+        self.shapes.push(Shape { id: id.map(str::to_string), class: class.to_string(), h0, h1, z0, z1 });
         match id {
             Some(id) => {
                 let _ = writeln!(self.o, r#"<rect class="{class}" data-id="{}" x="{x:.1}" y="{y:.1}" width="{w:.1}" height="{h:.1}"/>"#, esc(id));
@@ -174,12 +209,12 @@ fn begin(opts: &ViewOpts, h_range: (f64, f64), top: f64, bottom: f64) -> Canvas 
     let f = Frame { s, m, h0, zmax: top + headroom };
     let mut o = String::new();
     let _ = write!(o, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {width:.1} {height:.1}\" width=\"{width:.0}\" height=\"{height:.0}\" font-family=\"Segoe UI, Tahoma, Arial, sans-serif\">\n{STYLE}\n<rect class=\"bg\" width=\"{width:.1}\" height=\"{height:.1}\"/>\n");
-    Canvas { o, f }
+    Canvas { o, f, shapes: Vec::new() }
 }
 
 /// Ground line with hatching, level marks, heights, title block. Call last (it needs the final extents).
 #[allow(clippy::too_many_arguments)]
-fn finish(mut c: Canvas, scene: &Scene, title: &str, subtitle: &str, h_range: (f64, f64), top: f64, bottom: f64) -> String {
+fn finish(mut c: Canvas, scene: &Scene, title: &str, subtitle: &str, h_range: (f64, f64), top: f64, bottom: f64) -> (String, ViewShapes) {
     let (h0, h1) = (h_range.0 - 1.5, h_range.1 + 1.5);
     let f = &c.f;
     let (gx0, gx1, gy) = (f.x(h0), f.x(h1), f.y(0.0));
@@ -211,7 +246,8 @@ fn finish(mut c: Canvas, scene: &Scene, title: &str, subtitle: &str, h_range: (f
     let _ = writeln!(o, r#"<text class="title" x="{:.1}" y="{ty:.1}">{}</text><text class="note" x="{:.1}" y="{:.1}">{}</text>"#, f.m, esc(title), f.m, ty + 18.0, esc(subtitle));
     let _ = writeln!(o, r#"<text class="note" x="{:.1}" y="{:.1}">Preliminary drawing: heights from the top of the ground floor slab, no site datum assumed. Metres.</text></svg>"#, f.m, ty + 34.0);
     c.o.push_str(&o);
-    c.o
+    let shapes = ViewShapes { title: title.to_string(), subtitle: subtitle.to_string(), shapes: c.shapes, h_range, top, bottom, levels: marks };
+    (c.o, shapes)
 }
 
 fn top_of(scene: &Scene, parapet: Option<f64>) -> f64 {
@@ -250,6 +286,15 @@ fn h_range_side(b: &Box3, side: Side) -> (f64, f64) {
 }
 
 pub fn elevation_svg(model: &Model, side: Side, opts: &ViewOpts) -> Result<String, ViewError> {
+    Ok(elevation_build(model, side, opts)?.0)
+}
+
+/// The elevation as rectangles (for the DXF export and any other drawing format).
+pub fn elevation_shapes(model: &Model, side: Side, opts: &ViewOpts) -> Result<ViewShapes, ViewError> {
+    Ok(elevation_build(model, side, opts)?.1)
+}
+
+fn elevation_build(model: &Model, side: Side, opts: &ViewOpts) -> Result<(String, ViewShapes), ViewError> {
     check_parapet(opts)?;
     let scene = model3d::build(model);
     let e = extent(&scene).ok_or(ViewError::Empty)?;
@@ -295,6 +340,15 @@ fn section_class(b: &Box3) -> Option<String> {
 }
 
 pub fn section_svg(model: &Model, cut: &Cut, opts: &ViewOpts) -> Result<String, ViewError> {
+    Ok(section_build(model, cut, opts)?.0)
+}
+
+/// The section as rectangles (for the DXF export and any other drawing format).
+pub fn section_shapes(model: &Model, cut: &Cut, opts: &ViewOpts) -> Result<ViewShapes, ViewError> {
+    Ok(section_build(model, cut, opts)?.1)
+}
+
+fn section_build(model: &Model, cut: &Cut, opts: &ViewOpts) -> Result<(String, ViewShapes), ViewError> {
     check_parapet(opts)?;
     let scene = model3d::build(model);
     let e = extent(&scene).ok_or(ViewError::Empty)?;

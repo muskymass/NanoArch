@@ -17,7 +17,7 @@
 //!   this application, so their 3D thickness is a fixed VISUAL value and is flagged `visual`.
 
 use crate::model::{Id, Model};
-use crate::typed::{Beam, Column, Door, Footing, MepPoint, MepRun, Slab, Space, Typed, Wall, Window};
+use crate::typed::{Beam, Column, Door, Footing, MepPoint, MepRun, Slab, Space, TieBeam, Typed, Wall, Window};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -44,7 +44,7 @@ pub const DISCIPLINES: [&str; 5] = ["architectural", "structural", "electrical",
 /// The layer of an element kind and class (an MEP point's role, a run's system).
 fn discipline_of(kind: &str, class: &str) -> &'static str {
     match kind {
-        "Column" | "Beam" | "Footing" | "Slab" => "structural",
+        "Column" | "Beam" | "Footing" | "Slab" | "TieBeam" => "structural",
         "MepPoint" => match class {
             "light" | "socket" | "panel" => "electrical",
             "ac_indoor" | "diffuser" | "grille" => "hvac",
@@ -242,6 +242,17 @@ pub fn build(model: &Model) -> Scene {
                     boxes.push(bx(e.id, Footing::KIND, "footing", [cx - hl, cy - hw, -FLOOR_PLATE - FOOTING_VISUAL], [cx + hl, cy + hw, -FLOOR_PLATE], true));
                 }
             }
+            TieBeam::KIND => {
+                if let Ok(b) = e.typed::<TieBeam>() {
+                    let hw = b.width as f64 / M / 2.0;
+                    let (x0, x1) = (b.x1.min(b.x2) as f64 / M, b.x1.max(b.x2) as f64 / M);
+                    let (y0, y1) = (b.y1.min(b.y2) as f64 / M, b.y1.max(b.y2) as f64 / M);
+                    // Its top is level with the top of the footings.
+                    let (zt, zb) = (-FLOOR_PLATE, -FLOOR_PLATE - b.depth as f64 / M);
+                    let (lo, hi) = if b.y1 == b.y2 { ([x0, y0 - hw, zb], [x1, y0 + hw, zt]) } else { ([x0 - hw, y0, zb], [x0 + hw, y1, zt]) };
+                    boxes.push(bx(e.id, TieBeam::KIND, "tiebeam", lo, hi, false));
+                }
+            }
             Space::KIND => {
                 if let Ok(s) = e.typed::<Space>() {
                     boxes.push(bx(e.id, Space::KIND, &s.func, [s.x as f64 / M, s.y as f64 / M, -FLOOR_PLATE], [(s.x + s.w) as f64 / M, (s.y + s.h) as f64 / M, 0.0], false));
@@ -283,7 +294,7 @@ pub fn build(model: &Model) -> Scene {
             _ => {}
         }
         // Footings sit under the ground floor whatever level they are filed under.
-        let dz = if e.kind == Footing::KIND { 0.0 } else { z0 };
+        let dz = if e.kind == Footing::KIND || e.kind == TieBeam::KIND { 0.0 } else { z0 };
         shift(&mut boxes[start..], dz, lvl);
     }
 

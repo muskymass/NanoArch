@@ -204,6 +204,9 @@ enum Kind {
     Fixed,
 }
 
+/// The work breakdown: the six phases, in the order the work follows.
+pub const PHASES: [&str; 6] = ["Substructure", "Superstructure", "Insulation", "MEP rough-in", "Finishing", "Commissioning"];
+
 struct Tpl {
     key: &'static str,
     name: &'static str,
@@ -211,55 +214,99 @@ struct Tpl {
     preds: &'static [&'static str],
     /// Split into pour zones that follow one another.
     zoned: bool,
+    /// Index into `PHASES`.
+    phase: usize,
+    /// Present only when the take-off has a quantity for it (no insulation, no insulation task). An absent task passes its
+    /// successors on to its own predecessor, and its rate is not required.
+    optional: bool,
+    /// Further quantities measured for the same task, as `(label, item codes)`: the concrete and the steel of the same work.
+    also: &'static [(&'static str, &'static [&'static str])],
 }
 
 use Kind::{Fixed, Qty};
 
-/// The build sequence. Order matters: predecessors come first.
-const TEMPLATES: &[Tpl] = &[
-    Tpl { key: "mobilise", name: "Site mobilisation", kind: Fixed, preds: &[], zoned: false },
-    Tpl { key: "set_out", name: "Setting out", kind: Fixed, preds: &["mobilise"], zoned: false },
-    Tpl { key: "excavate", name: "Excavation for footings", kind: Qty(&["FOOTING.AREA"]), preds: &["set_out"], zoned: false },
-    Tpl { key: "footing_form", name: "Footing formwork", kind: Qty(&["FOOTING.AREA"]), preds: &["excavate"], zoned: false },
-    Tpl { key: "footing_steel", name: "Footing reinforcement", kind: Qty(&["FOOTING.COUNT"]), preds: &["footing_form"], zoned: false },
-    Tpl { key: "footing_pour", name: "Footing concrete pour", kind: Qty(&["FOOTING.AREA"]), preds: &["footing_steel"], zoned: false },
-    Tpl { key: "footing_cure", name: "Footing curing", kind: Fixed, preds: &["footing_pour"], zoned: false },
-    Tpl { key: "backfill", name: "Backfill around footings", kind: Qty(&["FOOTING.AREA"]), preds: &["footing_cure"], zoned: false },
-    Tpl { key: "column_form", name: "Column formwork", kind: Qty(&["COLUMN.FORM"]), preds: &["backfill"], zoned: true },
-    Tpl { key: "column_steel", name: "Column reinforcement", kind: Qty(&["COLUMN.COUNT"]), preds: &["column_form"], zoned: true },
-    Tpl { key: "column_pour", name: "Column concrete pour", kind: Qty(&["COLUMN.VOL"]), preds: &["column_steel"], zoned: true },
-    Tpl { key: "slab_form", name: "Slab and beam formwork", kind: Qty(&["SLAB.FORM", "BEAM.FORM"]), preds: &["column_pour"], zoned: true },
-    Tpl { key: "slab_steel", name: "Slab and beam reinforcement", kind: Qty(&["SLAB.FORM"]), preds: &["slab_form"], zoned: true },
-    Tpl { key: "mep_embed", name: "Embedded electrical and plumbing", kind: Fixed, preds: &["slab_steel"], zoned: false },
-    Tpl { key: "slab_pour", name: "Slab and beam concrete pour", kind: Qty(&["SLAB.VOL", "BEAM.VOL"]), preds: &["mep_embed"], zoned: true },
-    Tpl { key: "slab_cure", name: "Slab curing", kind: Fixed, preds: &["slab_pour"], zoned: false },
-    Tpl { key: "strip_form", name: "Formwork stripping", kind: Qty(&["SLAB.FORM"]), preds: &["slab_cure"], zoned: false },
-    Tpl { key: "blockwork", name: "Blockwork", kind: Qty(&["WALL.EXT.AREA", "WALL.INT.AREA"]), preds: &["strip_form"], zoned: false },
-    Tpl { key: "mep_first_fix", name: "First-fix electrical and plumbing", kind: Fixed, preds: &["blockwork"], zoned: false },
-    Tpl { key: "plaster", name: "Plastering", kind: Qty(&["WALL.FACES.AREA"]), preds: &["mep_first_fix"], zoned: false },
-    Tpl { key: "doors_windows", name: "Doors and windows", kind: Qty(&["DOOR.*", "WINDOW.*"]), preds: &["plaster"], zoned: false },
-    Tpl { key: "ceiling", name: "Ceilings", kind: Qty(&["CEILING.AREA.*"]), preds: &["plaster"], zoned: false },
-    Tpl { key: "paint", name: "Painting", kind: Qty(&["WALL.FACES.AREA"]), preds: &["ceiling", "doors_windows"], zoned: false },
-    Tpl { key: "floor_finish", name: "Floor finishes", kind: Qty(&["FLOOR.AREA.*"]), preds: &["paint"], zoned: false },
-    Tpl { key: "mep_second_fix", name: "Second-fix and fixtures", kind: Fixed, preds: &["paint"], zoned: false },
-    Tpl { key: "testing", name: "Testing and commissioning", kind: Fixed, preds: &["mep_second_fix", "floor_finish"], zoned: false },
-    Tpl { key: "handover", name: "Snagging and handover", kind: Fixed, preds: &["testing"], zoned: false },
+const fn tpl(key: &'static str, name: &'static str, kind: Kind, preds: &'static [&'static str], phase: usize) -> Tpl {
+    Tpl { key, name, kind, preds, zoned: false, phase, optional: false, also: &[] }
+}
+
+const POINTS: &[&str] = &["MEP.light", "MEP.socket", "MEP.panel", "MEP.fixture.*", "MEP.ac_indoor", "MEP.diffuser", "MEP.grille"];
+
+/// The build sequence. Order matters: predecessors come first. Critical path of the whole job:
+/// substructure, superstructure, insulation, MEP rough-in, finishing, commissioning.
+static TEMPLATES: &[Tpl] = &[
+    tpl("mobilise", "Site mobilisation", Fixed, &[], 0),
+    tpl("set_out", "Setting out", Fixed, &["mobilise"], 0),
+    tpl("excavate", "Excavation for footings", Qty(&["FOOTING.AREA"]), &["set_out"], 0),
+    tpl("footing_form", "Footing formwork", Qty(&["FOOTING.AREA"]), &["excavate"], 0),
+    Tpl { also: &[("steel", &["FND.STEEL"])], ..tpl("footing_steel", "Footing reinforcement", Qty(&["FOOTING.COUNT"]), &["footing_form"], 0) },
+    Tpl { also: &[("concrete", &["FND.CONC"])], ..tpl("footing_pour", "Footing concrete pour", Qty(&["FOOTING.AREA"]), &["footing_steel"], 0) },
+    tpl("footing_cure", "Footing curing", Fixed, &["footing_pour"], 0),
+    Tpl { optional: true, also: &[("steel", &["TB.STEEL"])], ..tpl("tie_beam", "Tie beams", Qty(&["TIEBEAM.VOL"]), &["footing_cure"], 0) },
+    tpl("backfill", "Backfill around footings", Qty(&["FOOTING.AREA"]), &["footing_cure", "tie_beam"], 0),
+    Tpl { optional: true, ..tpl("drain_runs", "Below-slab drainage", Qty(&["MEP.run.drain.*"]), &["backfill"], 0) },
+    Tpl { zoned: true, ..tpl("column_form", "Column formwork", Qty(&["COLUMN.FORM"]), &["backfill", "drain_runs"], 1) },
+    Tpl { zoned: true, also: &[("steel", &["COL.STEEL"])], ..tpl("column_steel", "Column reinforcement", Qty(&["COLUMN.COUNT"]), &["column_form"], 1) },
+    Tpl { zoned: true, also: &[("concrete", &["COL.CONC"])], ..tpl("column_pour", "Column concrete pour", Qty(&["COLUMN.VOL"]), &["column_steel"], 1) },
+    Tpl { zoned: true, ..tpl("slab_form", "Slab and beam formwork", Qty(&["SLAB.FORM", "BEAM.FORM"]), &["column_pour"], 1) },
+    Tpl { zoned: true, ..tpl("slab_steel", "Slab and beam reinforcement", Qty(&["SLAB.FORM"]), &["slab_form"], 1) },
+    tpl("mep_embed", "Embedded electrical and plumbing", Fixed, &["slab_steel"], 1),
+    Tpl { zoned: true, ..tpl("slab_pour", "Slab and beam concrete pour", Qty(&["SLAB.VOL", "BEAM.VOL"]), &["mep_embed"], 1) },
+    tpl("slab_cure", "Slab curing", Fixed, &["slab_pour"], 1),
+    tpl("strip_form", "Formwork stripping", Qty(&["SLAB.FORM"]), &["slab_cure"], 1),
+    tpl("blockwork", "Blockwork", Qty(&["WALL.EXT.AREA", "WALL.INT.AREA"]), &["strip_form"], 1),
+    Tpl { optional: true, ..tpl("insulation", "Thermal insulation and waterproofing", Qty(&["INS.*"]), &["blockwork"], 2) },
+    tpl("mep_first_fix", "First-fix electrical and plumbing", Fixed, &["insulation"], 3),
+    Tpl { optional: true, ..tpl("duct_runs", "HVAC ductwork", Qty(&["MEP.run.duct.*"]), &["mep_first_fix"], 3) },
+    Tpl { optional: true, ..tpl("supply_runs", "Water supply pipework", Qty(&["MEP.run.pipe.*"]), &["mep_first_fix"], 3) },
+    Tpl { optional: true, ..tpl("cable_runs", "Cable trays", Qty(&["MEP.run.cable.*"]), &["mep_first_fix"], 3) },
+    tpl("plaster", "Plastering", Qty(&["WALL.FACES.AREA"]), &["mep_first_fix", "duct_runs", "supply_runs", "cable_runs"], 4),
+    tpl("doors_windows", "Doors and windows", Qty(&["DOOR.*", "WINDOW.*"]), &["plaster"], 4),
+    tpl("ceiling", "Ceilings", Qty(&["CEILING.AREA.*"]), &["plaster"], 4),
+    tpl("paint", "Painting", Qty(&["WALL.FACES.AREA"]), &["ceiling", "doors_windows"], 4),
+    tpl("floor_finish", "Floor finishes", Qty(&["FLOOR.AREA.*"]), &["paint"], 4),
+    tpl("mep_second_fix", "Second-fix and fixtures", Fixed, &["paint"], 4),
+    Tpl { optional: true, ..tpl("mep_points", "Devices, diffusers and fixtures installed", Qty(POINTS), &["paint"], 4) },
+    tpl("testing", "Testing and commissioning", Fixed, &["mep_second_fix", "floor_finish", "mep_points"], 5),
+    tpl("handover", "Snagging and handover", Fixed, &["testing"], 5),
 ];
 
-/// Every rate key the schedule needs, and whether it is a fixed duration (`true`) or a production rate.
+fn templates() -> impl Iterator<Item = &'static Tpl> {
+    TEMPLATES.iter()
+}
+
+/// Every rate key the schedule can need, and whether it is a fixed duration (`true`) or a production rate. Optional tasks
+/// are included: their rate is required only when the take-off has something for them (see `optional_keys`).
 pub fn template_keys() -> Vec<(&'static str, bool)> {
-    TEMPLATES.iter().map(|t| (t.key, matches!(t.kind, Fixed))).collect()
+    templates().map(|t| (t.key, matches!(t.kind, Fixed))).collect()
+}
+
+/// The keys of the tasks that exist only when the model has the work.
+pub fn optional_keys() -> Vec<&'static str> {
+    templates().filter(|t| t.optional).map(|t| t.key).collect()
 }
 
 // ------------------------------------------------------------------ schedule
+
+/// An additional quantity measured for a task, for example the steel of a concrete pour.
+#[derive(Debug, Clone)]
+pub struct Measure {
+    pub label: String,
+    pub quantity: f64,
+    pub unit: Unit,
+}
 
 #[derive(Debug, Clone)]
 pub struct Task {
     pub id: String,
     pub name: String,
+    /// Phase of the work breakdown (`PHASES`) and the task's number in it, for example `2.3`.
+    pub phase: &'static str,
+    pub wbs: String,
     pub zone: Option<usize>,
     pub quantity: Option<f64>,
     pub unit: Option<Unit>,
+    /// Further quantities of the same work (concrete m3, steel kg).
+    pub also: Vec<Measure>,
     pub duration: i64,
     /// `(task index, lag in working days)`, finish to start.
     pub preds: Vec<(usize, i64)>,
@@ -320,7 +367,7 @@ pub fn build_with_model(model: &Model, qto: &Qto, lib: &RateLib, cal: &Calendar,
 
 /// Zone (0-based) of every frame element, by the east-west position of its centre.
 fn zone_map(model: &Model, zones: usize) -> BTreeMap<Id, usize> {
-    use crate::typed::{Beam, Column, Footing, Slab, Typed};
+    use crate::typed::{Beam, Column, Footing, Slab, TieBeam, Typed};
     let mut xs: Vec<(Id, i64)> = Vec::new();
     for e in model.elements.values() {
         let x = match e.kind.as_str() {
@@ -328,6 +375,7 @@ fn zone_map(model: &Model, zones: usize) -> BTreeMap<Id, usize> {
             Slab::KIND => e.typed::<Slab>().ok().map(|s| s.x + s.w / 2),
             Beam::KIND => e.typed::<Beam>().ok().map(|b| (b.x1 + b.x2) / 2),
             Footing::KIND => e.typed::<Footing>().ok().map(|f| f.x),
+            TieBeam::KIND => e.typed::<TieBeam>().ok().map(|b| (b.x1 + b.x2) / 2),
             _ => None,
         };
         if let Some(x) = x {
@@ -340,12 +388,55 @@ fn zone_map(model: &Model, zones: usize) -> BTreeMap<Id, usize> {
     xs.into_iter().map(|(id, x)| (id, (((x - lo) as i128 * zones as i128) / span) as usize)).collect()
 }
 
+/// What the take-off holds for a list of item codes: the total, its unit, the codes, the elements and each element's share.
+struct Gathered {
+    total: f64,
+    unit: Option<Unit>,
+    codes: Vec<String>,
+    ids: Vec<Id>,
+    parts: Vec<(Id, f64)>,
+}
+
+fn gather(qto: &Qto, entries: &[&str]) -> Gathered {
+    let items: Vec<_> = qto.items.iter().filter(|i| entries.iter().any(|e| matches_code(e, &i.code))).collect();
+    // Counts (DOOR.*) and areas (WINDOW.AREA) can match one entry: keep items of the first unit only.
+    let unit = items.first().map(|i| i.unit);
+    let items: Vec<_> = items.into_iter().filter(|i| Some(i.unit) == unit).collect();
+    let mut ids: Vec<Id> = items.iter().flat_map(|i| i.sources.iter().copied()).collect();
+    ids.sort();
+    ids.dedup();
+    Gathered { total: items.iter().map(|i| i.quantity).sum(), unit, codes: items.iter().map(|i| i.code.clone()).collect(), ids, parts: items.iter().flat_map(|i| i.parts.iter().copied()).collect() }
+}
+
+/// The share of `g` that falls to zone `z` of `n`: the elements standing in the zone with their own quantities when the
+/// model is known, otherwise an equal split.
+fn zone_share(g: &Gathered, zoned: bool, z: usize, n: usize, zones: usize, zm: Option<&BTreeMap<Id, usize>>) -> (f64, Vec<Id>, bool) {
+    match (zm, zoned && zones > 1 && !g.parts.is_empty()) {
+        (Some(zm), true) => {
+            let mine: Vec<&(Id, f64)> = g.parts.iter().filter(|(id, _)| zm.get(id).copied().unwrap_or(0) == z).collect();
+            let mut ids: Vec<Id> = mine.iter().map(|p| p.0).collect();
+            ids.sort();
+            ids.dedup();
+            let q: f64 = mine.iter().map(|p| p.1).sum();
+            (q, ids, true)
+        }
+        _ => (g.total / n as f64, g.ids.clone(), false),
+    }
+}
+
 fn build_inner(qto: &Qto, lib: &RateLib, cal: &Calendar, zones: usize, zone_map: Option<&BTreeMap<Id, usize>>) -> Result<Schedule, ScheduleError> {
     if zones == 0 {
         return Err(ScheduleError::BadZones);
     }
-    let missing: Vec<String> = TEMPLATES
-        .iter()
+    // Which tasks exist: all of them, except optional ones the take-off has nothing for.
+    let present = |t: &Tpl| -> bool {
+        match (&t.kind, t.optional) {
+            (Qty(entries), true) => gather(qto, entries).total > 0.0,
+            _ => true,
+        }
+    };
+    let missing: Vec<String> = templates()
+        .filter(|t| present(t))
         .filter(|t| {
             let r = lib.rates.get(t.key);
             match t.kind {
@@ -361,48 +452,54 @@ fn build_inner(qto: &Qto, lib: &RateLib, cal: &Calendar, zones: usize, zone_map:
 
     let mut warnings = Vec::new();
     let mut tasks: Vec<Task> = Vec::new();
-    // Task indices per template key, one per zone.
+    // Task indices per template key, one per zone. An absent optional task stands for its predecessor.
     let mut by_key: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    let mut per_phase = [0usize; PHASES.len()];
     let placeholder = cal.nth_workday(0);
 
-    for t in TEMPLATES {
+    for t in templates() {
+        if !present(t) {
+            if let Some(p) = t.preds.first().and_then(|p| by_key.get(p)).cloned() {
+                by_key.insert(t.key, p);
+            }
+            continue;
+        }
         let rate = &lib.rates[t.key];
         let n = if t.zoned { zones } else { 1 };
-        let (total, unit, codes, elements, parts) = match &t.kind {
-            Fixed => (None, None, Vec::new(), Vec::new(), Vec::new()),
-            Qty(entries) => {
-                let items: Vec<_> = qto.items.iter().filter(|i| entries.iter().any(|e| matches_code(e, &i.code))).collect();
-                // Counts (DOOR.*) and areas (WINDOW.AREA) can match one entry: keep items of the first unit only.
-                let unit = items.first().map(|i| i.unit);
-                let items: Vec<_> = items.into_iter().filter(|i| Some(i.unit) == unit).collect();
-                let total: f64 = items.iter().map(|i| i.quantity).sum();
-                let mut ids: Vec<Id> = items.iter().flat_map(|i| i.sources.iter().copied()).collect();
-                ids.sort();
-                ids.dedup();
-                let parts: Vec<(Id, f64)> = items.iter().flat_map(|i| i.parts.iter().copied()).collect();
-                (Some(total), unit, items.iter().map(|i| i.code.clone()).collect(), ids, parts)
-            }
+        let main = match &t.kind {
+            Fixed => None,
+            Qty(entries) => Some(gather(qto, entries)),
         };
-        if let Some(q) = total
-            && q <= 0.0 {
-                warnings.push(format!("'{}' has no quantity in the take-off: scheduled with zero duration", t.name));
-            }
+        if let Some(g) = &main
+            && g.total <= 0.0
+        {
+            warnings.push(format!("'{}' has no quantity in the take-off: scheduled with zero duration", t.name));
+        }
+        let extras: Vec<(&str, Gathered)> = t.also.iter().map(|(label, codes)| (*label, gather(qto, codes))).filter(|(_, g)| g.total > 0.0).collect();
+        per_phase[t.phase] += 1;
+        let wbs = format!("{}.{}", t.phase + 1, per_phase[t.phase]);
         for z in 0..n {
             // With a model, a zone takes the elements that stand in it; otherwise an equal share.
-            let (qty_z, elems_z): (Option<f64>, Vec<Id>) = match (zone_map, t.zoned && zones > 1 && !parts.is_empty()) {
-                (Some(zm), true) => {
-                    let mine: Vec<&(Id, f64)> = parts.iter().filter(|(id, _)| zm.get(id).copied().unwrap_or(0) == z).collect();
-                    let mut ids: Vec<Id> = mine.iter().map(|p| p.0).collect();
-                    ids.sort();
-                    ids.dedup();
-                    let q: f64 = mine.iter().map(|p| p.1).sum();
-                    if q <= 0.0 && total.is_some_and(|t| t > 0.0) {
+            let (qty_z, mut elems_z): (Option<f64>, Vec<Id>) = match &main {
+                None => (None, Vec::new()),
+                Some(g) => {
+                    let (q, ids, by_zone) = zone_share(g, t.zoned, z, n, zones, zone_map);
+                    if by_zone && q <= 0.0 && g.total > 0.0 {
                         warnings.push(format!("zone {} has no elements for '{}'", z + 1, t.name));
                     }
                     (Some(q), ids)
                 }
-                _ => (total.map(|q| q / n as f64), elements.clone()),
             };
+            let mut also: Vec<Measure> = Vec::new();
+            for (label, g) in &extras {
+                let (q, ids, _) = zone_share(g, t.zoned, z, n, zones, zone_map);
+                if let Some(unit) = g.unit {
+                    also.push(Measure { label: (*label).to_string(), quantity: (q * 1e4).round() / 1e4, unit });
+                }
+                elems_z.extend(ids);
+            }
+            elems_z.sort();
+            elems_z.dedup();
             let duration = match (&t.kind, qty_z) {
                 (Fixed, _) => rate.fixed_days.unwrap_or(0.0).ceil() as i64,
                 (Qty(_), Some(q)) if q > 0.0 => (q / (rate.per_crew_day.unwrap_or(1.0) * rate.crews as f64)).ceil() as i64,
@@ -410,11 +507,10 @@ fn build_inner(qto: &Qto, lib: &RateLib, cal: &Calendar, zones: usize, zone_map:
             };
             let mut preds: Vec<(usize, i64)> = Vec::new();
             for p in t.preds {
-                let ptasks = &by_key[p];
-                if t.zoned && ptasks.len() > 1 {
-                    preds.push((ptasks[z], 0)); // same zone of the previous zoned activity
-                } else {
-                    preds.push((*ptasks.last().expect("predecessor exists"), 0));
+                let Some(ptasks) = by_key.get(p) else { continue };
+                let idx = if t.zoned && ptasks.len() > 1 { ptasks[z] } else { *ptasks.last().expect("predecessor exists") };
+                if !preds.iter().any(|(i, _)| *i == idx) {
+                    preds.push((idx, 0)); // the same zone of the previous zoned activity
                 }
             }
             if z > 0 {
@@ -424,9 +520,12 @@ fn build_inner(qto: &Qto, lib: &RateLib, cal: &Calendar, zones: usize, zone_map:
             tasks.push(Task {
                 id: format!("T{:02}", idx + 1),
                 name: if t.zoned && zones > 1 { format!("{} (zone {})", t.name, z + 1) } else { t.name.to_string() },
+                phase: PHASES[t.phase],
+                wbs: wbs.clone(),
                 zone: (t.zoned && zones > 1).then_some(z + 1),
                 quantity: qty_z.map(|q| (q * 1e4).round() / 1e4),
-                unit,
+                unit: main.as_ref().and_then(|g| g.unit),
+                also,
                 duration,
                 preds,
                 es: 0,
@@ -438,7 +537,7 @@ fn build_inner(qto: &Qto, lib: &RateLib, cal: &Calendar, zones: usize, zone_map:
                 start: placeholder,
                 finish: placeholder,
                 rate_source: rate.source.clone(),
-                qto_codes: codes.clone(),
+                qto_codes: main.as_ref().map(|g| g.codes.clone()).unwrap_or_default().into_iter().chain(extras.iter().flat_map(|(_, g)| g.codes.clone())).collect(),
                 elements: elems_z,
             });
             by_key.entry(t.key).or_default().push(idx);
@@ -465,7 +564,6 @@ fn build_inner(qto: &Qto, lib: &RateLib, cal: &Calendar, zones: usize, zone_map:
     let finish = cal.nth_workday((c.finish - 1).max(0));
     Ok(Schedule { tasks, project_days: c.finish, finish, critical, warnings })
 }
-
 impl Schedule {
     pub fn to_csv(&self) -> String {
         fn cell(s: &str) -> String {
