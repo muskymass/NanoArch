@@ -31,7 +31,7 @@ const WATTS_PER_TON_REFRIGERATION: f64 = 3516.85;
 
 // ------------------------------------------------------------------ inputs
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct MepInputs {
     #[serde(default)]
     pub electrical: Option<Elec>,
@@ -43,13 +43,13 @@ pub struct MepInputs {
     pub insulation: Option<InsulationLib>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct CableRow {
     pub amps: f64,
     pub mm2: f64,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Elec {
     /// Voltage of a branch circuit (phase to neutral), V.
     pub voltage_v: Option<f64>,
@@ -79,25 +79,25 @@ pub struct Elec {
     pub route_factor: Option<f64>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Fixture {
     pub flow_lps: f64,
     pub dfu: f64,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct PipeRow {
     pub name: String,
     pub inner_mm: f64,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct DrainRow {
     pub max_dfu: f64,
     pub dia_mm: f64,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Plumb {
     #[serde(default)]
     pub catalog: BTreeMap<String, Fixture>,
@@ -116,7 +116,7 @@ pub struct Plumb {
     pub storage_days: Option<f64>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Hvac {
     pub indoor_c: Option<f64>,
     pub outdoor_c: Option<f64>,

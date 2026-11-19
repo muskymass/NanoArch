@@ -495,6 +495,7 @@ pub fn validate_element(model: &Model, el: &Element) -> Result<(), String> {
         Footing::KIND => run::<Footing>(model, el),
         MepPoint::KIND => run::<MepPoint>(model, el),
         Level::KIND => run::<Level>(model, el),
+        crate::project::NanoArchProject::KIND => run::<crate::project::NanoArchProject>(model, el),
         _ => Ok(()),
     }
 }

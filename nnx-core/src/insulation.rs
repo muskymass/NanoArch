@@ -44,7 +44,7 @@ pub struct Assembly {
     pub rse: Option<f64>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct InsulationLib {
     #[serde(default)]
     pub assemblies: BTreeMap<String, Assembly>,

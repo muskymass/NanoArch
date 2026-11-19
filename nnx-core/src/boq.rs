@@ -31,7 +31,7 @@ pub struct Project {
     pub currency: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ItemData {
     pub spec: Option<String>,
     pub spec_source: Option<String>,
@@ -40,7 +40,7 @@ pub struct ItemData {
     pub waste_pct: Option<f64>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct MatFactor {
     pub material: String,
     pub unit: String,
@@ -49,7 +49,7 @@ pub struct MatFactor {
     pub source: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct MatData {
     pub spec: Option<String>,
     pub spec_source: Option<String>,
@@ -57,14 +57,14 @@ pub struct MatData {
     pub rate_source: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Markup {
     pub name: String,
     pub pct: f64,
     pub source: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct BoqLib {
     #[serde(default)]
     pub project: Project,
