@@ -46,6 +46,13 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
   const px = async (x, y) => ev(`(()=>{const s=drSvg(), p=s.createSVGPoint(), f=drToSvg([${x},${y}]); p.x=f[0]; p.y=f[1]; const c=p.matrixTransform(s.getScreenCTM()); return [c.x,c.y];})()`);
   const model = () => ev(`(async()=>{const o=await call("outline"); const ids=o.tree.ids; return ids.length;})()`);
   const count = sel => ev(`document.querySelectorAll(${JSON.stringify(sel)}).length`);
+  // Every command now sits in a drop-down: open the menu that holds it with a REAL click on its trigger, then click the item itself.
+  const center = sel => ev(`(()=>{const b=document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
+  const menuOf = sel => ev(`document.querySelector(${JSON.stringify(sel)}).closest(".mp").id.slice(3)`);
+  const menuOpen = async name => { const t = await center(`#mt-${name}`); await click(t[0], t[1]); await sleep(150); };
+  const menuPress = async sel => { await menuOpen(await menuOf(sel)); const c = await center(sel); await click(c[0], c[1]); };
+  const openName = () => ev(`MB.open ? MB.open.t.dataset.menu : null`);
+  const arrow = (k, code) => key(k, { code: k, windowsVirtualKeyCode: code });
 
   try {
     await sleep(2500);
@@ -64,9 +71,38 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     await shot("e2e_1_plan");
 
     // ---- enter draft mode with the real button
-    const dbtn = await ev(`(()=>{const b=$("draft").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
-    await click(dbtn[0], dbtn[1]); await sleep(900);
-    check("draft mode on, toolbar and frame ready", await ev(`DR.on && !!DR.frame && $("draftbar").style.display==="flex" && !!$("draftbar").querySelector("[data-dtool=wall]")`));
+    await menuPress("#draft"); await sleep(900);
+    check("draft mode on, menus and frame ready", await ev(`DR.on && !!DR.frame && !!document.querySelector("#mp-draw [data-dtool=wall]") && !document.getElementById("draftbar")`));
+    // ---- the all-dropdown menu bar
+    check("exactly eight menus sit in one bar", (await count("#menubar > .mm > .mt")) === 8 && (await ev(`[...document.querySelectorAll("#menubar .mt")].map(b=>b.textContent).join("|")`)).split("|").every(x => x.length > 1));
+    const loose = await ev(`JSON.stringify([...document.querySelectorAll("button, select, input")].filter(e => e.getClientRects().length).filter(e => !e.closest(".mp, #menubar, #dr-opts, #dr-props, main > .col, #asm-ov, #viewer")).map(e => e.id || e.tagName))`);
+    check("no tool button, select or box sits outside the menus (the side panels' own forms and the plan excepted)", loose === "[]", loose);
+    const colbars = await ev(`document.querySelectorAll("main > .col:nth-child(2) > .bar button").length`);
+    check("the plan column has no toolbar row above the canvas", colbars === 0, String(colbars));
+    const ids = ["openproj","newblank","saveproj","draft","undo","redo","sync","to3d","split","viewsel","sec-at","showstruct","pan-l","pan-r","lang","levelbar","exportsvg","exportifc","exportdxf","exportdxfall","dxfviews","exportrep","exportrepx","exportpdf","v-4d","v-play","v-day","v-slab","v-struct","v-floor","v-glass","v-mep","v-top","v-reset","v-walk","v-eye","v-xray","v-light","v-snap"];
+    const outside = await ev(`JSON.stringify(${JSON.stringify(ids)}.filter(i => !document.getElementById(i) || !document.getElementById(i).closest(".mp")))`);
+    check("every former toolbar control lives inside a menu panel, with its id intact", outside === "[]", outside);
+    const kbd = await ev(`JSON.stringify(DR_TOOLS.filter(t => { const b=document.querySelector('[data-dtool="'+t[0]+'"]'); return !b || b.dataset.kbd !== t[1]; }).map(t=>t[0]).concat(["undo","redo"].filter(i => !$(i).dataset.kbd)))`);
+    check("every tool item shows its shortcut (W P D N G I Q V M C R X A S T O) and Undo/Redo show Ctrl+Z / Ctrl+Y", kbd === "[]" && (await ev(`$("undo").dataset.kbd+"/"+$("redo").dataset.kbd`)) === "Ctrl+Z/Ctrl+Y", kbd);
+    await menuOpen("draw");
+    check("a click opens a menu (aria-expanded, panel visible, below its trigger)", await ev(`MB.open && MB.open.t.id==="mt-draw" && MB.open.t.getAttribute("aria-expanded")==="true" && !$("mp-draw").hidden && $("mp-draw").getBoundingClientRect().top >= $("mt-draw").getBoundingClientRect().bottom - 1`));
+    await shot("e2e_1b_menu_draw");
+    await key("Escape");
+    check("Escape closes the menu and returns focus to its trigger", (await openName()) === null && (await ev(`document.activeElement.id`)) === "mt-draw" && (await ev(`$("mp-draw").hidden`)));
+    await menuOpen("mod"); const oc = await center("#viewer svg"); await click(oc[0] + 5, oc[1] + 5);
+    check("a click outside closes the menu", (await openName()) === null);
+    await ev(`$("mt-file").focus()`); await arrow("ArrowDown", 40);
+    check("ArrowDown on a trigger opens its menu and focuses the first item", (await openName()) === "file" && (await ev(`document.activeElement.id`)) === "openproj");
+    await arrow("ArrowDown", 40);
+    check("ArrowDown walks to the next item", (await ev(`document.activeElement.id`)) === "newblank", await ev(`document.activeElement.id`));
+    await arrow("ArrowRight", 39);
+    check("the horizontal arrows move to the neighbouring menu and keep it open", (await openName()) !== "file" && (await openName()) !== null, String(await openName()));
+    await key("Escape");
+    await menuOpen("draw"); const wc = await center('#mp-draw [data-dtool="wall"]'); await click(wc[0], wc[1]);
+    check("choosing a tool closes the menu and makes it the active tool", (await openName()) === null && (await ev(`DR.tool`)) === "wall", `open=${await openName()} tool=${await ev("DR.tool")}`);
+    await menuOpen("draw");
+    check("the active tool is marked in the Draw menu", await ev(`$("mp-draw").querySelector('[data-dtool="wall"]').classList.contains("primary")`));
+    await key("Escape"); await key("v");
     const defs = await ev(`JSON.stringify(DR.opt)`); check("starting values learned from the plan, not invented", /"thick":"\d+"/.test(defs) && /"dw":"\d+"/.test(defs), defs);
 
     // pick a spot: the middle of the biggest room
@@ -197,19 +233,16 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     check("the division made one new room, named after the room it came from", newKeys.length === 1 && /-2$/.test(newKeys[0]) && refs0.rooms.includes(newKeys[0].replace(/-2$/, "")), JSON.stringify(newKeys));
     const bad = Object.entries(refs1.refs).filter(([id, now]) => now.some((v, i) => { const was = refs0.refs[id][i]; return !(v === was || v === was + "-2") || (v !== was && !refs1.rooms.includes(v)); }));
     check("every opening names what it named, or the new part of that room: none names a room that is gone", bad.length === 0 && Object.keys(refs1.refs).length === Object.keys(refs0.refs).length, JSON.stringify(bad).slice(0, 200));
-    const sv = await ev(`(()=>{const b=$("saveproj").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
     try { fs.unlinkSync(`${D}\\project.nnx`); } catch (e) {}
-    await click(sv[0], sv[1]); await sleep(1500);
+    await menuPress("#saveproj"); await sleep(1500);
     check("the real Save button wrote the .nnx file and the project is clean", fs.existsSync(`${D}\\project.nnx`) && fs.statSync(`${D}\\project.nnx`).size > 1000 && (await ev(`(async()=>(await call("status")).dirty)()`)) === false);
     for (const f of fs.readdirSync(D)) if (/\.dxf$/i.test(f)) fs.unlinkSync(`${D}\\${f}`);
-    const dxb = await ev(`(()=>{const b=$("exportdxf").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
-    await click(dxb[0], dxb[1]); await sleep(2500);
+    await menuPress("#exportdxf"); await sleep(2500);
     const dxfs = fs.readdirSync(D).filter(f => /\.dxf$/i.test(f));
     const dtxt = dxfs.length ? fs.readFileSync(`${D}\\${dxfs[0]}`, "utf8") : "";
     check("the DXF of the divided plan has the separator on A-ROOM-SEP and the new part's room", dxfs.length === 1 && dtxt.includes("A-ROOM-SEP") && dtxt.includes(newKeys[0]), `${dxfs.length} files`);
     await ev(`window.confirm = () => true`);
-    const op = await ev(`(()=>{const b=$("openproj").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
-    await click(op[0], op[1]); await sleep(2000);
+    await menuPress("#openproj"); await sleep(2000);
     const refs2 = JSON.parse(await ev(refsExpr));
     check("the reopened file has the division: the parts, the separator, and the same references", (await count("#viewer rect.room")) === roomsGen0 + 1 && (await count("#viewer g.separator")) === 1 && JSON.stringify(refs2) === JSON.stringify(refs1), `${await count("#viewer rect.room")} rooms`);
     check("the reopened project is clean", (await ev(`(async()=>(await call("status")).dirty)()`)) === false);
@@ -227,8 +260,7 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     // The Blank project button asks before it discards unsaved work (a native dialog a script cannot answer): accept it.
     await ev(`window.confirm = () => true`);
     await ev(`(async()=>{ if (DR.on) await drToggle(false); })()`);
-    const nb = await ev(`(()=>{const b=$("newblank").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
-    await click(nb[0], nb[1]); await sleep(1500);
+    await menuPress("#newblank"); await sleep(1500);
     check("the Blank project button opens an empty project in draft mode", await ev(`DR.on && !!DR.frame && document.querySelectorAll("#viewer rect.wall").length===0`));
     const lv = await ev(`(async()=>JSON.stringify((await call("draft_frame")).defaults))()`);
     check("nothing is pre-filled for a blank project (the user enters sizes)", JSON.parse(lv).wall === null, lv);
@@ -403,10 +435,9 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     check("the 3D scene names the wall's assembly", sc === 1, String(sc));
 
     // ---- the real DXF export carries the separators
-    const eb = await ev(`(()=>{const b=$("exportdxf").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
     for (const f of fs.readdirSync(D)) if (/\.dxf$/i.test(f)) fs.unlinkSync(`${D}\\${f}`);
     const before = new Set(fs.readdirSync(D));
-    await click(eb[0], eb[1]); await sleep(2500);
+    await menuPress("#exportdxf"); await sleep(2500);
     const newDxf = fs.readdirSync(D).filter(f => !before.has(f) && /\.dxf$/i.test(f));
     const dxfText = newDxf.length ? fs.readFileSync(`${D}\\${newDxf[0]}`, "utf8") : "";
     check("the exported DXF file has the room separators", newDxf.length === 1 && dxfText.includes("A-ROOM-SEP") && dxfText.includes("A-GRID"), newDxf.join(","));
@@ -414,21 +445,23 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     // ---- the toolbar stays on one row at a narrow window
     for (const w of [1100, 900]) {
       await send("Emulation.setDeviceMetricsOverride", { width: w, height: 700, deviceScaleFactor: 1, mobile: false }); await sleep(700);
-      const rows = await ev(`(()=>{ const bar=$("draftbar"); const tops=new Set([...bar.querySelectorAll(".grp")].map(g=>Math.round(g.getBoundingClientRect().top))); return { tops: tops.size, h: Math.round(bar.getBoundingClientRect().height) }; })()`);
-      check(`the drafting toolbar is one compact row at ${w} px`, rows.tops === 1 && rows.h >= 30 && rows.h < 60, JSON.stringify(rows));
+      const rows = await ev(`(()=>{ const ts=[...document.querySelectorAll("#menubar .mt")]; const tops=new Set(ts.map(t=>Math.round(t.getBoundingClientRect().top))); const h=document.querySelector("header").getBoundingClientRect(); return { triggers: ts.length, tops: tops.size, h: Math.round(h.height), right: Math.round(Math.max(...ts.map(t=>t.getBoundingClientRect().right))), left: Math.round(Math.min(...ts.map(t=>t.getBoundingClientRect().left))), inner: innerWidth }; })()`);
+      check(`the eight menus are ONE compact row at ${w} px, all inside the window`, rows.triggers === 8 && rows.tops === 1 && rows.h < 56 && rows.right <= rows.inner && rows.left >= 0, JSON.stringify(rows));
+      await menuOpen("view"); const vp = await ev(`(()=>{const b=$("mp-view").getBoundingClientRect(); return {l:b.left,r:b.right,t:b.top,b:b.bottom,w:innerWidth,h:innerHeight};})()`);
+      check(`at ${w} px the View & Export panel opens fully inside the window`, vp.l >= 0 && vp.r <= vp.w && vp.t >= 0 && vp.b <= vp.h + 1 && vp.r > vp.l, JSON.stringify(vp) + " open=" + (await openName()));
+      await shot(`e2e_10_menu_view_${w}`); await key("Escape");
       await shot(`e2e_10_narrow_${w}`);
       // the plan keeps its room: the side panels give way, the window toolbar is one row, and nothing makes the page scroll sideways
-      const lay = await ev(`(()=>{ const r=e=>{const b=e.getBoundingClientRect(); return {x:b.x,y:b.y,w:b.width,h:b.height};}; const cols=[...document.querySelectorAll("main > .col")]; return JSON.stringify({ viewer:r($("vp")), top:r(document.querySelector("main > .col:nth-child(2) > .bar")), brief:getComputedStyle(cols[0]).display, results:r(cols[2]), scrollW:document.documentElement.scrollWidth, inner:innerWidth }); })()`);
+      const lay = await ev(`(()=>{ const r=e=>{const b=e.getBoundingClientRect(); return {x:b.x,y:b.y,w:b.width,h:b.height};}; const cols=[...document.querySelectorAll("main > .col")]; return JSON.stringify({ viewer:r($("vp")), top:r(document.querySelector("header")), brief:getComputedStyle(cols[0]).display, results:r(cols[2]), scrollW:document.documentElement.scrollWidth, inner:innerWidth }); })()`);
       const L = JSON.parse(lay);
       check(`at ${w} px the plan canvas is at least 500 x 300 px`, L.viewer.w >= 500 && L.viewer.h >= 300, lay);
-      check(`at ${w} px the window toolbar is one row and the page does not scroll sideways`, L.top.h < 60 && L.scrollW <= L.inner, lay);
+      check(`at ${w} px the menu bar is one row and the page does not scroll sideways`, L.top.h < 60 && L.scrollW <= L.inner, lay);
       check(`at ${w} px the brief panel is put away once there is a plan, and the results panel stays readable`, L.brief === "none" && L.results.w >= 240, lay);
-      // the header button brings the brief back, and a second press puts it away
-      const pl = await ev(`(()=>{const b=$("pan-l").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
-      await click(pl[0], pl[1]);
+      // the View menu's Brief item brings the brief back, and a second press puts it away
+        await menuPress("#pan-l");
       const shown = JSON.parse(await ev(`(()=>{ const cols=[...document.querySelectorAll("main > .col")]; const b=cols[0].getBoundingClientRect(); const v=$("vp").getBoundingClientRect(); return JSON.stringify({ brief:b.width, viewer:v.width, scrollW:document.documentElement.scrollWidth, inner:innerWidth }); })()`));
       check(`at ${w} px the Brief button shows the brief panel and the plan still has room`, shown.brief >= 240 && shown.viewer >= 300 && shown.scrollW <= shown.inner, JSON.stringify(shown));
-      await click(pl[0], pl[1]);
+      await menuPress("#pan-l");
       check(`at ${w} px a second press puts the brief away again`, (await ev(`getComputedStyle(document.querySelector("main > .col")).display`)) === "none");
     }
     await send("Emulation.clearDeviceMetricsOverride"); await sleep(500);
@@ -438,10 +471,9 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     await ev(`(async()=>{ if (DR.on) { const wb = document.querySelector('[data-dtool=wall]'); wb.click(); } })()`); await sleep(300);
     await setOpt("thick", 333); await setOpt("height", 2777);
     check("sizes are set before the reset", (await ev(`DR.opt.thick + "/" + DR.opt.height`)) === "333/2777");
-    const nb2 = await ev(`(()=>{const b=$("newblank").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
-    await click(nb2[0], nb2[1]); await sleep(2000);
+    await menuPress("#newblank"); await sleep(2000);
     await key("w");
-    const leak = await ev(`JSON.stringify({ opt: [DR.opt.thick, DR.opt.height, DR.opt.dw, DR.opt.ww, DR.opt.off], inputs: [...document.querySelectorAll('#draftbar [data-dopt=thick], #draftbar [data-dopt=height]')].map(i=>i.value) })`);
+    const leak = await ev(`JSON.stringify({ opt: [DR.opt.thick, DR.opt.height, DR.opt.dw, DR.opt.ww, DR.opt.off], inputs: [...document.querySelectorAll('#dr-opts [data-dopt=thick], #dr-opts [data-dopt=height]')].map(i=>i.value) })`);
     check("after Blank project the thickness and height inputs are empty", leak === JSON.stringify({ opt: ["", "", "", "", ""], inputs: ["", ""] }), leak);
     check("the new blank project has no assemblies and no walls", (await ev(`(async()=>(await call("assemblies_get")).assemblies.length)()`)) === 0 && (await count("#viewer rect.wall")) === 0);
 

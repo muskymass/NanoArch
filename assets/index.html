@@ -9,9 +9,10 @@
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#14171b;--panel:#1d2127;--ink:#e8eaee;--mute:#9aa3b0;--line:#2e343c;--accent:#5b9cf0;--accent-ink:#0b1320;--warn:#e0a24a;--bad:#f2837c;--ok:#5fcf8c}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",Tahoma,Arial,sans-serif;height:100vh;display:flex;flex-direction:column}
-header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+header{display:flex;align-items:center;gap:10px;padding:5px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
 header h1{font-size:16px;margin:0;font-weight:700}
 header .sub{color:var(--mute);font-size:12px}
+@media (max-width:1500px){header .sub{display:none}}
 header .grow{flex:1}
 main{flex:1;display:grid;grid-template-columns:400px 1fr 420px;gap:12px;padding:12px;min-height:0}
 .col{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);display:flex;flex-direction:column;min-height:0;overflow:hidden}
@@ -53,13 +54,36 @@ td.num{font-variant-numeric:tabular-nums}
 #viewer svg .gridhit,#viewer svg .dimhit,#viewer svg .sephit{stroke:transparent;stroke-width:12px;vector-effect:non-scaling-stroke;pointer-events:stroke}
 #viewer svg .sepline{stroke:#7a5ca8;stroke-width:1.4;stroke-dasharray:7 4;fill:none}
 #viewer svg .separator.sel .sepline,#viewer svg .sel .sepline{stroke:var(--accent);stroke-width:2.4}
-#draftbar{flex:0 0 auto;flex-wrap:nowrap!important;overflow-x:auto;overflow-y:hidden;white-space:nowrap;scrollbar-width:thin}
-#draftbar input[type=number]{width:54px}
-#draftbar .grp{display:flex;gap:2px;align-items:center;padding:0 6px;border-inline-end:1px solid var(--line);flex:0 0 auto}
-#draftbar .grp:last-of-type{border-inline-end:0}
-#draftbar .grp button{min-width:30px;height:30px;padding:0 5px;font-size:15px;line-height:1}
-#draftbar .opts{display:flex;gap:6px;align-items:center;flex:0 0 auto}
-#draftbar .opts label{font-size:12px}
+/* The menu bar: ONE row of eight drop-downs. Panels are position:fixed (placed from the trigger's rectangle), so nothing clips them. */
+header{position:relative;z-index:20}
+#menubar{display:flex;align-items:center;gap:2px;min-width:0;flex:0 1 auto}
+.mm{display:block}
+.mt{padding:5px 9px;border:1px solid transparent;border-radius:6px;background:transparent;font-size:13px;white-space:nowrap;line-height:1.3}
+.mt::after{content:"";display:inline-block;vertical-align:middle;margin-inline-start:5px;border:4px solid transparent;border-top-color:var(--mute);border-bottom-width:0}
+.mt:hover,.mt[aria-expanded=true]{background:var(--bg);border-color:var(--line)}
+.mt:focus-visible,.mi:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.mp{position:fixed;z-index:30;min-width:240px;max-width:calc(100vw - 16px);max-height:calc(100vh - 52px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.28);padding:5px}
+.mp[hidden]{display:none}
+.mi{display:flex;width:100%;align-items:center;justify-content:space-between;gap:18px;text-align:start;border:0;background:transparent;padding:6px 10px;border-radius:5px;white-space:nowrap;font-size:13px}
+.mi:hover:not(:disabled){background:var(--bg)}
+.mi.primary,.mi.primary:hover:not(:disabled){background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--ink);font-weight:600}
+.mi[data-kbd]:not([data-kbd=""])::after{content:attr(data-kbd);color:var(--mute);font-size:11px;font-family:Consolas,monospace;direction:ltr;font-weight:400}
+.mi .mic{display:inline-block;width:20px;text-align:center;margin-inline-end:6px}
+.msep{height:1px;background:var(--line);margin:4px 2px}
+.mh{font-size:11px;color:var(--mute);padding:4px 10px 2px;text-transform:uppercase;letter-spacing:.04em}
+.mrow{display:flex;gap:6px 10px;align-items:center;flex-wrap:wrap;padding:3px 10px}
+.mp label{display:flex;gap:4px;align-items:center;margin:0;color:var(--ink);font-size:13px}
+.mck{padding:4px 10px}
+.mp select,.mp input[type=number]{padding:3px 5px;font-size:12px}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:4px 10px;min-width:min(720px,calc(100vw - 32px))}
+.mcol.wide{grid-column:1/-1;border-top:1px solid var(--line);margin-top:4px;padding-top:2px}
+#v3tools{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;padding:4px 10px}
+#levelbar{border:0;padding:4px 10px!important;flex-wrap:wrap}
+#levelbar::before{content:attr(data-label);font-size:12px;color:var(--mute)}
+#levelbar button{padding:2px 8px}
+#dr-opts{position:absolute;inset-inline-start:10px;top:8px;z-index:3;display:none;gap:8px;align-items:center;flex-wrap:wrap;max-width:80%;background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:12px}
+#dr-opts input[type=number]{width:54px;padding:2px 5px}
+#dr-opts label{display:flex;gap:3px;align-items:center;margin:0;color:var(--ink)}
 #dr-hint{position:absolute;inset-inline-start:10px;bottom:8px;max-width:70%;background:rgba(255,255,255,.88);border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:12px;pointer-events:none;z-index:3;display:none}
 #asm-ov{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:50;display:flex;align-items:center;justify-content:center}
 #asm-box{background:#fff;color:var(--ink);width:min(980px,96vw);max-height:92vh;overflow:auto;border-radius:10px;padding:14px;box-shadow:0 10px 40px rgba(0,0,0,.35)}
@@ -115,14 +139,11 @@ main>.col{min-width:0}
 /* The side panels can be put away so the plan has the room: main.hl hides the brief column, main.hr the results column. */
 main.hl>.col:first-child,main.hr>.col:last-child{display:none}
 main.hl{grid-template-columns:1fr 420px}main.hr{grid-template-columns:400px 1fr}main.hl.hr{grid-template-columns:1fr}
-header .pan{padding:3px 10px;font-size:12px}
 @media (max-width:1200px){main{grid-template-columns:340px 1fr 340px}main.hl{grid-template-columns:1fr 340px}main.hr{grid-template-columns:340px 1fr}main.hl.hr{grid-template-columns:1fr}}
-/* Narrow window (900 px and the like): thinner panels and tighter gaps, and the plan's own toolbar on one scrolling row, so the canvas keeps its size. */
+/* Narrow window (900 px and the like): thinner panels and tighter gaps; the menu bar stays one row, so the canvas keeps its size. */
 @media (max-width:1100px){
   main{grid-template-columns:250px 1fr 280px;gap:8px;padding:8px}main.hl{grid-template-columns:1fr 280px}main.hr{grid-template-columns:250px 1fr}main.hl.hr{grid-template-columns:1fr}
-  header{padding:6px 10px;gap:8px}header .sub{display:none}
-  main>.col:nth-child(2)>.bar:first-child{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;white-space:nowrap;scrollbar-width:thin;padding:6px 8px}
-  main>.col:nth-child(2)>.bar:first-child>*{flex:0 0 auto}
+  header{padding:4px 8px;gap:6px}header .sub{display:none}.mt{padding:5px 5px;font-size:12.5px}.mt::after{display:none}header h1{font-size:15px}header .badge{font-size:10px;line-height:1.15;max-width:84px;white-space:normal;padding:0 6px;text-align:center}
   main>.col:nth-child(2){overflow-y:auto}
   #vp{min-height:300px}
   /* While drafting, the alternatives strip is not needed: the plan is chosen. */
@@ -132,11 +153,120 @@ header .pan{padding:3px 10px;font-size:12px}
 </head>
 <body>
 <header>
-  <h1>NanoArch</h1><span class="sub" data-i="subtitle"></span>
-  <span class="grow"></span>
+  <h1>NanoArch</h1>
+  <nav id="menubar" aria-label="NanoArch">
+    <div class="mm"><button type="button" class="mt" id="mt-file" data-menu="file" aria-haspopup="true" aria-expanded="false" aria-controls="mp-file"></button>
+      <div class="mp" id="mp-file" hidden>
+        <button class="mi" id="openproj" data-i="open_proj"></button>
+        <button class="mi" id="newblank"></button>
+        <button class="mi" id="saveproj" disabled data-i="save_proj"></button>
+      </div></div>
+    <div class="mm"><button type="button" class="mt" id="mt-draw" data-menu="draw" aria-haspopup="true" aria-expanded="false" aria-controls="mp-draw"></button>
+      <div class="mp" id="mp-draw" hidden>
+        <button class="mi" id="draft" disabled></button>
+        <div class="msep"></div>
+        <div id="mm-draw"></div>
+      </div></div>
+    <div class="mm"><button type="button" class="mt" id="mt-mod" data-menu="mod" aria-haspopup="true" aria-expanded="false" aria-controls="mp-mod"></button>
+      <div class="mp" id="mp-mod" hidden>
+        <button class="mi" id="undo" disabled data-i="undo"></button>
+        <button class="mi" id="redo" disabled data-i="redo"></button>
+        <div class="msep"></div>
+        <div id="mm-mod"></div>
+      </div></div>
+    <div class="mm"><button type="button" class="mt" id="mt-gen" data-menu="gen" aria-haspopup="true" aria-expanded="false" aria-controls="mp-gen"></button>
+      <div class="mp" id="mp-gen" hidden>
+        <button type="button" class="mi" data-click="generate" data-kbd=""></button>
+        <button class="mi" id="sync" disabled data-i="sync"></button>
+        <div class="msep"></div>
+        <div id="mm-bim"></div>
+        <div class="msep"></div>
+        <button type="button" class="mi" data-open-tab="bim"></button>
+        <button type="button" class="mi" data-open-tab="ol"></button>
+        <button type="button" class="mi" data-open-tab="vr"></button>
+        <button type="button" class="mi" data-open-tab="sketch"></button>
+      </div></div>
+    <div class="mm"><button type="button" class="mt" id="mt-sbc" data-menu="sbc" aria-haspopup="true" aria-expanded="false" aria-controls="mp-sbc"></button>
+      <div class="mp" id="mp-sbc" hidden>
+        <button type="button" class="mi" data-open-tab="rules"></button>
+        <button type="button" class="mi" data-open-tab="sbc"></button>
+        <button type="button" class="mi" data-open-tab="cp"></button>
+        <button type="button" class="mi" data-open-tab="ov"></button>
+        <button type="button" class="mi" data-open-tab="an"></button>
+        <button type="button" class="mi" data-open-tab="str"></button>
+        <button type="button" class="mi" data-open-tab="notes"></button>
+      </div></div>
+    <div class="mm"><button type="button" class="mt" id="mt-mep" data-menu="mep" aria-haspopup="true" aria-expanded="false" aria-controls="mp-mep"></button>
+      <div class="mp" id="mp-mep" hidden>
+        <button type="button" class="mi" data-open-tab="mep"></button>
+        <button type="button" class="mi" data-open-tab="mx"></button>
+      </div></div>
+    <div class="mm"><button type="button" class="mt" id="mt-cost" data-menu="cost" aria-haspopup="true" aria-expanded="false" aria-controls="mp-cost"></button>
+      <div class="mp" id="mp-cost" hidden>
+        <button type="button" class="mi" data-open-tab="qto"></button>
+        <button type="button" class="mi" data-open-tab="sched"></button>
+        <button type="button" class="mi" data-open-tab="boq"></button>
+        <button type="button" class="mi" data-open-tab="ex"></button>
+        <div class="msep"></div>
+        <div class="mh" id="mh-4d"></div>
+        <div class="mrow" id="mm-4d">
+          <label><input type="checkbox" id="v-4d"><span data-i="v_4d"></span></label>
+          <button id="v-play" data-i="v_play"></button><input type="range" id="v-day" min="0" max="0" value="0" style="width:170px">
+          <span id="v-day-info" class="note"></span>
+        </div>
+      </div></div>
+    <div class="mm"><button type="button" class="mt" id="mt-view" data-menu="view" aria-haspopup="true" aria-expanded="false" aria-controls="mp-view"></button>
+      <div class="mp" id="mp-view" hidden>
+        <div class="mgrid">
+        <div class="mcol">
+          <div class="mh" data-mh="view"></div>
+          <button class="mi" id="to3d" disabled></button>
+          <button class="mi" id="split" disabled></button>
+          <div class="mrow"><select id="viewsel" disabled style="width:auto"><option value="plan" data-i="v_plan"></option><option value="north" data-i="v_north"></option><option value="south" data-i="v_south"></option><option value="east" data-i="v_east"></option><option value="west" data-i="v_west"></option><option value="A-A" data-i="v_aa"></option><option value="B-B" data-i="v_bb"></option><option value="site" data-i="v_site"></option><option value="furn" data-i="v_furn"></option></select><input id="sec-at" type="number" step="0.1" style="width:90px" data-title="sec_at" placeholder="m"></div>
+          <label class="mck"><input type="checkbox" id="showstruct"><span data-i="show_struct"></span></label>
+          <button id="pan-l" class="mi pan" data-i="pan_brief"></button>
+          <button id="pan-r" class="mi pan" data-i="pan_results"></button>
+          <div id="mm-view"></div>
+          <div id="levelbar" class="bar" style="display:none;gap:6px;padding:6px 8px"></div>
+          <button type="button" class="mi" data-open-tab="pr"></button>
+          <button class="mi" id="lang">English</button>
+        </div>
+        <div class="mcol">
+          <div class="mh" data-mh="exp"></div>
+          <button class="mi" id="exportsvg" disabled data-i="export_svg"></button>
+          <button class="mi" id="exportifc" disabled data-i="export_ifc"></button>
+          <button class="mi" id="exportdxf" disabled data-i="export_dxf"></button>
+          <button class="mi" id="exportdxfall" disabled style="display:none" data-i="export_dxf_all"></button>
+          <button class="mi" id="exportrep" disabled data-i="rep_pdf"></button>
+          <button class="mi" id="exportrepx" disabled data-i="rep_xlsx"></button>
+          <button class="mi" id="exportpdf" disabled data-i="export_pdf"></button>
+          <label class="mck"><input type="checkbox" id="dxfviews"><span data-i="dxf_views"></span></label>
+        </div>
+        <div class="mcol wide">
+          <div class="mh" data-mh="3d"></div>
+          <div id="v3tools">
+            <label><input type="checkbox" id="v-slab"><span data-i="v_slab"></span></label>
+            <label><input type="checkbox" id="v-struct"><span data-i="v_struct"></span></label>
+            <label><input type="checkbox" id="v-floor"><span data-i="v_floor"></span></label>
+            <label><input type="checkbox" id="v-glass"><span data-i="v_glass"></span></label>
+            <label><input type="checkbox" id="v-mep"><span data-i="v_mep"></span></label>
+            <label><input type="checkbox" id="v-d-architectural"><span data-i="d_architectural"></span></label><label><input type="checkbox" id="v-d-structural"><span data-i="d_structural"></span></label><label><input type="checkbox" id="v-d-electrical"><span data-i="d_electrical"></span></label><label><input type="checkbox" id="v-d-plumbing"><span data-i="d_plumbing"></span></label><label><input type="checkbox" id="v-d-hvac"><span data-i="d_hvac"></span></label>
+            <label id="v-level-wrap" style="display:none"><span data-i="v_level"></span> <select id="v-level"></select></label>
+            <button id="v-top" data-i="v_top"></button><button id="v-reset" data-i="v_reset"></button>
+            <button id="v-walk"></button><label><span id="v-eye-l"></span> <input id="v-eye" type="number" step="0.05" min="0.5" max="2.5" value="1.70" style="width:62px"></label>
+            <label><input type="checkbox" id="v-xray"><span id="v-xray-l"></span></label>
+            <select id="v-light"><option value="day"></option><option value="golden"></option><option value="night"></option></select>
+            <select id="v-fin-facade"></select><select id="v-fin-floor"></select>
+            <button id="v-snap"></button><span id="v-walk-hint" class="note" style="display:none"></span>
+            <span id="v3-info" class="note"></span>
+          </div>
+        </div>
+        </div>
+      </div></div>
+  </nav>
+  <span class="grow"></span><span class="sub" data-i="subtitle"></span>
+  <span id="savestate" class="badge"></span>
   <span class="badge" data-i="prelim"></span>
-  <button id="pan-l" class="pan" data-i="pan_brief"></button><button id="pan-r" class="pan" data-i="pan_results"></button>
-  <button id="lang">English</button>
 </header>
 <main>
   <!-- ============ brief ============ -->
@@ -198,46 +328,15 @@ header .pan{padding:3px 10px;font-size:12px}
 
   <!-- ============ plan ============ -->
   <section class="col">
-    <div class="bar">
-      <button id="openproj" data-i="open_proj"></button><button id="newblank"></button>
-      <button id="undo" disabled data-i="undo"></button><button id="redo" disabled data-i="redo"></button>
-      <label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="showstruct"><span data-i="show_struct"></span></label>
-      <button id="sync" disabled data-i="sync"></button>
-      <button id="to3d" disabled></button><button id="split" disabled></button><button id="draft" disabled></button>
-      <select id="viewsel" disabled style="width:auto"><option value="plan" data-i="v_plan"></option><option value="north" data-i="v_north"></option><option value="south" data-i="v_south"></option><option value="east" data-i="v_east"></option><option value="west" data-i="v_west"></option><option value="A-A" data-i="v_aa"></option><option value="B-B" data-i="v_bb"></option><option value="site" data-i="v_site"></option><option value="furn" data-i="v_furn"></option></select>
-      <input id="sec-at" type="number" step="0.1" style="width:90px" data-title="sec_at" placeholder="m">
-      <span style="flex:1"></span>
-      <span id="savestate" class="badge"></span>
-      <button id="exportsvg" disabled data-i="export_svg"></button><button id="exportifc" disabled data-i="export_ifc"></button><button id="exportdxf" disabled data-i="export_dxf"></button><button id="exportdxfall" disabled style="display:none" data-i="export_dxf_all"></button><label style="display:flex;gap:4px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="dxfviews"><span data-i="dxf_views"></span></label><button id="exportrep" disabled data-i="rep_pdf"></button><button id="exportrepx" disabled data-i="rep_xlsx"></button><button id="exportpdf" disabled data-i="export_pdf"></button><button id="saveproj" disabled data-i="save_proj"></button>
-    </div>
     <div class="alts" id="alts"><div class="empty" data-i="alts_empty"></div></div>
-    <div id="levelbar" class="bar" style="display:none;gap:6px;padding:6px 8px"></div>
-    <div id="draftbar" class="bar" style="display:none;gap:4px;padding:4px 6px;align-items:center"></div>
     <div id="dr-props" class="bar" style="display:none;gap:10px;padding:6px 8px;flex-wrap:wrap;align-items:center"></div>
     <div id="inspector" class="bar" style="display:none"></div>
     <div id="vp">
+    <div id="dr-opts"></div>
     <div id="dr-hint"></div>
     <div id="viewer"><div class="empty" data-i="viewer_empty"></div></div>
     <div id="v3">
-      <div class="tools">
-        <label><input type="checkbox" id="v-slab"><span data-i="v_slab"></span></label>
-        <label><input type="checkbox" id="v-struct"><span data-i="v_struct"></span></label>
-        <label><input type="checkbox" id="v-floor"><span data-i="v_floor"></span></label>
-        <label><input type="checkbox" id="v-glass"><span data-i="v_glass"></span></label>
-        <label><input type="checkbox" id="v-mep"><span data-i="v_mep"></span></label>
-        <label><input type="checkbox" id="v-d-architectural"><span data-i="d_architectural"></span></label><label><input type="checkbox" id="v-d-structural"><span data-i="d_structural"></span></label><label><input type="checkbox" id="v-d-electrical"><span data-i="d_electrical"></span></label><label><input type="checkbox" id="v-d-plumbing"><span data-i="d_plumbing"></span></label><label><input type="checkbox" id="v-d-hvac"><span data-i="d_hvac"></span></label>
-        <label id="v-level-wrap" style="display:none"><span data-i="v_level"></span> <select id="v-level"></select></label>
-        <label><input type="checkbox" id="v-4d"><span data-i="v_4d"></span></label>
-        <button id="v-play" data-i="v_play"></button><input type="range" id="v-day" min="0" max="0" value="0" style="width:170px">
-        <span id="v-day-info" class="note"></span>
-        <button id="v-top" data-i="v_top"></button><button id="v-reset" data-i="v_reset"></button>
-        <button id="v-walk"></button><label><span id="v-eye-l"></span> <input id="v-eye" type="number" step="0.05" min="0.5" max="2.5" value="1.70" style="width:62px"></label>
-        <label><input type="checkbox" id="v-xray"><span id="v-xray-l"></span></label>
-        <select id="v-light"><option value="day"></option><option value="golden"></option><option value="night"></option></select>
-        <select id="v-fin-facade"></select><select id="v-fin-floor"></select>
-        <button id="v-snap"></button><span id="v-walk-hint" class="note" style="display:none"></span>
-        <span id="v3-info" class="note"></span>
-      </div>
+
       <canvas id="gl"></canvas>
       <div class="tools"><span class="note" data-i="v_hint"></span><span id="v3-pick" style="font-weight:600"></span></div>
     </div>
@@ -482,6 +581,7 @@ function applyLang() {
   try { $("tab-mx").textContent = L("MEP متقدم", "Advanced MEP"); mxBuild(); } catch (e) { /* not loaded yet */ }
   try { v5Labels(); prBuild(); } catch (e) { /* not loaded yet */ }
   try { exBuild(); olBuild(); vrBuild(); ovBuild(); applyMode(); $("draft").textContent = L("رسم BIM", "BIM draft"); $("newblank").textContent = L("مشروع فارغ", "Blank project"); drBar(); } catch (e) { /* not loaded yet */ }
+  try { mbBuild(); } catch (e) { /* not loaded yet */ }
   if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
 }
 
@@ -2896,26 +2996,46 @@ function drFillDefaults() {
   set("thick", d.wall && d.wall.thickness); set("height", d.wall && d.wall.height); set("dw", d.door && d.door.width); set("dh", d.door && d.door.height);
   set("ww", d.window && d.window.width); set("wh", d.window && d.window.height); set("ws", d.window && d.window.sill); drBar(true);
 }
+// The tools live in the Draw and Modify menus (mbTools); the options of the active tool float over the plan's corner (#dr-opts), so no toolbar row takes canvas.
+const DR_ACTS = [["rot-l", "⟲", "تدوير 90° عكس عقارب الساعة", "Rotate 90° counter-clockwise", ""], ["rot-r", "⟳", "تدوير 90° مع عقارب الساعة", "Rotate 90° clockwise", ""],
+  ["del", "🗑", "حذف", "Delete", "Del"], ["rooms", "▦", "ابحث عن الغرف من الجدران والفواصل المغلقة", "Find the rooms the walls and separators enclose", ""], ["tagall", "🏷", "وسم كل الغرف", "Tag every room", ""],
+  ["tagsel", "🔖", "وسم المحدد (غرف وأبواب ونوافذ وأعمدة وقواعد)", "Tag selected (rooms, doors, windows, columns, footings)", ""], ["asm", "▤", "تركيبات الجدران (الطبقات)", "Wall assemblies (layers)", ""],
+  ["zin", "＋", "تكبير", "Zoom in", "+"], ["zout", "－", "تصغير", "Zoom out", "-"], ["fit", "⤢", "ملاءمة", "Fit", "Home"]];
+// Run a drafting command from a menu: the first one switches the draft mode on, so a menu item never does nothing.
+async function drGo(fn) {
+  try { if (!DR.on) await busy(() => drToggle(true)); if (DR.on) await fn(); } catch (x) { toast(x.message || String(x)); }
+}
+function drAct(a) {
+  if (a === "rot-l") drRotate(1); else if (a === "rot-r") drRotate(-1); else if (a === "del") { if (drNeed(1)) return drEdit("draft_delete", { ids: drIds() }); }
+  else if (a === "rooms") return drEdit("draft_rooms", {}); else if (a === "tagall") return drEdit("draft_tag", {}); else if (a === "tagsel") { if (drNeed(1)) return drEdit("draft_tag", { hosts: drIds() }); }
+  else if (a === "asm") return asmOpen(); else if (a === "zin") drZoom(0.8); else if (a === "zout") drZoom(1.25); else drFit();
+}
+function mbTools() {
+  const tool = ([id, key, ar, en, ic]) => `<button type="button" class="mi${DR.on && DR.tool === id ? " primary" : ""}" data-dtool="${id}" data-kbd="${key}" data-needplan><span><span class="mic">${ic}</span>${esc(L(ar, en))}</span></button>`;
+  const act = ([a, ic, ar, en, kbd]) => `<button type="button" class="mi" data-dact="${a}" data-kbd="${kbd}" data-needplan${a === "zin" || a === "zout" || a === "fit" ? " data-needdraft" : ""}><span><span class="mic">${ic}</span>${esc(L(ar, en))}</span></button>`;
+  const fill = (id, html) => { const e = $(id); if (e) e.innerHTML = html; };
+  const acts = ids => DR_ACTS.filter(x => ids.includes(x[0])).map(act).join("");
+  fill("mm-draw", DR_TOOLS.filter(x => x[5] === "draw" || x[5] === "ann").map(tool).join(""));
+  fill("mm-mod", DR_TOOLS.filter(x => x[5] === "sel" || x[5] === "mod").map(tool).join("") + `<div class="msep"></div>` + acts(["rot-l", "rot-r", "del"]));
+  fill("mm-bim", acts(["rooms", "tagall", "tagsel", "asm"]));
+  fill("mm-view", acts(["zin", "zout", "fit"]));
+  document.querySelectorAll("#menubar [data-dtool]").forEach(b => b.onclick = () => { mbClose(false); drGo(() => drSetTool(b.dataset.dtool)); });
+  document.querySelectorAll("#menubar [data-dact]").forEach(b => b.onclick = () => { mbClose(false); drGo(() => drAct(b.dataset.dact)); });
+}
 function drBar(keepFocus) {
-  const bar = $("draftbar"); if (!bar || !DR.on) return;
+  mbTools();
+  const bar = $("dr-opts"); if (!bar) return;
+  if (!DR.on) { bar.innerHTML = ""; bar.style.display = "none"; return; }
   if (keepFocus && bar.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;
-  const num = (k, label, w) => `<label style="display:flex;gap:3px;align-items:center;margin:0">${label}<input data-dopt="${k}" type="number" step="any" dir="ltr" value="${esc(DR.opt[k])}"${w ? ` style="width:${w}px"` : ""}></label>`;
-  const grp = g => `<div class="grp">${DR_TOOLS.filter(t => t[5] === g).map(([id, key, ar, en, ic]) => `<button data-dtool="${id}" class="${DR.tool === id ? "primary" : ""}" title="${esc(L(ar, en))} (${key})" aria-label="${esc(L(ar, en))}">${ic}</button>`).join("")}</div>`;
-  const chk = (k, label) => `<label style="display:flex;gap:3px;align-items:center;margin:0"><input type="checkbox" data-dopt="${k}" ${DR.opt[k] ? "checked" : ""}>${label}</label>`;
+  const num = (k, label, w) => `<label>${label}<input data-dopt="${k}" type="number" step="any" dir="ltr" value="${esc(DR.opt[k])}"${w ? ` style="width:${w}px"` : ""}></label>`;
+  const chk = (k, label) => `<label><input type="checkbox" data-dopt="${k}" ${DR.opt[k] ? "checked" : ""}>${label}</label>`;
   const opts = { wall: num("thick", L("السماكة", "Thk")) + num("height", L("الارتفاع", "Ht")) + chk("chain", L("متابعة", "Chain")),
     door: num("dw", L("العرض", "W")) + num("dh", L("الارتفاع", "H")), window: num("ww", L("العرض", "W")) + num("wh", L("الارتفاع", "H")) + num("ws", L("الحافة", "Sill")),
     offset: num("off", L("المسافة مم", "Dist mm"), 64), copy: "",
     mirror: `<select data-dopt="axis" style="width:auto"><option value="x" ${DR.opt.axis === "x" ? "selected" : ""}>${L("محور رأسي", "vertical axis")}</option><option value="y" ${DR.opt.axis === "y" ? "selected" : ""}>${L("محور أفقي", "horizontal axis")}</option></select>${chk("copy", L("نسخة", "Copy"))}`,
     select: "" }[DR.tool] || "";
-  const act = (a, ic, tip) => `<button data-dact="${a}" title="${esc(tip)}" aria-label="${esc(tip)}">${ic}</button>`;
-  bar.innerHTML = grp("sel") + grp("draw") + grp("mod") + grp("ann") + `<div class="opts">${opts}</div><span style="flex:1;min-width:6px"></span><div class="grp">`
-    + act("rot-l", "⟲", L("تدوير 90° عكس عقارب الساعة", "Rotate 90° counter-clockwise")) + act("rot-r", "⟳", L("تدوير 90° مع عقارب الساعة", "Rotate 90° clockwise"))
-    + act("rooms", "▦", L("ابحث عن الغرف من الجدران والفواصل المغلقة", "Find the rooms the walls and separators enclose")) + act("tagall", "🏷", L("وسم كل الغرف", "Tag every room")) + act("tagsel", "🔖", L("وسم المحدد (غرف وأبواب ونوافذ وأعمدة وقواعد)", "Tag selected (rooms, doors, windows, columns, footings)"))
-    + act("asm", "▤", L("تركيبات الجدران (الطبقات)", "Wall assemblies (layers)")) + act("del", "🗑", L("حذف (Delete)", "Delete"))
-    + act("zin", "＋", L("تكبير", "Zoom in")) + act("zout", "－", L("تصغير", "Zoom out")) + act("fit", "⤢", L("ملاءمة (Home)", "Fit (Home)")) + `</div>`;
-  bar.querySelectorAll("[data-dtool]").forEach(b => b.onclick = () => drSetTool(b.dataset.dtool));
+  bar.innerHTML = opts; bar.style.display = opts ? "flex" : "none";
   bar.querySelectorAll("[data-dopt]").forEach(i => i.onchange = () => { DR.opt[i.dataset.dopt] = i.type === "checkbox" ? i.checked : i.value; });
-  bar.querySelectorAll("[data-dact]").forEach(b => b.onclick = () => { const a = b.dataset.dact; if (a === "rot-l") drRotate(1); else if (a === "rot-r") drRotate(-1); else if (a === "del") { if (drNeed(1)) drEdit("draft_delete", { ids: drIds() }); } else if (a === "rooms") drEdit("draft_rooms", {}); else if (a === "tagall") drEdit("draft_tag", {}); else if (a === "tagsel") { if (drNeed(1)) drEdit("draft_tag", { hosts: drIds() }); } else if (a === "asm") asmOpen(); else if (a === "zin") drZoom(0.8); else if (a === "zout") drZoom(1.25); else drFit(); });
   drHint();
 }
 // A quarter turn about the middle of the selection (rounded to 50 mm, so the result stays on the grid).
@@ -2961,10 +3081,10 @@ async function drToggle(on) {
     if ($("viewsel").value !== "plan") { $("viewsel").value = "plan"; await showView(); }
     const r = await call("draft_frame"); if (!r.frame) throw new Error(L("ولّد مخططاً أو افتح مشروعاً أولاً", "Generate a plan or open a project first")); DR.frame = r.frame; DR.defaults = r.defaults; DR.on = true; DR.asm = null;
   } else DR.on = false;
-  $("draft").classList.toggle("primary", DR.on); $("viewer").classList.toggle("draft", DR.on); $("draftbar").style.display = DR.on ? "flex" : "none";
+  $("draft").classList.toggle("primary", DR.on); $("viewer").classList.toggle("draft", DR.on);
   DR.start = DR.base = DR.ref = DR.cur = DR.snap = DR.placement = null; DR.vw = null; DR.vb0 = null; DR.tool = "select";
   const svg = drSvg(); if (svg) { svg.classList.toggle("dr", DR.on); const g = svg.querySelector("#dr-ov"); if (g) g.remove(); if (!DR.on && DR.vb0 == null) { /* the plan returns to its own box */ } }
-  if (DR.on) { drFillDefaults(); drBar(); drViewBox(); drProps(); } else { $("draftbar").innerHTML = ""; drProps(); if (svg) { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); } }
+  if (DR.on) { drFillDefaults(); drBar(); drViewBox(); drProps(); } else { drBar(); drProps(); if (svg) { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); } }
 }
 $("draft").onclick = () => busy(() => drToggle(!DR.on));
 
@@ -3048,6 +3168,82 @@ $("newblank").onclick = () => busy(async () => {
 });
 $("draft").textContent = L("رسم BIM", "BIM draft");
 drBind();
+
+// ---------------------------------------------------------------- the menu bar: eight drop-downs on one row
+// Every control keeps its own id and handler; the menus only host them. A panel opens on click, Enter, Space or the arrow keys, and closes on a command,
+// an outside click, Escape, Tab out of the bar, or a resize. Toggles, selects, number boxes and sliders keep the panel open, so several layers can be set at once.
+const MB = { open: null, hover: null };
+const MB_NAMES = { file: ["ملف ومشروع", "File & Project"], draw: ["رسم", "Draw"], mod: ["تعديل", "Modify"], gen: ["توليد وBIM", "Generate & BIM"], sbc: ["الكود والتحليل", "SBC & Analysis"], mep: ["MEP", "MEP"], cost: ["التكلفة و4D", "Cost & 4D"], view: ["عرض وتصدير", "View & Export"] };
+const MB_HEADS = { view: ["العرض", "View"], exp: ["التصدير", "Export"], "3d": ["خيارات العرض ثلاثي الأبعاد", "3D view options"] };
+const MB_KBD = { undo: "Ctrl+Z", redo: "Ctrl+Y" };
+function mbBuild() {
+  for (const [k, [ar, en]] of Object.entries(MB_NAMES)) $("mt-" + k).textContent = L(ar, en);
+  $("menubar").setAttribute("aria-label", L("القوائم", "Menus"));
+  $("mh-4d").textContent = L("التسلسل الزمني 4D", "4D timeline");
+  $("levelbar").dataset.label = L("المستوى", "Level");
+  document.querySelectorAll("[data-mh]").forEach(e => { const h = MB_HEADS[e.dataset.mh]; e.textContent = L(h[0], h[1]); });
+  for (const [id, k] of Object.entries(MB_KBD)) $(id).dataset.kbd = k;
+  mbTools();
+}
+function mbSync(p) {
+  p.querySelectorAll("[data-open-tab]").forEach(b => { const tb = document.querySelector(`.tab[data-tab="${b.dataset.openTab}"]`); if (tb) { b.textContent = tb.textContent; b.classList.toggle("primary", tb.classList.contains("on")); } });
+  p.querySelectorAll("[data-click]").forEach(b => { const o = $(b.dataset.click); if (o) { b.textContent = o.textContent; b.disabled = o.disabled; } });
+  const none = $("draft").disabled;
+  p.querySelectorAll("[data-needplan]").forEach(b => { b.disabled = none || (b.hasAttribute("data-needdraft") && !DR.on); });
+}
+const mbItems = p => [...p.querySelectorAll(".mi:not(:disabled)")].filter(b => b.offsetParent !== null);
+function mbClose(focusTrigger) {
+  if (!MB.open) return; const { t, p } = MB.open; p.hidden = true; t.setAttribute("aria-expanded", "false"); MB.open = null; MB.hover = null; if (focusTrigger) t.focus();
+}
+function mbOpen(t, focusFirst) {
+  if (MB.open && MB.open.t === t) return;
+  MB.hover = null; mbClose(false); const p = $(t.getAttribute("aria-controls")); mbSync(p); p.hidden = false;
+  const r = t.getBoundingClientRect(), w = p.offsetWidth, rtl = document.documentElement.dir === "rtl";
+  p.style.top = Math.round(r.bottom + 2) + "px"; p.style.left = Math.round(Math.max(8, Math.min(rtl ? r.right - w : r.left, innerWidth - w - 8))) + "px";
+  t.setAttribute("aria-expanded", "true"); MB.open = { t, p };
+  if (focusFirst) { const it = focusFirst === "last" ? mbItems(p).pop() : mbItems(p)[0]; if (it) it.focus(); }
+}
+function mbStep(from, dir, keepOpen) {
+  const ts = [...document.querySelectorAll("#menubar .mt")], i = ts.indexOf(from), n = ts[(i + dir + ts.length) % ts.length];
+  if (keepOpen) mbOpen(n, "first"); else n.focus();
+}
+(() => {
+  const bar = $("menubar"), flip = () => (document.documentElement.dir === "rtl" ? -1 : 1);
+  bar.querySelectorAll(".mt").forEach(t => {
+    t.addEventListener("click", e => { if (MB.open && MB.open.t === t) { if (MB.hover === t) MB.hover = null; else mbClose(false); } else mbOpen(t, e.detail === 0 ? "first" : null); });
+    t.addEventListener("mouseenter", () => { if (MB.open && MB.open.t !== t) { mbOpen(t, null); MB.hover = t; } });
+  });
+  bar.addEventListener("click", e => {
+    const tab = e.target.closest("[data-open-tab]");
+    if (tab) { const tb = document.querySelector(`.tab[data-tab="${tab.dataset.openTab}"]`); if (tb) { if (document.querySelector("main").classList.contains("hr")) { LAY.r = false; layoutApply(); } tb.click(); tb.scrollIntoView({ block: "nearest", inline: "nearest" }); } }
+    const px = e.target.closest("[data-click]"); if (px) $(px.dataset.click).click();
+    if (e.target.closest(".mp button") && MB.open) mbClose(false);
+  });
+  bar.addEventListener("keydown", e => {
+    const k = e.key, onT = e.target.classList.contains("mt"), onI = e.target.classList.contains("mi");
+    if (onT && (k === "ArrowDown" || k === "ArrowUp")) { e.preventDefault(); mbOpen(e.target, k === "ArrowDown" ? "first" : "last"); }
+    else if ((onT || onI) && (k === "ArrowLeft" || k === "ArrowRight")) { e.preventDefault(); const t = onT ? e.target : MB.open && MB.open.t; if (t) mbStep(t, (k === "ArrowRight" ? 1 : -1) * flip(), !!MB.open); }
+    else if (onI && MB.open && (k === "ArrowDown" || k === "ArrowUp" || k === "Home" || k === "End")) {
+      e.preventDefault(); const it = mbItems(MB.open.p), i = it.indexOf(e.target);
+      it[k === "Home" ? 0 : k === "End" ? it.length - 1 : (i + (k === "ArrowDown" ? 1 : -1) + it.length) % it.length].focus();
+    }
+  });
+  bar.addEventListener("focusout", e => { if (MB.open && e.relatedTarget && !bar.contains(e.relatedTarget)) mbClose(false); });
+  document.addEventListener("pointerdown", e => { if (MB.open && !e.target.closest("#menubar")) mbClose(false); }, true);
+  // Escape closes the open menu first and never reaches the drafting keys; any other shortcut key closes it and then works as usual.
+  document.addEventListener("keydown", e => {
+    if (!MB.open) return;
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); mbClose(true); }
+    else if (((e.key.length === 1 && e.key !== " ") || e.ctrlKey || e.metaKey) && !drTyping(e)) mbClose(false);
+  }, true);
+  window.addEventListener("resize", () => mbClose(false)); window.addEventListener("blur", () => mbClose(false));
+})();
+// Ctrl+Z / Ctrl+Y: the shortcuts the Modify menu shows. While drafting, drKey already does it.
+window.addEventListener("keydown", e => {
+  if (DR.on || !(e.ctrlKey || e.metaKey) || e.altKey || drTyping(e)) return;
+  const k = e.key.toLowerCase(); if (k !== "z" && k !== "y") return;
+  const b = $(k === "z" && !e.shiftKey ? "undo" : "redo"); if (b.disabled) return; e.preventDefault(); b.click();
+});
 
 applyLang();
 call("assumptions").then(a => { state.assumptions = a; if (state.rooms_out) renderNotes(); });
