@@ -260,6 +260,16 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     // The Blank project button asks before it discards unsaved work (a native dialog a script cannot answer): accept it.
     await ev(`window.confirm = () => true`);
     await ev(`(async()=>{ if (DR.on) await drToggle(false); })()`);
+    // Ctrl+Z / Ctrl+Y also work with draft mode OFF (the Modify menu advertises them). The reopened project's redo stack holds the separator's deletion.
+    {
+      await ev(`document.activeElement && document.activeElement.blur && document.activeElement.blur()`);
+      const u0 = await model(), r0 = await count("#viewer rect.room");
+      await key("y", { modifiers: 2 }); await sleep(1800);
+      const u1 = await model();
+      check("Ctrl+Y redoes with draft mode off", !(await ev(`DR.on`)) && u1 < u0 && (await count("#viewer rect.room")) === r0 - 1, `${u0} -> ${u1} elements`);
+      await key("z", { modifiers: 2 }); await sleep(1800);
+      check("Ctrl+Z undoes with draft mode off", (await model()) === u0 && (await count("#viewer rect.room")) === r0, `${await model()} elements`);
+    }
     await menuPress("#newblank"); await sleep(1500);
     check("the Blank project button opens an empty project in draft mode", await ev(`DR.on && !!DR.frame && document.querySelectorAll("#viewer rect.wall").length===0`));
     const lv = await ev(`(async()=>JSON.stringify((await call("draft_frame")).defaults))()`);

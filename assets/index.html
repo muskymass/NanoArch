@@ -2699,7 +2699,7 @@ const DR = {
 // [id, key, Arabic, English, icon, group]. The toolbar shows icons only (name and key in the tooltip) in four groups.
 const DR_TOOLS = [["select", "V", "تحديد", "Select", "↖", "sel"],
   ["wall", "W", "جدار", "Wall", "▬", "draw"], ["door", "D", "باب", "Door", "🚪", "draw"], ["window", "N", "نافذة", "Window", "◫", "draw"], ["separator", "P", "فاصل غرف", "Room separator", "┅", "draw"], ["grid", "G", "محور", "Grid line", "#", "draw"], ["dimension", "I", "بُعد", "Dimension", "↔", "draw"],
-  ["move", "M", "نقل", "Move", "✥", "mod"], ["copy", "C", "نسخ", "Copy", "⧉", "mod"], ["rotate", "R", "تدوير", "Rotate", "⟳", "mod"], ["mirror", "X", "انعكاس", "Mirror", "⇋", "mod"], ["offset", "O", "إزاحة", "Offset", "⇉", "mod"], ["align", "A", "محاذاة", "Align", "⫤", "mod"], ["split", "S", "تقسيم", "Split", "✂", "mod"], ["trim", "T", "قص للزاوية", "Trim to corner", "⌐", "mod"],
+  ["move", "M", "نقل", "Move", "✥", "mod"], ["copy", "C", "نسخ", "Copy", "⧉", "mod"], ["rotate", "R", "تدوير", "Rotate", "⟳", "mod"], ["mirror", "X", "انعكاس", "Mirror", "⇋", "mod"], ["offset", "O", "إزاحة", "Offset", "⇉", "mod"], ["align", "A", "محاذاة", "Align", "⫤", "mod"], ["split", "S", "تقسيم", "Split", "✂", "mod"], ["trim", "T", "قص إلى الزاوية", "Trim to corner", "⌐", "mod"],
   ["tag", "Q", "وسم", "Tag", "🏷", "ann"]];
 const drSvg = () => document.querySelector("#viewer svg");
 const drToWorld = p => [DR.frame.minx + (p.x - DR.frame.m) / DR.frame.s, DR.frame.maxy - (p.y - DR.frame.m) / DR.frame.s];
@@ -3173,7 +3173,7 @@ drBind();
 // Every control keeps its own id and handler; the menus only host them. A panel opens on click, Enter, Space or the arrow keys, and closes on a command,
 // an outside click, Escape, Tab out of the bar, or a resize. Toggles, selects, number boxes and sliders keep the panel open, so several layers can be set at once.
 const MB = { open: null, hover: null };
-const MB_NAMES = { file: ["ملف ومشروع", "File & Project"], draw: ["رسم", "Draw"], mod: ["تعديل", "Modify"], gen: ["توليد وBIM", "Generate & BIM"], sbc: ["الكود والتحليل", "SBC & Analysis"], mep: ["MEP", "MEP"], cost: ["التكلفة و4D", "Cost & 4D"], view: ["عرض وتصدير", "View & Export"] };
+const MB_NAMES = { file: ["الملف والمشروع", "File & Project"], draw: ["رسم", "Draw"], mod: ["تعديل", "Modify"], gen: ["التوليد وBIM", "Generate & BIM"], sbc: ["SBC والتحليل", "SBC & Analysis"], mep: ["MEP", "MEP"], cost: ["التكلفة والجدولة 4D", "Cost & 4D"], view: ["العرض والتصدير", "View & Export"] };
 const MB_HEADS = { view: ["العرض", "View"], exp: ["التصدير", "Export"], "3d": ["خيارات العرض ثلاثي الأبعاد", "3D view options"] };
 const MB_KBD = { undo: "Ctrl+Z", redo: "Ctrl+Y" };
 function mbBuild() {
