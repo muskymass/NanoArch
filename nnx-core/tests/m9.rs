@@ -814,3 +814,37 @@ fn a_divided_part_is_shown_by_the_display_name_of_its_room_plus_its_number_every
     assert_eq!(names_of_tags(&doc, &named), tags);
     assert!(doc.model.get(&sep_v).is_some());
 }
+
+#[test]
+fn part_names_in_the_ifc_follow_the_room_and_a_part_whose_key_no_longer_extends_its_origin_falls_back_to_its_key() {
+    let mut named: std::collections::BTreeMap<String, String> = [("living".to_string(), "Hall".to_string())].into();
+    let mut doc = blank();
+    layout_room(&mut doc, "living", "living", [0, 0, 9000, 4000]);
+    separator(&mut doc, [3000, 0], [3000, 4000]);
+    let part = |d: &Document, k: &str| d.model.elements.values().find(|e| e.kind == "Space" && e.props["requirementKey"] == k).unwrap().typed::<Space>().unwrap();
+    // IFC: the key is the space's Name, the derived display name its LongName; renaming the room renames its parts, nothing is stored.
+    let ifc_of = |labels: &std::collections::BTreeMap<String, String>| {
+        let o = nnx_core::ifc::IfcOpts { project_name: "P".into(), author: "A".into(), timestamp: "2026-01-01T00:00:00".into(), labels: labels.clone() };
+        nnx_core::ifc::export_ifc(&doc.model, &o).unwrap().text
+    };
+    let t = ifc_of(&named);
+    assert!(t.contains("'living-2'") && t.contains("'Hall-2'") && t.contains("'Hall'"), "Name is the key, LongName the display name");
+    named.insert("living".into(), "Lounge".into());
+    let t = ifc_of(&named);
+    assert!(t.contains("'Lounge-2'") && !t.contains("'Hall-2'"));
+    // No display name anywhere: no LongName, the key alone, as before.
+    assert!(!ifc_of(&Default::default()).contains("Lounge"));
+    // A part whose key does not extend the key of the room it came from (edited by hand) is shown by its own key, never a guessed name.
+    let mut odd = part(&doc, "living-2");
+    odd.requirement_key = "study".into();
+    assert_eq!(annot::room_name(&odd, &named), None);
+    // A splitFrom that is not a room is ignored, not an error.
+    let mut broken = part(&doc, "living-2");
+    broken.extra.insert("splitFrom".into(), json!("not a room"));
+    assert_eq!(annot::room_name(&broken, &named), None);
+    // A display name set for the part's own key wins, and clearing it gives the derived name back.
+    named.insert("living-2".into(), "Study".into());
+    assert_eq!(annot::room_name(&part(&doc, "living-2"), &named).as_deref(), Some("Study"));
+    named.remove("living-2");
+    assert_eq!(annot::room_name(&part(&doc, "living-2"), &named).as_deref(), Some("Lounge-2"));
+}
