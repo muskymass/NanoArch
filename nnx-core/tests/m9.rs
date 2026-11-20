@@ -404,3 +404,97 @@ fn grids_dimensions_and_tags_are_in_the_model_so_the_file_undo_and_redo_carry_th
     // A hosted tag keeps its room from being deleted by accident.
     assert!(doc.commit("x", Origin::User, vec![Command::Delete(room)]).is_err());
 }
+
+// ------------------------------------------------------------------ room separators across the rooms of a layout
+
+fn layout_room(doc: &mut Document, key: &str, func: &str, r: [i64; 4]) -> Id {
+    let sp = Space { func: func.into(), requirement_key: key.into(), area: (r[2] * r[3]) as f64 / 1e6, target_area: 8.0, x: r[0], y: r[1], w: r[2], h: r[3], boundary: vec![[r[0], r[1]], [r[0] + r[2], r[1]], [r[0] + r[2], r[1] + r[3]], [r[0], r[1] + r[3]]], net_area: None, glazing_ratio: None, extra: Default::default() };
+    let mut el = typed::element_of(&sp, Source::Generated);
+    el.level_id = level(doc);
+    let id = el.id;
+    doc.commit("layout room", Origin::Generator, vec![Command::Create(el)]).unwrap_or_else(|e| panic!("{e}"));
+    id
+}
+
+fn separator(doc: &mut Document, a: [i64; 2], b: [i64; 2]) -> (Id, annot::RoomSync) {
+    let (cmd, id) = annot::separator_command(&doc.model, level(doc), (a[0], a[1]), (b[0], b[1])).unwrap_or_else(|e| panic!("{e}"));
+    let mut scratch = Document::new(doc.model.clone());
+    scratch.commit("x", Origin::User, vec![cmd.clone()]).unwrap_or_else(|e| panic!("{e}"));
+    let s = annot::rooms_sync(&scratch.model, level(doc));
+    let mut cmds = vec![cmd];
+    cmds.extend(s.cmds.clone());
+    doc.commit("Draw room separator", Origin::User, cmds).unwrap_or_else(|e| panic!("{e}"));
+    (id, s)
+}
+
+#[test]
+fn a_separator_across_a_layout_room_divides_it_keeps_its_tag_and_openings_and_gives_the_room_back_when_it_goes() {
+    let mut doc = blank();
+    let room = layout_room(&mut doc, "living", "living", [0, 0, 9000, 4000]);
+    let (tc, _) = annot::tag_commands(&doc.model, &[room]).unwrap();
+    doc.commit("tag", Origin::User, tc).unwrap_or_else(|e| panic!("{e}"));
+    let n_before = doc.model.len();
+    // Two separators that cross each other cut it into four; one is enough for two. First one.
+    let (sep, s) = separator(&mut doc, [3000, 0], [3000, 4000]);
+    assert_eq!(s.added.len(), 2);
+    let all = rooms(&doc);
+    assert_eq!(all.len(), 2);
+    let big = all.iter().find(|r| r.0 == "living").unwrap();
+    let small = all.iter().find(|r| r.0 == "living-2").unwrap();
+    assert_eq!((big.1, small.1), ([3000, 0, 6000, 4000], [0, 0, 3000, 4000]));
+    assert!(all.iter().all(|r| r.2 == Source::Generated));
+    fn sp(doc: &Document, k: &str) -> Space {
+        doc.model.elements.values().find(|e| e.kind == "Space" && e.props["requirementKey"] == k).unwrap().typed::<Space>().unwrap()
+    }
+    assert_eq!((sp(&doc, "living").func.as_str(), sp(&doc, "living-2").func.as_str()), ("living", "room"));
+    assert_eq!(sp(&doc, "living-2").target_area, 12.0, "the part's own area, not the original's target");
+    assert_eq!(doc.model.elements.values().filter(|e| e.kind == "Tag").count(), 2, "each part is tagged, as the room was");
+    // A second separator crossing the first divides the big part again.
+    let (sep2, _) = separator(&mut doc, [0, 2000], [9000, 2000]);
+    assert_eq!(rooms(&doc).len(), 4);
+    // Deleting the first leaves the horizontal one: the room is two halves, one above the other.
+    let mut cmds = draft::delete(&doc.model, &[sep]).unwrap().cmds;
+    let mut scratch = Document::new(doc.model.clone());
+    scratch.commit("x", Origin::User, cmds.clone()).unwrap_or_else(|e| panic!("{e}"));
+    cmds.extend(annot::rooms_sync(&scratch.model, level(&doc)).cmds);
+    doc.commit("Delete", Origin::User, cmds).unwrap_or_else(|e| panic!("{e}"));
+    let halves: Vec<[i64; 4]> = rooms(&doc).into_iter().map(|r| r.1).collect();
+    assert_eq!(halves.len(), 2);
+    assert!(halves.contains(&[0, 0, 9000, 2000]) && halves.contains(&[0, 2000, 9000, 2000]));
+    // And deleting that one gives the room back as the layout made it.
+    let mut cmds = draft::delete(&doc.model, &[sep2]).unwrap().cmds;
+    let mut scratch = Document::new(doc.model.clone());
+    scratch.commit("x", Origin::User, cmds.clone()).unwrap_or_else(|e| panic!("{e}"));
+    let back = annot::rooms_sync(&scratch.model, level(&doc));
+    assert!(back.notes.iter().any(|n| n.contains("one room again")));
+    cmds.extend(back.cmds);
+    doc.commit("Delete", Origin::User, cmds).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(rooms(&doc), vec![("living".to_string(), [0, 0, 9000, 4000], Source::Generated)]);
+    assert_eq!(sp(&doc, "living").func, "living");
+    assert_eq!(sp(&doc, "living").target_area, 8.0, "the layout's own target is back");
+    assert!(sp(&doc, "living").extra.get("splitFrom").is_none());
+    assert_eq!(doc.model.elements.values().filter(|e| e.kind == "Tag").count(), 1);
+    // Each edit was one step: undoing walks back through the halves, the four parts and the two parts to the whole room.
+    for expected in [2, 4, 2, 1] {
+        assert!(doc.undo());
+        assert_eq!(rooms(&doc).len(), expected);
+    }
+    assert_eq!(rooms(&doc), vec![("living".to_string(), [0, 0, 9000, 4000], Source::Generated)]);
+    assert_eq!(doc.model.len(), n_before);
+}
+
+#[test]
+fn a_locked_room_the_stair_block_and_a_separator_that_stops_short_are_not_divided_and_say_why() {
+    let mut doc = blank();
+    let locked = layout_room(&mut doc, "bedroom", "bedroom", [0, 0, 4000, 4000]);
+    doc.commit("lock", Origin::User, vec![Command::SetLocked { id: locked, locked: true }]).unwrap_or_else(|e| panic!("{e}"));
+    layout_room(&mut doc, "stair", "stair", [4000, 0, 3000, 4000]);
+    layout_room(&mut doc, "hall", "hall", [7000, 0, 4000, 4000]);
+    let (_, s) = separator(&mut doc, [2000, 0], [2000, 4000]);
+    assert!(s.cmds.is_empty() && s.blocked.iter().any(|b| b.contains("'bedroom'") && b.contains("locked")), "{:?}", s.blocked);
+    let (_, s) = separator(&mut doc, [5500, 0], [5500, 4000]);
+    assert!(s.blocked.iter().any(|b| b.contains("'stair'") && b.contains("stair block")), "{:?}", s.blocked);
+    let (_, s) = separator(&mut doc, [9000, 0], [9000, 2000]);
+    assert!(s.blocked.iter().any(|b| b.contains("'hall'") && b.contains("does not reach both sides")), "{:?}", s.blocked);
+    assert_eq!(rooms(&doc).len(), 3, "nothing was divided");
+}

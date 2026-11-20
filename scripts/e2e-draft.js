@@ -168,6 +168,27 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     const user = await ev(`(async()=>{const o=await call("outline"); let n=0; const walk=x=>{ if(x.kind==="Wall") n++; x.children.forEach(walk)}; walk(o.tree); return n;})()`);
     check("drafted walls appear in the outliner", user > 5);
 
+    // ---- P across a room of the GENERATED plan divides it, as one undoable edit, and the plan keeps its walls
+    await key("Home"); await sleep(900); await key("p");
+    check("P selects the room separator tool on a generated plan", (await ev(`DR.tool`)) === "separator");
+    const gen = await ev(`(()=>{ let best=null; for (const r of document.querySelectorAll("#viewer rect.room")) { const b=r.getBBox(); if (!best || b.width*b.height > best.a) best={a:b.width*b.height,x:b.x,y:b.y,w:b.width,h:b.height}; } if(!best) return null; const p0=drToWorld({x:best.x,y:best.y}), p1=drToWorld({x:best.x+best.w,y:best.y+best.h}); return [Math.min(p0[0],p1[0]),Math.min(p0[1],p1[1]),Math.max(p0[0],p1[0]),Math.max(p0[1],p1[1])]; })()`);
+    check("a room of the generated plan was found", Array.isArray(gen), JSON.stringify(gen));
+    const gx = Math.round((gen[0] + gen[2]) / 2 / 100) * 100;
+    const roomsGen0 = await count("#viewer rect.room"), wallsGen0 = await count("#viewer rect.wall"), tagsGen0 = await count("#viewer g.tag");
+    const gp0 = await px(gx, gen[1] + 20), gp1 = await px(gx, gen[3] - 20);
+    await click(gp0[0], gp0[1]); await click(gp1[0], gp1[1]);
+    await key("Escape"); await key("Escape");
+    check("P across a generated room: one separator and one more room", (await count("#viewer g.separator")) === 1 && (await count("#viewer rect.room")) === roomsGen0 + 1, `${roomsGen0} -> ${await count("#viewer rect.room")} rooms`);
+    check("the generated plan keeps its walls (the separator is not a wall)", (await count("#viewer rect.wall")) === wallsGen0);
+    const divided = await ev(`(async()=>{const o=await call("outline"); const keys=[]; const walk=n=>{ if(n.kind==="Space") keys.push(n.label||n.key||""); n.children.forEach(walk)}; walk(o.tree); return keys.length;})()`);
+    check("the outliner lists the divided room's parts", divided === roomsGen0 + 1, `${divided} spaces`);
+    await shot("e2e_4b_generated_room_divided");
+    await key("z", { modifiers: 2 }); await sleep(900);
+    check("one Ctrl+Z takes the division back: the room and the separator are gone", (await count("#viewer rect.room")) === roomsGen0 && (await count("#viewer g.separator")) === 0 && (await count("#viewer g.tag")) === tagsGen0, `${await count("#viewer rect.room")} rooms`);
+    await key("y", { modifiers: 2 }); await sleep(900);
+    check("Ctrl+Y divides it again", (await count("#viewer rect.room")) === roomsGen0 + 1 && (await count("#viewer g.separator")) === 1);
+    await key("z", { modifiers: 2 }); await sleep(900); await key("v");
+
     // ================================================================ a BLANK project, drafted from nothing
     // The Blank project button asks before it discards unsaved work (a native dialog a script cannot answer): accept it.
     await ev(`window.confirm = () => true`);

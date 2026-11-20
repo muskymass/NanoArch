@@ -1184,6 +1184,8 @@ impl App {
         if !sync.overlapping.is_empty() {
             notes.push(format!("a new enclosed region overlaps the room(s) {} and was not made a room", sync.overlapping.join(", ")));
         }
+        notes.extend(sync.notes.iter().cloned());
+        notes.extend(sync.blocked.iter().cloned());
         let mut v = self.draft_frame()?;
         v["created"] = json!(edit.created.iter().map(|i| i.to_string()).collect::<Vec<_>>());
         v["notes"] = json!(notes);
@@ -1322,7 +1324,7 @@ impl App {
             }
             return Err(why.join("; "));
         }
-        let mut v = self.draft_commit_with("Find rooms", nnx_core::draft::Edit { cmds: sync.cmds.clone(), created: vec![], notes: vec![] }, level, false)?;
+        let mut v = self.draft_commit_with("Find rooms", nnx_core::draft::Edit { cmds: sync.cmds.clone(), created: vec![], notes: sync.notes.iter().chain(sync.blocked.iter()).cloned().collect() }, level, false)?;
         v["rooms_added"] = json!(sync.added);
         v["rooms_removed"] = json!(sync.removed);
         Ok(v)
@@ -4876,14 +4878,68 @@ mod tests {
     }
 
     #[test]
-    fn a_separator_inside_a_room_of_a_generated_layout_is_reported_and_leaves_the_layout_alone() {
+    fn a_separator_across_a_room_of_a_generated_layout_divides_it_in_one_undoable_step_and_removing_it_restores_the_room() {
         let mut app = started();
-        let room = model_of(&app).elements.values().find(|e| e.kind == "Space").unwrap().clone();
+        let room = model_of(&app).elements.values().filter(|e| e.kind == "Space" && !e.props["requirementKey"].as_str().unwrap().starts_with("stair") && e.props["w"].as_i64().unwrap() >= 2000).min_by_key(|e| e.props["requirementKey"].as_str().unwrap().to_string()).unwrap().clone();
+        let key = room.props["requirementKey"].as_str().unwrap().to_string();
+        let func = room.props["func"].as_str().unwrap().to_string();
+        let (x, y, w, h) = (room.props["x"].as_i64().unwrap(), room.props["y"].as_i64().unwrap(), room.props["w"].as_i64().unwrap(), room.props["h"].as_i64().unwrap());
+        let before = rooms_of(&app);
+        let hash0 = hash(&app);
+        let r = app.handle("draft_separator", &json!({ "a": [x + w / 3, y], "b": [x + w / 3, y + h] })).unwrap();
+        let after = rooms_of(&app);
+        assert_eq!(after.len(), before.len() + 1, "{}", r["notes"]);
+        assert!(r["notes"].as_array().unwrap().iter().any(|s| s.as_str().unwrap().contains("was divided by a room separator")), "{}", r["notes"]);
+        // The larger part keeps the key and the function; the other is a generic room named after it; no other room of the layout moved.
+        let part = |app: &App, k: &str| model_of(app).elements.values().find(|e| e.kind == "Space" && e.props["requirementKey"] == k).cloned();
+        let big = part(&app, &key).expect("the key stays");
+        let small = part(&app, &format!("{key}-2")).expect("the other part");
+        assert_eq!((big.props["func"].as_str().unwrap(), small.props["func"].as_str().unwrap()), (func.as_str(), "room"));
+        assert_eq!((big.props["w"].as_i64().unwrap(), small.props["w"].as_i64().unwrap()), (w - w / 3, w / 3));
+        assert_eq!(small.props["targetArea"], small.props["area"], "no target is invented");
+        assert_eq!(big.props["area"].as_f64().unwrap() + small.props["area"].as_f64().unwrap(), room.props["area"].as_f64().unwrap());
+        for k in &before {
+            if *k != key {
+                assert!(after.contains(k), "{k} is untouched");
+            }
+        }
+        // Everything that named the room still names a room that exists, and the SBC check and the exports still run.
+        let names: std::collections::BTreeSet<String> = after.iter().cloned().collect();
+        for e in model_of(&app).elements.values().filter(|e| e.kind == "Window") {
+            assert!(names.contains(e.props["room"].as_str().unwrap()), "a window names a room that exists");
+        }
+        for cmd in ["sbc_check", "qto", "model3d", "svg", "compliance"] {
+            assert!(app.handle(cmd, &json!({})).is_ok(), "{cmd} runs on the divided plan");
+        }
+        assert!(app.handle("export_dxf", &json!({})).unwrap()["counts"]["A-ROOM-SEP"].as_u64().unwrap() >= 1);
+        // One undo takes it all back; redo brings it again; deleting the separator gives the layout's room back, unchanged.
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(hash(&app), hash0, "the model is as it was before the separator");
+        app.handle("redo", &json!({})).unwrap();
+        assert_eq!(rooms_of(&app).len(), before.len() + 1);
+        let sep = r["separator"].as_str().unwrap().to_string();
+        let del = app.handle("draft_delete", &json!({ "ids": [sep] })).unwrap();
+        assert!(del["notes"].as_array().unwrap().iter().any(|s| s.as_str().unwrap().contains("one room again")), "{}", del["notes"]);
+        let mut restored = rooms_of(&app);
+        let mut original = before.clone();
+        restored.sort();
+        original.sort();
+        assert_eq!(restored, original);
+        let back = part(&app, &key).unwrap();
+        assert_eq!([back.props["x"].as_i64().unwrap(), back.props["y"].as_i64().unwrap(), back.props["w"].as_i64().unwrap(), back.props["h"].as_i64().unwrap()], [x, y, w, h]);
+        assert_eq!(back.props["func"], room.props["func"]);
+        assert!(back.props.get("splitFrom").is_none());
+    }
+
+    #[test]
+    fn a_separator_that_does_not_reach_both_sides_of_a_layout_room_divides_nothing_and_says_why() {
+        let mut app = started();
+        let room = model_of(&app).elements.values().find(|e| e.kind == "Space" && !e.props["requirementKey"].as_str().unwrap().starts_with("stair") && e.props["w"].as_i64().unwrap() >= 2000 && e.props["h"].as_i64().unwrap() >= 2000).unwrap().clone();
         let (x, y, w, h) = (room.props["x"].as_i64().unwrap(), room.props["y"].as_i64().unwrap(), room.props["w"].as_i64().unwrap(), room.props["h"].as_i64().unwrap());
         let n = rooms_of(&app).len();
-        let r = app.handle("draft_separator", &json!({ "a": [x + w / 2, y], "b": [x + w / 2, y + h] })).unwrap();
-        assert!(r["notes"].as_array().unwrap().iter().any(|s| s.as_str().unwrap().contains("overlaps the room")), "{}", r["notes"]);
-        assert_eq!(rooms_of(&app).len(), n, "a room of the layout is never split silently");
+        let r = app.handle("draft_separator", &json!({ "a": [x + w / 2, y + h / 4], "b": [x + w / 2, y + h / 2] })).unwrap();
+        assert!(r["notes"].as_array().unwrap().iter().any(|s| s.as_str().unwrap().contains("does not reach both sides")), "{}", r["notes"]);
+        assert_eq!(rooms_of(&app).len(), n);
     }
 
     #[test]

@@ -152,6 +152,11 @@ pub fn move_partition(doc: &mut Document, brief: &Brief, so: &StructOpts, wall_i
 /// generation does. `rooms` is the final set of rooms of the level (without the removed ones).
 #[allow(clippy::too_many_arguments)]
 fn rebuild(doc: &mut Document, brief: &Brief, so: &StructOpts, level: Option<Id>, rooms: &[Room], moved_rects: &BTreeMap<Id, Rect>, removed: &[Id], label: &str) -> Result<(), String> {
+    // A room that a room separator divides has no wall between its parts; rebuilding the walls from the rooms would draw one.
+    if let Some(e) = doc.model.elements.values().find(|e| e.kind == Space::KIND && (level.is_none() || e.level_id == level) && e.props.contains_key("splitFrom")) {
+        let key = e.props.get("requirementKey").and_then(Value::as_str).unwrap_or_default();
+        return Err(format!("the room '{key}' is divided by a room separator: delete the separator first, then edit the layout"));
+    }
     let lookup =|key: &str| brief.rooms.iter().find(|q| q.key == key);
     let placed: Vec<PlacedRoom> = rooms
         .iter()

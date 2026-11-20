@@ -301,6 +301,198 @@ pub struct RoomSync {
     pub not_rect: usize,
     /// Regions that were not made rooms because a room of a layout already covers part of them.
     pub overlapping: Vec<String>,
+    /// What was done to the rooms of a layout that room separators divide (or that stopped being divided), one sentence each.
+    pub notes: Vec<String>,
+    /// Room separators that cross a room of a layout and could not divide it, with the reason.
+    pub blocked: Vec<String>,
+}
+
+/// The rectangles a room `r` ([x, y, w, h]) is divided into by the separators that cross its inside, how many of the regions are not
+/// rectangles, and whether any separator crosses the room at all. The room's own four sides bound the regions, so a separator that sticks
+/// out past a side divides it exactly as one that ends on it, and one that does not reach both sides divides nothing.
+fn divide(r: &[i64; 4], seps: &[(i64, i64, i64, i64)]) -> (Vec<[i64; 4]>, usize, bool) {
+    let (x0, y0, x1, y1) = (r[0], r[1], r[0] + r[2], r[1] + r[3]);
+    let crossing: Vec<(i64, i64, i64, i64)> = seps
+        .iter()
+        .copied()
+        .filter(|s| {
+            let (ax, bx, ay, by) = (s.0.min(s.2), s.0.max(s.2), s.1.min(s.3), s.1.max(s.3));
+            if s.0 == s.2 { ax > x0 && ax < x1 && ay < y1 && by > y0 } else { ay > y0 && ay < y1 && ax < x1 && bx > x0 }
+        })
+        .collect();
+    if crossing.is_empty() {
+        return (vec![*r], 0, false);
+    }
+    let mut lines = vec![(x0, y0, x1, y0), (x1, y0, x1, y1), (x0, y1, x1, y1), (x0, y0, x0, y1)];
+    lines.extend(crossing);
+    let (rects, not_rect) = regions(&lines);
+    (rects, not_rect, true)
+}
+
+/// Squared-free distance (Manhattan) from a point to a rectangle: 0 on or inside it.
+fn distance_to(p: (i64, i64), r: &[i64; 4]) -> i64 {
+    (r[0] - p.0).max(p.0 - (r[0] + r[2])).max(0) + (r[1] - p.1).max(p.1 - (r[1] + r[3])).max(0)
+}
+
+/// The key of the room (of `rooms`, largest first) the point is in, or nearest to when it is on a separator or outside every room.
+fn room_at(rooms: &[(String, [i64; 4])], p: (i64, i64)) -> Option<&str> {
+    rooms.iter().min_by_key(|(_, r)| distance_to(p, r)).map(|(k, _)| k.as_str())
+}
+
+/// The rooms of a layout (`Source::Generated`) that the level's room separators cut from side to side, divided in the same step, and the
+/// rooms of earlier divisions put back or divided differently when their separators moved or went.
+///
+/// - The largest part keeps the room's key and function; each other part is a room named `<key>-2`, `<key>-3`, … whose function is the
+///   generic `room`, so no rule of a function (a minimum area, glazing) is applied to it until the user names its function.
+///   Parts take their own area as target: no target is invented.
+/// - Every part carries the original room's data in `splitFrom`, which is how the division is undone: when no separator divides the
+///   room any more, the original comes back unchanged.
+/// - Windows, doors and MEP points that named the room go to the part they stand in or against. A tag on the room is given again to each
+///   part. Walls keep naming the original room (they run along more than one part).
+/// - A locked room, a stair block, and a separator that does not reach both sides or leaves a region that is not a rectangle, divide
+///   nothing and are reported.
+fn split_generated(model: &Model, level: Option<Id>, out: &mut RoomSync) {
+    let seps: Vec<(i64, i64, i64, i64)> = model.elements.values().filter(|e| e.kind == RoomSeparator::KIND && on_level(e, level)).filter_map(|e| e.typed::<RoomSeparator>().ok()).map(|s| (s.x1, s.y1, s.x2, s.y2)).collect();
+    struct Unit {
+        orig: Space,
+        level: Option<Id>,
+        now: Vec<(Id, [i64; 4], String)>,
+        locked: bool,
+    }
+    let mut units: BTreeMap<String, Unit> = BTreeMap::new();
+    for e in model.elements.values().filter(|e| e.kind == Space::KIND && on_level(e, level) && e.provenance.source == Source::Generated) {
+        let Ok(s) = e.typed::<Space>() else { continue };
+        let orig = match e.props.get("splitFrom") {
+            Some(v) => match serde_json::from_value::<Space>(v.clone()) {
+                Ok(o) => o,
+                Err(_) => continue,
+            },
+            None => s.clone(),
+        };
+        let u = units.entry(orig.requirement_key.clone()).or_insert_with(|| Unit { orig, level: e.level_id, now: Vec::new(), locked: false });
+        u.locked |= e.provenance.locked;
+        u.now.push((e.id, [s.x, s.y, s.w, s.h], s.requirement_key));
+    }
+    if units.is_empty() {
+        return;
+    }
+    let locked_keys: Vec<String> = crate::project::get(model).ok().flatten().map(|p| p.meta.locked_rooms).unwrap_or_default();
+    let mut taken: BTreeSet<String> = model.elements.values().filter(|e| e.kind == Space::KIND).filter_map(|e| e.props.get("requirementKey").and_then(|v| v.as_str()).map(str::to_string)).collect();
+    for (key, u) in units {
+        let r0 = [u.orig.x, u.orig.y, u.orig.w, u.orig.h];
+        let (parts, not_rect, crossed) = divide(&r0, &seps);
+        let stays = if u.locked || u.now.iter().any(|(_, _, k)| locked_keys.contains(k)) {
+            Some("it is locked")
+        } else if crate::building::is_stair_block(&key) {
+            Some("the stair block is the same on every level")
+        } else if not_rect > 0 {
+            Some("the separators leave a region that is not a rectangle")
+        } else if parts.len() < 2 {
+            Some("it does not reach both sides of the room")
+        } else {
+            None
+        };
+        let mut want = match stays {
+            None => parts,
+            Some(_) => vec![r0],
+        };
+        if let (true, Some(why)) = (crossed, stays) {
+            out.blocked.push(format!("a room separator crosses the room '{key}' but does not divide it: {why}"));
+        }
+        want.sort_by_key(|r| (std::cmp::Reverse(i128::from(r[2]) * i128::from(r[3])), r[1], r[0]));
+        let mut have: Vec<[i64; 4]> = u.now.iter().map(|(_, r, _)| *r).collect();
+        have.sort_by_key(|r| (std::cmp::Reverse(i128::from(r[2]) * i128::from(r[3])), r[1], r[0]));
+        if have == want {
+            continue;
+        }
+        // The rooms as they are go, with their tags; the tag's wishes are kept for the rooms that replace them.
+        let mut tag_flags: Option<(bool, bool, bool)> = None;
+        for (id, _, k) in &u.now {
+            for d in model.dependents(id) {
+                if tag_flags.is_none()
+                    && let Some(t) = model.get(&d).and_then(|e| e.typed::<Tag>().ok())
+                {
+                    tag_flags = Some((t.show_name, t.show_area, t.show_elevation));
+                }
+                out.cmds.push(Command::Delete(d));
+            }
+            out.cmds.push(Command::Delete(*id));
+            taken.remove(k);
+            out.removed.push(k.clone());
+        }
+        // The rooms that replace them.
+        let mut made: Vec<(String, [i64; 4])> = Vec::new();
+        let mut new_ids: Vec<Id> = Vec::new();
+        let split_from = serde_json::to_value(&u.orig).ok();
+        for (i, r) in want.iter().enumerate() {
+            let sp = if want.len() == 1 {
+                u.orig.clone()
+            } else {
+                let (k, func, mut extra) = if i == 0 {
+                    (key.clone(), u.orig.func.clone(), u.orig.extra.clone())
+                } else {
+                    let k = (2..).map(|n| format!("{key}-{n}")).find(|k| !taken.contains(k)).unwrap_or_default();
+                    (k, "room".to_string(), serde_json::Map::new())
+                };
+                if let Some(v) = &split_from {
+                    extra.insert("splitFrom".into(), v.clone());
+                }
+                let area = ((r[2] as f64 * r[3] as f64) / 1e6 * 100.0).round() / 100.0;
+                Space { func, requirement_key: k, area, target_area: area, x: r[0], y: r[1], w: r[2], h: r[3], boundary: vec![[r[0], r[1]], [r[0] + r[2], r[1]], [r[0] + r[2], r[1] + r[3]], [r[0], r[1] + r[3]]], net_area: None, glazing_ratio: None, extra }
+            };
+            taken.insert(sp.requirement_key.clone());
+            made.push((sp.requirement_key.clone(), *r));
+            let mut el = element_of(&sp, Source::Generated);
+            el.level_id = u.level;
+            new_ids.push(el.id);
+            out.added.push(sp.requirement_key.clone());
+            out.cmds.push(Command::Create(el));
+        }
+        if let Some((show_name, show_area, show_elevation)) = tag_flags {
+            for id in &new_ids {
+                let mut t = element_of(&Tag { dx: 0, dy: 0, show_name, show_area, show_elevation, extra: Default::default() }, Source::User);
+                t.level_id = u.level;
+                t.host_id = Some(*id);
+                out.cmds.push(Command::Create(t));
+            }
+        }
+        // Whatever named the room goes to the part it is in.
+        let mut names: BTreeSet<String> = u.now.iter().map(|(_, _, k)| k.clone()).collect();
+        names.insert(key.clone());
+        for e in model.elements.values() {
+            let set = |field: &str, to: &str| Command::SetProp { id: e.id, key: field.into(), value: Some(serde_json::json!(to)) };
+            match e.kind.as_str() {
+                "Window" => {
+                    let (Some(cur), Some(p)) = (e.props.get("room").and_then(|v| v.as_str()).filter(|k| names.contains(*k)), host_centre(model, e)) else { continue };
+                    if let Some(to) = room_at(&made, p).filter(|to| *to != cur) {
+                        out.cmds.push(set("room", to));
+                    }
+                }
+                "Door" => {
+                    let Some(p) = host_centre(model, e) else { continue };
+                    for field in ["from", "to", "opensInto"] {
+                        let Some(cur) = e.props.get(field).and_then(|v| v.as_str()).filter(|k| names.contains(*k)) else { continue };
+                        if let Some(to) = room_at(&made, p).filter(|to| *to != cur) {
+                            out.cmds.push(set(field, to));
+                        }
+                    }
+                }
+                "MepPoint" => {
+                    let (Some(cur), Some(x), Some(y)) = (e.props.get("room").and_then(|v| v.as_str()).filter(|k| names.contains(*k)), e.props.get("x").and_then(|v| v.as_i64()), e.props.get("y").and_then(|v| v.as_i64())) else { continue };
+                    if let Some(to) = room_at(&made, (x, y)).filter(|to| *to != cur) {
+                        out.cmds.push(set("room", to));
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.notes.push(if want.len() == 1 {
+            format!("no room separator divides '{key}' any more: it is one room again, as the layout made it")
+        } else {
+            let others: Vec<String> = made.iter().skip(1).map(|(k, r)| format!("'{k}' ({:.2} m²)", (r[2] as f64 * r[3] as f64) / 1e6)).collect();
+            format!("the room '{key}' was divided by a room separator: '{key}' ({:.2} m²) keeps its key and function ('{}'); {} {} the function 'room' with no rule applied until you name it, and the area as its target; walls keep naming '{key}'", (made[0].1[2] as f64 * made[0].1[3] as f64) / 1e6, u.orig.func, others.join(", "), if others.len() == 1 { "has" } else { "have" })
+        });
+    }
 }
 
 /// The rectangles (x, y, w, h) the wall centre lines of the level enclose, and how many enclosed regions are not rectangles.
@@ -311,6 +503,12 @@ pub fn enclosed_rects(model: &Model, level: Option<Id>) -> (Vec<[i64; 4]>, usize
         return (Vec::new(), 0);
     }
     lines.extend(model.elements.values().filter(|e| e.kind == RoomSeparator::KIND && on_level(e, level)).filter_map(|e| e.typed::<RoomSeparator>().ok()).map(|s| (s.x1, s.y1, s.x2, s.y2)));
+    regions(&lines)
+}
+
+/// The rectangles (x, y, w, h) that the lines (x1, y1, x2, y2, each horizontal or vertical) enclose, and how many enclosed regions are not
+/// rectangles.
+fn regions(lines: &[(i64, i64, i64, i64)]) -> (Vec<[i64; 4]>, usize) {
     let mut xs: Vec<i64> = lines.iter().flat_map(|w| [w.0, w.2]).collect();
     let mut ys: Vec<i64> = lines.iter().flat_map(|w| [w.1, w.3]).collect();
     xs.sort_unstable();
@@ -372,10 +570,20 @@ pub fn enclosed_rects(model: &Model, level: Option<Id>) -> (Vec<[i64; 4]>, usize
 pub fn rooms_sync(model: &Model, level: Option<Id>) -> RoomSync {
     let (rects, not_rect) = enclosed_rects(model, level);
     let mut out = RoomSync { not_rect, ..Default::default() };
-    let existing: Vec<(Id, Source, String, [i64; 4])> = model.elements.values().filter(|e| e.kind == Space::KIND && on_level(e, level)).filter_map(|e| Some((e.id, e.provenance.source, e.typed::<Space>().ok()?.requirement_key, {
+    // Rooms of a layout that the separators cut from side to side are divided first; the regions below are then matched against the result.
+    split_generated(model, level, &mut out);
+    let gone: BTreeSet<Id> = out.cmds.iter().filter_map(|c| if let Command::Delete(id) = c { Some(*id) } else { None }).collect();
+    let mut existing: Vec<(Id, Source, String, [i64; 4])> = model.elements.values().filter(|e| e.kind == Space::KIND && on_level(e, level) && !gone.contains(&e.id)).filter_map(|e| Some((e.id, e.provenance.source, e.typed::<Space>().ok()?.requirement_key, {
         let s = e.typed::<Space>().ok()?;
         [s.x, s.y, s.w, s.h]
     }))).collect();
+    for c in &out.cmds {
+        if let Command::Create(el) = c
+            && let Ok(s) = el.typed::<Space>()
+        {
+            existing.push((el.id, Source::Generated, s.requirement_key, [s.x, s.y, s.w, s.h]));
+        }
+    }
     // Computed rooms whose region is gone go, with their tags (a room that hosts a tag cannot be deleted before it).
     for (id, src, key, r) in &existing {
         if *src == Source::Computed && !rects.contains(r) {
@@ -384,7 +592,7 @@ pub fn rooms_sync(model: &Model, level: Option<Id>) -> RoomSync {
             out.removed.push(key.clone());
         }
     }
-    let mut keys: BTreeSet<String> = model.elements.values().filter(|e| e.kind == Space::KIND).filter_map(|e| e.props.get("requirementKey").and_then(|v| v.as_str()).map(str::to_string)).collect();
+    let mut keys: BTreeSet<String> = model.elements.values().filter(|e| e.kind == Space::KIND).filter_map(|e| e.props.get("requirementKey").and_then(|v| v.as_str()).map(str::to_string)).chain(existing.iter().map(|x| x.2.clone())).collect();
     let overlaps = |a: &[i64; 4], b: &[i64; 4]| a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3];
     for r in &rects {
         if existing.iter().any(|(_, _, _, x)| x == r) {
