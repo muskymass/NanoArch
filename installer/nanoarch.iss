@@ -4,7 +4,7 @@
 ; The installer is NOT code-signed, so Windows SmartScreen will warn on first run.
 
 #define AppName "NanoArch"
-#define AppVersion "0.5.0"
+#define AppVersion "1.0.0"
 #define AppPublisher "NanoNexus"
 #ifndef ExeSrc
   #error Pass the built executable: /DExeSrc="C:\path\to\nanoarch-app.exe"
@@ -51,6 +51,14 @@ Source: "..\nnx-core\packs\*.json"; DestDir: "{app}\templates"; Flags: ignorever
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\NanoArch.exe"; IconFilename: "{app}\icon.ico"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\NanoArch.exe"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
+
+[UninstallDelete]
+; The app creates its WebView2 profile (cache, local storage) beside the executable on first run. It is not an installed file, so the
+; uninstaller would leave it behind; remove it so the install folder goes away completely. Projects (.nnx) and the application data
+; under %APPDATA% are not touched.
+Type: filesandordirs; Name: "{app}\NanoArch.exe.WebView2"
+; An install into a folder that already existed (an earlier version) is not registered for removal: take it away once it is empty.
+Type: dirifempty; Name: "{app}"
 
 [Run]
 Filename: "{app}\NanoArch.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
