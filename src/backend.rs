@@ -4956,6 +4956,67 @@ mod tests {
         out
     }
 
+    /// A different project from the single-storey one: the generated two-storey villa, divided on its UPPER level.
+    #[test]
+    fn a_room_of_the_upper_storey_divided_by_a_separator_is_named_tagged_saved_reopened_and_exported_by_its_rooms_name() {
+        fn names(r: &Value) -> std::collections::BTreeMap<String, String> {
+            r["rooms"].as_array().unwrap().iter().map(|x| (x["key"].as_str().unwrap().to_string(), x["name"].as_str().unwrap().to_string())).collect()
+        }
+        let mut app = started2();
+        let up = app.handle("level", &json!({ "index": 1 })).unwrap();
+        let lid = building::levels(model_of(&app))[1].1;
+        let up_spaces = |a: &App| -> Vec<nnx_core::typed::Space> { model_of(a).elements.values().filter(|e| e.kind == "Space" && e.level_id == Some(lid)).map(|e| e.typed::<nnx_core::typed::Space>().unwrap()).collect() };
+        let room = up_spaces(&app).into_iter().filter(|s| s.w >= 3000 && s.h >= 3000 && !s.requirement_key.starts_with("stair")).max_by_key(|s| s.w * s.h).expect("a room on the upper level");
+        let parent_name = names(&up)[&room.requirement_key].clone();
+        assert!(!parent_name.is_empty());
+        let n0 = up_spaces(&app).len();
+        let cut = room.x + room.w / 2;
+        let r = app.handle("draft_separator", &json!({ "a": [cut, room.y], "b": [cut, room.y + room.h] })).unwrap();
+        assert!(r["notes"].as_array().unwrap().iter().any(|s| s.as_str().unwrap().contains("was divided")), "{}", r["notes"]);
+        let part_key = format!("{}-2", room.requirement_key);
+        assert_eq!(up_spaces(&app).len(), n0 + 1, "one more room, on this level only");
+        // The spaces list calls the part by its room's display name plus its number; the key stays.
+        let listed = names(&r);
+        assert_eq!(listed[&part_key], format!("{parent_name}-2"));
+        assert_eq!(listed[&room.requirement_key], parent_name);
+        // Tag every room of the level, then export both ways.
+        app.handle("draft_tag", &json!({})).unwrap();
+        let ifc = app.handle("export_ifc", &json!({})).unwrap();
+        assert!(ifc["ifc"].as_str().unwrap().contains(&format!("'{part_key}'")), "the IFC space keeps the part's key as its Name");
+        let dxf = app.handle("export_dxf", &json!({})).unwrap();
+        assert!(dxf["counts"]["A-ROOM-SEP"].as_u64().unwrap() >= 1);
+        // Save, reopen: the same model, clean, the same names, the same exports.
+        let dir = std::env::temp_dir().join(format!("nanoarch-upper-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("upper.nnx");
+        nnx_core::persist::save_with_settings(app.model().unwrap(), &app.settings(), &file).unwrap();
+        let divided = hash(&app);
+        let (loaded, settings) = nnx_core::persist::load_with_settings(&file).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let mut reopened = App::default();
+        let opened = reopened.open(loaded, &settings).unwrap();
+        assert_eq!(hash(&reopened), divided);
+        assert!(!reopened.is_dirty() && opened["warnings"].as_array().unwrap().is_empty(), "{}", opened["warnings"]);
+        let again = reopened.handle("level", &json!({ "index": 1 })).unwrap();
+        assert_eq!(names(&again)[&part_key], format!("{parent_name}-2"));
+        assert_eq!(reopened.handle("export_ifc", &json!({})).unwrap()["ifc"], ifc["ifc"], "the reopened project gives the same IFC");
+        let dxf2 = reopened.handle("export_dxf", &json!({})).unwrap();
+        assert_eq!(dxf2["counts"], dxf["counts"]);
+        assert_eq!(dxf2["dxf"], dxf["dxf"], "and the same DXF");
+        // In the live project: undo steps back through the tags and the division (the part and its name go), redo brings them back.
+        let mut steps = 0;
+        while up_spaces(&app).len() > n0 && steps < 5 {
+            app.handle("undo", &json!({})).unwrap();
+            steps += 1;
+        }
+        assert_eq!(up_spaces(&app).len(), n0);
+        assert!(!names(&app.handle("level", &json!({ "index": 1 })).unwrap()).contains_key(&part_key));
+        for _ in 0..steps {
+            app.handle("redo", &json!({})).unwrap();
+        }
+        assert_eq!(hash(&app), divided, "redo walks back to the divided, tagged project");
+    }
+
     #[test]
     fn dividing_a_generated_room_moves_its_mep_points_and_openings_to_the_part_they_stand_in_and_the_file_keeps_it() {
         let mut app = started();
