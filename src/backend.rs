@@ -386,6 +386,19 @@ impl App {
             "overlay_toggle" => self.overlay_toggle(args),
             "overlay_remove" => self.overlay_remove(args),
             "overlay_apply_limits" => self.overlay_apply_limits(args),
+            "draft_frame" => self.draft_frame(),
+            "draft_snap" => self.draft_snap(args),
+            "draft_wall" => self.draft_wall(args),
+            "draft_place" => self.draft_place(args),
+            "draft_opening" => self.draft_opening(args),
+            "draft_box" => self.draft_box(args),
+            "draft_xform" => self.draft_xform(args),
+            "draft_align" => self.draft_align(args),
+            "draft_split" => self.draft_split(args),
+            "draft_trim" => self.draft_trim(args),
+            "draft_delete" => self.draft_delete(args),
+            "draft_props" => self.draft_props(args),
+            "draft_set" => self.draft_set(args),
             "export_ifc" => self.export_ifc(),
             "export_dxf" => self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false)),
             "report_html" => {
@@ -1102,6 +1115,165 @@ impl App {
         let mut v = self.overlays_report()?;
         v["changed"] = json!(changed);
         v["new_violations"] = json!(violations);
+        Ok(v)
+    }
+
+    // ------------------------------------------------------------------ Milestone 8: BIM drafting
+
+    fn ids_arg(args: &Value, key: &str) -> Result<Vec<nnx_core::Id>, String> {
+        let list = args.get(key).and_then(Value::as_array).ok_or_else(|| format!("{key} is required"))?;
+        list.iter().map(|v| v.as_str().ok_or("an id is not text".to_string())?.parse::<nnx_core::Id>().map_err(|_| "an id is not valid".to_string())).collect()
+    }
+
+    fn point_arg(v: Option<&Value>, what: &str) -> Result<[f64; 2], String> {
+        let a = v.and_then(Value::as_array).filter(|a| a.len() == 2).ok_or_else(|| format!("{what} is a pair of numbers"))?;
+        Ok([a[0].as_f64().ok_or_else(|| format!("{what}: x is not a number"))?, a[1].as_f64().ok_or_else(|| format!("{what}: y is not a number"))?])
+    }
+
+    fn int_point(v: Option<&Value>, what: &str) -> Result<[i64; 2], String> {
+        let p = Self::point_arg(v, what)?;
+        Ok([p[0].round() as i64, p[1].round() as i64])
+    }
+
+    /// The plan's frame (to turn pixels into millimetres) and the starting values the drawing tools offer.
+    fn draft_frame(&self) -> Result<Value, String> {
+        let model = &self.doc()?.model;
+        let opts = self.draw_opts(self.show_structure);
+        let frame = nnx_core::drawing::frame(model, self.current_level(), &opts).map(|(minx, maxy, s, m)| json!({ "minx": minx, "maxy": maxy, "s": s, "m": m }));
+        Ok(json!({ "frame": frame, "defaults": nnx_core::draft::defaults(model, self.current_level()) }))
+    }
+
+    /// Commits a draft edit (and the structure sync that follows from it) as ONE undoable step and answers like the other plan edits.
+    fn draft_commit(&mut self, label: &str, edit: nnx_core::draft::Edit, level: Option<nnx_core::Id>) -> Result<Value, String> {
+        if edit.cmds.is_empty() {
+            return Err("nothing to change".into());
+        }
+        let so = self.sopts()?;
+        editing::commit_with_sync(self.doc.as_mut().ok_or("choose a layout first")?, &so, label, edit.cmds, level)?;
+        let mut v = self.draft_frame()?;
+        v["created"] = json!(edit.created.iter().map(|i| i.to_string()).collect::<Vec<_>>());
+        v["notes"] = json!(edit.notes);
+        v["svg"] = self.render_or_null()?;
+        v["rooms"] = json!(self.rooms_json());
+        v["sbc"] = self.sbc_json();
+        Ok(v)
+    }
+
+    fn draft_snap(&self, args: &Value) -> Result<Value, String> {
+        let world = Self::point_arg(args.get("p"), "p")?;
+        let ctx = nnx_core::draft::SnapCtx {
+            scale: args.get("scale").and_then(Value::as_f64).filter(|s| *s > 0.0).ok_or("scale is required")?,
+            from: args.get("from").filter(|f| !f.is_null()).map(|f| Self::point_arg(Some(f), "from")).transpose()?,
+            ortho: args.get("ortho").and_then(Value::as_bool).unwrap_or(false),
+            exclude: Self::ids_arg(args, "exclude").unwrap_or_default(),
+        };
+        Ok(json!(nnx_core::draft::snap(&self.doc()?.model, self.current_level(), world, &ctx)))
+    }
+
+    fn draft_wall(&mut self, args: &Value) -> Result<Value, String> {
+        let spec = nnx_core::draft::WallSpec { a: Self::int_point(args.get("a"), "a")?, b: Self::int_point(args.get("b"), "b")?, thickness: args.get("thickness").and_then(Value::as_i64).ok_or("enter the wall's thickness (mm)")?, height: args.get("height").and_then(Value::as_i64).ok_or("enter the wall's height (mm)")? };
+        let level = self.current_level();
+        let (cmd, id) = nnx_core::draft::wall_command(&self.doc()?.model, level, &spec)?;
+        let mut v = self.draft_commit("Draw wall", nnx_core::draft::Edit { cmds: vec![cmd], created: vec![id], notes: vec![] }, level)?;
+        v["wall"] = json!(id.to_string());
+        Ok(v)
+    }
+
+    fn draft_place(&self, args: &Value) -> Result<Value, String> {
+        let p = Self::point_arg(args.get("p"), "p")?;
+        let width = args.get("width").and_then(Value::as_i64).ok_or("enter the width (mm)")?;
+        let scale = args.get("scale").and_then(Value::as_f64).filter(|s| *s > 0.0).ok_or("scale is required")?;
+        Ok(json!({ "placement": nnx_core::draft::placement(&self.doc()?.model, self.current_level(), p, width, scale) }))
+    }
+
+    fn draft_opening(&mut self, args: &Value) -> Result<Value, String> {
+        let spec: nnx_core::draft::OpeningSpec = serde_json::from_value(args.clone()).map_err(|e| format!("opening: {e}"))?;
+        self.guard_lock(&[spec.wall])?;
+        let level = self.doc()?.model.get(&spec.wall).and_then(|e| e.level_id);
+        let (cmds, id) = nnx_core::draft::opening_command(&self.doc()?.model, &spec)?;
+        let label = if spec.kind == nnx_core::draft::OpeningKind::Door { "Place door" } else { "Place window" };
+        let mut v = self.draft_commit(label, nnx_core::draft::Edit { cmds, created: vec![id], notes: vec![] }, level)?;
+        v["opening"] = json!(id.to_string());
+        Ok(v)
+    }
+
+    fn draft_box(&self, args: &Value) -> Result<Value, String> {
+        let b = args.get("box").and_then(Value::as_array).filter(|a| a.len() == 4).ok_or("box is four numbers")?;
+        let n = |i: usize| b[i].as_f64().ok_or("box: a number is expected");
+        let mode: nnx_core::draft::BoxMode = serde_json::from_value(args.get("mode").cloned().unwrap_or(json!("window"))).map_err(|e| format!("mode: {e}"))?;
+        let ids = nnx_core::draft::pick_box(&self.doc()?.model, self.current_level(), [n(0)?, n(1)?, n(2)?, n(3)?], mode);
+        Ok(json!({ "ids": ids.iter().map(|i| i.to_string()).collect::<Vec<_>>() }))
+    }
+
+    fn draft_xform(&mut self, args: &Value) -> Result<Value, String> {
+        let ids = Self::ids_arg(args, "ids")?;
+        self.guard_lock(&ids)?;
+        let xf: nnx_core::draft::Xf = serde_json::from_value(args.get("xf").cloned().ok_or("xf is required")?).map_err(|e| format!("xf: {e}"))?;
+        let copy = args.get("copy").and_then(Value::as_bool).unwrap_or(false);
+        let level = ids.first().and_then(|i| self.doc().ok()?.model.get(i)?.level_id);
+        let edit = nnx_core::draft::xform(&self.doc()?.model, &ids, xf, copy)?;
+        let label = match (xf, copy) {
+            (nnx_core::draft::Xf::Move { .. }, false) => "Move",
+            (nnx_core::draft::Xf::Move { .. }, true) => "Copy",
+            (nnx_core::draft::Xf::Rotate { .. }, _) => "Rotate",
+            _ => "Mirror",
+        };
+        self.draft_commit(label, edit, level)
+    }
+
+    fn draft_align(&mut self, args: &Value) -> Result<Value, String> {
+        let (r, t) = (id_arg(args, "reference")?, id_arg(args, "target")?);
+        self.guard_lock(&[t])?;
+        let level = self.doc()?.model.get(&t).and_then(|e| e.level_id);
+        let edit = nnx_core::draft::align(&self.doc()?.model, r, t)?;
+        self.draft_commit("Align wall", edit, level)
+    }
+
+    fn draft_split(&mut self, args: &Value) -> Result<Value, String> {
+        let w = id_arg(args, "wall")?;
+        self.guard_lock(&[w])?;
+        let level = self.doc()?.model.get(&w).and_then(|e| e.level_id);
+        let edit = nnx_core::draft::split(&self.doc()?.model, w, args.get("at").and_then(Value::as_i64).ok_or("at is required")?)?;
+        self.draft_commit("Split wall", edit, level)
+    }
+
+    fn draft_trim(&mut self, args: &Value) -> Result<Value, String> {
+        let side = |k: &str| -> Result<(nnx_core::Id, [f64; 2]), String> {
+            let v = args.get(k).ok_or_else(|| format!("{k} is required"))?;
+            Ok((id_arg(v, "id")?, [v.get("x").and_then(Value::as_f64).ok_or("x is required")?, v.get("y").and_then(Value::as_f64).ok_or("y is required")?]))
+        };
+        let (a, b) = (side("a")?, side("b")?);
+        self.guard_lock(&[a.0, b.0])?;
+        let level = self.doc()?.model.get(&a.0).and_then(|e| e.level_id);
+        let edit = nnx_core::draft::trim_corner(&self.doc()?.model, a, b)?;
+        self.draft_commit("Trim to corner", edit, level)
+    }
+
+    fn draft_delete(&mut self, args: &Value) -> Result<Value, String> {
+        let ids = Self::ids_arg(args, "ids")?;
+        self.guard_lock(&ids)?;
+        let level = ids.first().and_then(|i| self.doc().ok()?.model.get(i)?.level_id);
+        let edit = nnx_core::draft::delete(&self.doc()?.model, &ids)?;
+        self.draft_commit("Delete", edit, level)
+    }
+
+    fn draft_props(&self, args: &Value) -> Result<Value, String> {
+        let id = id_arg(args, "id")?;
+        let mut v = nnx_core::draft::properties(&self.doc()?.model, id)?;
+        if v["kind"] == "Wall" {
+            v["wallLocked"] = json!(self.project().is_some_and(|p| p.meta.locked_walls.contains(&id.to_string())));
+        }
+        Ok(v)
+    }
+
+    fn draft_set(&mut self, args: &Value) -> Result<Value, String> {
+        let id = id_arg(args, "id")?;
+        self.guard_lock(&[id])?;
+        let key = args.get("key").and_then(Value::as_str).ok_or("key is required")?.to_string();
+        let level = self.doc()?.model.get(&id).and_then(|e| e.level_id);
+        let edit = nnx_core::draft::set_property(&self.doc()?.model, id, &key, args.get("value").ok_or("value is required")?)?;
+        let mut v = self.draft_commit("Edit properties", edit, level)?;
+        v["properties"] = self.draft_props(&json!({ "id": id.to_string() }))?;
         Ok(v)
     }
 
@@ -4252,5 +4424,123 @@ mod tests {
         app.handle("undo", &json!({})).unwrap();
         assert_eq!(app.handle("overlays", &json!({})).unwrap()["overlays"].as_array().unwrap().len(), 1);
         assert!(app.handle("overlay_remove", &json!({ "id": "zz" })).is_err());
+    }
+
+    // ------------------------------------------------------------------ Milestone 8: BIM drafting
+
+    fn model_of(app: &App) -> &nnx_core::Model {
+        &app.doc.as_ref().unwrap().model
+    }
+
+    /// The first interior wall: horizontal or vertical, shared by two rooms.
+    fn partition(app: &App) -> nnx_core::typed::Wall {
+        model_of(app).elements.values().filter(|e| e.kind == "Wall").filter_map(|e| e.typed::<nnx_core::typed::Wall>().ok()).find(|w| !w.is_exterior && w.room_b.is_some()).unwrap()
+    }
+
+    #[test]
+    fn drafting_commands_draw_place_edit_and_delete_as_undoable_steps_that_redraw_the_plan() {
+        let mut app = started();
+        let f = app.handle("draft_frame", &json!({})).unwrap();
+        assert!(f["frame"]["s"].as_f64().unwrap() > 0.0 && f["frame"]["m"].as_f64().unwrap() > 0.0);
+        let d = &f["defaults"];
+        assert!(d["wall"]["thickness"].as_i64().unwrap() > 0 && d["door"]["width"].as_i64().unwrap() > 0, "learned from the generated plan: {d}");
+        // A free wall: the plan is redrawn with it; a size is required; a diagonal is refused.
+        let before = model_of(&app).len();
+        let hash0 = hash(&app);
+        let t = d["wall"]["thickness"].as_i64().unwrap();
+        let h = d["wall"]["height"].as_i64().unwrap();
+        assert!(app.handle("draft_wall", &json!({ "a": [1000, 1000], "b": [2500, 1000], "height": h })).unwrap_err().contains("thickness"));
+        assert!(app.handle("draft_wall", &json!({ "a": [1000, 1000], "b": [2500, 1200], "thickness": t, "height": h })).unwrap_err().contains("horizontal or vertical"));
+        let r = app.handle("draft_wall", &json!({ "a": [1000, 1000], "b": [2500, 1000], "thickness": t, "height": h })).unwrap();
+        let wall = r["wall"].as_str().unwrap().to_string();
+        assert_eq!(model_of(&app).len(), before + 1);
+        assert!(r["svg"].as_str().unwrap().starts_with("<svg") && r["frame"].is_object() && r["sbc"].is_object());
+        assert_eq!(model_of(&app).get(&wall.parse().unwrap()).unwrap().provenance.source, nnx_core::Source::User);
+        // A door in it, found by the placement preview; a second one on top of it is refused.
+        let pl = app.handle("draft_place", &json!({ "p": [1750.0, 1000.0], "width": 800, "scale": 0.05 })).unwrap();
+        assert_eq!(pl["placement"]["wall"], json!(wall), "{pl}");
+        let off = pl["placement"]["offset"].as_i64().unwrap();
+        let spec = json!({ "kind": "door", "wall": wall, "offset": off, "width": 800, "height": 2100, "side": 1 });
+        let r = app.handle("draft_opening", &spec).unwrap();
+        let door = r["opening"].as_str().unwrap().to_string();
+        assert!(app.handle("draft_opening", &spec).unwrap_err().contains("overlap"));
+        // Properties: read, edit with a check, read again.
+        let p = app.handle("draft_props", &json!({ "id": door })).unwrap();
+        assert_eq!(p["kind"], "Door");
+        let r = app.handle("draft_set", &json!({ "id": door, "key": "width", "value": 900 })).unwrap();
+        assert_eq!(r["properties"]["fields"].as_array().unwrap().iter().find(|f| f["key"] == "width").unwrap()["value"], 900);
+        assert!(app.handle("draft_set", &json!({ "id": door, "key": "width", "value": 9000 })).unwrap_err().contains("does not fit"));
+        // Move the wall with its door, copy it, then delete the copy.
+        let r = app.handle("draft_xform", &json!({ "ids": [wall], "xf": { "op": "move", "dx": 0, "dy": 500 } })).unwrap();
+        assert_eq!(model_of(&app).get(&wall.parse().unwrap()).unwrap().props["y1"], 1500);
+        assert!(r["created"].as_array().unwrap().is_empty());
+        let r = app.handle("draft_xform", &json!({ "ids": [wall], "copy": true, "xf": { "op": "move", "dx": 0, "dy": 800 } })).unwrap();
+        let copy = r["created"][0].as_str().unwrap().to_string();
+        assert_eq!(r["created"].as_array().unwrap().len(), 2);
+        let r = app.handle("draft_delete", &json!({ "ids": [copy] })).unwrap();
+        assert_eq!(r["notes"].as_array().unwrap().len(), 1, "its door goes with it, and it says so");
+        // Split and trim.
+        let r = app.handle("draft_split", &json!({ "wall": wall, "at": 2350 })).unwrap();
+        assert!(r["svg"].is_string());
+        // Everything above is undoable, one step each, back to the generated plan.
+        let mut steps = 0;
+        while app.doc.as_mut().unwrap().undo() {
+            steps += 1;
+            if hash(&app) == hash0 {
+                break;
+            }
+        }
+        assert_eq!(steps, 7, "draw, place, edit, move, copy, delete and split were one step each");
+        assert_eq!(hash(&app), hash0, "undo returns to the generated plan exactly");
+        assert!(App::default().handle("draft_frame", &json!({})).is_err());
+    }
+
+    #[test]
+    fn box_selection_snapping_and_the_lock_guard_work_through_the_commands() {
+        let mut app = started();
+        let p = partition(&app);
+        let mid = [(p.x1 + p.x2) as f64 / 2.0, (p.y1 + p.y2) as f64 / 2.0];
+        let s = app.handle("draft_snap", &json!({ "p": [mid[0] + 40.0, mid[1] - 30.0], "scale": 0.05 })).unwrap();
+        assert!(["midpoint", "endpoint", "intersection"].contains(&s["kind"].as_str().unwrap()), "{s}");
+        let b = app.handle("draft_box", &json!({ "box": [p.x1 as f64 - 300.0, p.y1 as f64 - 300.0, p.x2 as f64 + 300.0, p.y2 as f64 + 300.0], "mode": "window" })).unwrap();
+        assert!(!b["ids"].as_array().unwrap().is_empty());
+        assert!(app.handle("draft_box", &json!({ "box": [0, 0, 1], "mode": "window" })).is_err());
+        // A locked wall is not edited by any draft command.
+        let wid = model_of(&app).elements.values().find(|e| e.kind == "Wall" && e.props["isExterior"] == json!(false)).unwrap().id.to_string();
+        app.handle("lock", &json!({ "kind": "wall", "id": wid, "locked": true })).unwrap();
+        assert!(app.handle("draft_xform", &json!({ "ids": [wid], "xf": { "op": "move", "dx": 100, "dy": 0 } })).unwrap_err().contains("locked"));
+        assert!(app.handle("draft_delete", &json!({ "ids": [wid] })).unwrap_err().contains("locked"));
+        assert!(app.handle("draft_set", &json!({ "id": wid, "key": "thickness", "value": 250 })).unwrap_err().contains("locked"));
+        assert!(app.handle("draft_split", &json!({ "wall": wid, "at": 1500 })).unwrap_err().contains("locked"));
+    }
+
+    #[test]
+    fn what_the_user_drafted_survives_a_partition_move_and_an_opening_in_a_generated_wall_refuses_it() {
+        let mut app = started();
+        let d = app.handle("draft_frame", &json!({})).unwrap()["defaults"].clone();
+        let (t, h) = (d["wall"]["thickness"].as_i64().unwrap(), d["wall"]["height"].as_i64().unwrap());
+        // A free wall inside a room.
+        let room = model_of(&app).elements.values().filter(|e| e.kind == "Space").filter_map(|e| e.typed::<nnx_core::typed::Space>().ok()).max_by_key(|s| s.w * s.h).unwrap();
+        let (x, y) = (room.x + room.w / 2, room.y + room.h / 2);
+        let r = app.handle("draft_wall", &json!({ "a": [x, y - 500], "b": [x, y + 500], "thickness": t, "height": h })).unwrap();
+        let mine = r["wall"].as_str().unwrap().to_string();
+        let p = partition(&app);
+        let pid = model_of(&app).elements.values().find(|e| e.kind == "Wall" && e.props["x1"] == p.x1 && e.props["y1"] == p.y1 && e.props["x2"] == p.x2 && e.props["y2"] == p.y2).unwrap().id.to_string();
+        let moved = app.handle("move_partition", &json!({ "wall": pid, "delta_mm": 100 }));
+        // The generated walls were rebuilt; the user's wall is still there with the same id and source.
+        if moved.is_ok() {
+            let e = model_of(&app).get(&mine.parse().unwrap()).expect("the drafted wall survived the rebuild");
+            assert_eq!(e.provenance.source, nnx_core::Source::User);
+        }
+        // A door the user placed in a generated wall: the rebuild would leave it without its wall, so it is refused by name.
+        let gen_wall = model_of(&app).elements.values().find(|e| e.kind == "Wall" && e.provenance.source == nnx_core::Source::Generated && e.props["length"].as_i64().unwrap_or(0) >= 3000).unwrap().id.to_string();
+        let off = model_of(&app).get(&gen_wall.parse().unwrap()).unwrap().props["length"].as_i64().unwrap() / 2;
+        let placed = app.handle("draft_opening", &json!({ "kind": "window", "wall": gen_wall, "offset": off, "width": 600, "height": 900, "sill": 900 }));
+        if placed.is_ok() {
+            let p2 = partition(&app);
+            let pid2 = model_of(&app).elements.values().find(|e| e.kind == "Wall" && e.props["x1"] == p2.x1 && e.props["y1"] == p2.y1 && e.props["x2"] == p2.x2 && e.props["y2"] == p2.y2).unwrap().id.to_string();
+            let err = app.handle("move_partition", &json!({ "wall": pid2, "delta_mm": 100 })).unwrap_err();
+            assert!(err.contains("you placed") && err.contains("delete it"), "{err}");
+        }
     }
 }

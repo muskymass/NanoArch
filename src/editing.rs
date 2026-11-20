@@ -44,7 +44,7 @@ fn read_rooms(doc: &Document, level: Option<Id>) -> Result<Vec<Room>, String> {
 
 /// Commits `cmds` and the structure sync that follows from them as one transaction. The sync is computed
 /// on a copy first, so a failing edit changes nothing.
-fn commit_with_sync(doc: &mut Document, so: &StructOpts, label: &str, cmds: Vec<Command>, level: Option<Id>) -> Result<(), String> {
+pub(crate) fn commit_with_sync(doc: &mut Document, so: &StructOpts, label: &str, cmds: Vec<Command>, level: Option<Id>) -> Result<(), String> {
     let mut scratch = Document::new(doc.model.clone());
     scratch.commit(label, Origin::User, cmds.clone()).map_err(|e| e.to_string())?;
     // The edited level and every level below it: loads come down from above, so footings can change too.
@@ -188,9 +188,17 @@ fn rebuild(doc: &mut Document, brief: &Brief, so: &StructOpts, level: Option<Id>
         cmds.push(set("area", json!((r.area_m2() * 100.0).round() / 100.0)));
         cmds.push(set("boundary", json!([[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]])));
     }
-    // Remove the old openings and walls (openings first: a wall that hosts one cannot be deleted).
+    // Remove the old openings and walls (openings first: a wall that hosts one cannot be deleted). What the user drafted
+    // (`Source::User`) is theirs and stays; an opening they placed in a wall that this edit rebuilds would be left without its wall, so
+    // the edit is refused and names it.
+    let on_level = |e: &Element| level.is_none() || e.level_id == level;
+    let rebuilt: std::collections::BTreeSet<Id> = doc.model.elements.values().filter(|e| e.kind == Wall::KIND && on_level(e) && e.provenance.source != Source::User).map(|e| e.id).collect();
+    if let Some(e) = doc.model.elements.values().find(|e| (e.kind == Door::KIND || e.kind == Window::KIND) && on_level(e) && e.provenance.source == Source::User && e.host_id.is_some_and(|h| rebuilt.contains(&h))) {
+        let label: String = e.id.to_string().chars().take(8).collect();
+        return Err(format!("the {} {label} you placed is in a wall that this edit rebuilds: delete it (or draw your own wall for it) first", e.kind.to_lowercase()));
+    }
     for kind in [Door::KIND, Window::KIND, Wall::KIND] {
-        cmds.extend(doc.model.elements.values().filter(|e| e.kind == kind && (level.is_none() || e.level_id == level)).map(|e| Command::Delete(e.id)));
+        cmds.extend(doc.model.elements.values().filter(|e| e.kind == kind && on_level(e) && e.provenance.source != Source::User).map(|e| Command::Delete(e.id)));
     }
     cmds.extend(walls::to_commands(&plan, &ids, level));
     cmds.extend(walls::window_commands(&plan, &wp, &ids, level));

@@ -19,6 +19,7 @@ pub mod command;
 pub mod drawing;
 pub mod evload;
 pub mod ductpath;
+pub mod draft;
 pub mod dxf;
 pub mod elevation;
 pub mod expr;

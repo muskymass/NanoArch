@@ -45,8 +45,14 @@ td.num{font-variant-numeric:tabular-nums}
 #v3 .tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:6px 10px;background:#fff;border-bottom:1px solid #ddd}
 #v3 .tools label{display:flex;gap:4px;align-items:center;margin:0}
 #gl{flex:1;width:100%;min-height:0;display:block;cursor:grab;touch-action:none}
+#dr-props{height:64px;overflow:auto;align-content:flex-start;box-sizing:border-box}
+#viewer.draft{padding:0;align-items:stretch;justify-content:stretch;overflow:hidden}
+#viewer.draft svg{max-width:none;flex:1 1 100%;width:100%;height:100%;cursor:crosshair}
+#viewer.draft svg [data-id]{cursor:crosshair}
 #vp{flex:1;display:flex;flex-direction:row;min-height:0;min-width:0}
 #vp>#viewer,#vp>#v3{min-width:0}
+#vp.split>#v3 .tools{max-height:72px;overflow-y:auto;gap:6px}
+#vp.split>#v3 #gl{min-height:240px}
 #vp.split>#viewer{flex:1 1 50%}#vp.split>#v3{flex:1 1 50%;border-inline-start:2px solid var(--line)}
 #viewer svg .osel{stroke:#e6a100!important;stroke-width:4!important;filter:drop-shadow(0 0 3px #e6a100)}
 #viewer svg g.osel .leaf,#viewer svg g.osel .glass{stroke:#e6a100!important;stroke-width:3!important}
@@ -163,7 +169,7 @@ ul.clean li{margin:3px 0}
       <button id="undo" disabled data-i="undo"></button><button id="redo" disabled data-i="redo"></button>
       <label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="showstruct"><span data-i="show_struct"></span></label>
       <button id="sync" disabled data-i="sync"></button>
-      <button id="to3d" disabled></button><button id="split" disabled></button>
+      <button id="to3d" disabled></button><button id="split" disabled></button><button id="draft" disabled></button>
       <select id="viewsel" disabled style="width:auto"><option value="plan" data-i="v_plan"></option><option value="north" data-i="v_north"></option><option value="south" data-i="v_south"></option><option value="east" data-i="v_east"></option><option value="west" data-i="v_west"></option><option value="A-A" data-i="v_aa"></option><option value="B-B" data-i="v_bb"></option><option value="site" data-i="v_site"></option><option value="furn" data-i="v_furn"></option></select>
       <input id="sec-at" type="number" step="0.1" style="width:90px" data-title="sec_at" placeholder="m">
       <span style="flex:1"></span>
@@ -172,6 +178,8 @@ ul.clean li{margin:3px 0}
     </div>
     <div class="alts" id="alts"><div class="empty" data-i="alts_empty"></div></div>
     <div id="levelbar" class="bar" style="display:none;gap:6px;padding:6px 8px"></div>
+    <div id="draftbar" class="bar" style="display:none;gap:6px;padding:6px 8px;flex-wrap:wrap;align-items:center"></div>
+    <div id="dr-props" class="bar" style="display:none;gap:10px;padding:6px 8px;flex-wrap:wrap;align-items:center"></div>
     <div id="inspector" class="bar" style="display:none"></div>
     <div id="vp">
     <div id="viewer"><div class="empty" data-i="viewer_empty"></div></div>
@@ -438,7 +446,7 @@ function applyLang() {
   try { sxBuild(); } catch (e) { /* not loaded yet */ }
   try { $("tab-mx").textContent = L("MEP متقدم", "Advanced MEP"); mxBuild(); } catch (e) { /* not loaded yet */ }
   try { v5Labels(); prBuild(); } catch (e) { /* not loaded yet */ }
-  try { exBuild(); olBuild(); vrBuild(); ovBuild(); applyMode(); } catch (e) { /* not loaded yet */ }
+  try { exBuild(); olBuild(); vrBuild(); ovBuild(); applyMode(); $("draft").textContent = L("رسم BIM", "BIM draft"); drBar(); } catch (e) { /* not loaded yet */ }
   if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
 }
 
@@ -613,7 +621,7 @@ async function choose(i) {
   renderAlts(); renderNotes(); setPlanButtons(true); $("p-qto").innerHTML = `<div class="empty">${t("working")}</div>`; $("schedout").innerHTML = "";
   loadQto(); refreshStatus(); try { anBuild(); } catch (e) { /* panel not built yet */ }
 }
-function setPlanButtons(on) { ["exportrep", "exportrepx", "viewsel", "undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportpdf", "saveproj", "to3d", "split"].forEach(id => $(id).disabled = !on); }
+function setPlanButtons(on) { ["exportrep", "exportrepx", "viewsel", "undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportpdf", "saveproj", "to3d", "split", "draft"].forEach(id => $(id).disabled = !on); }
 
 // ---------------------------------------------------------------- toolbar
 // The generated SVG text is kept as is, so an export is the real file and not the browser's re-serialisation.
@@ -626,7 +634,7 @@ function setLevels(l) {
   bar.innerHTML = list.map(x => `<button class="${x.index === l.current ? "primary" : ""}" data-lv="${x.index}">${levelLabel(x.index)}</button>`).join("");
   bar.querySelectorAll("[data-lv]").forEach(b => b.onclick = () => busy(async () => { const r = await call("level", { index: Number(b.dataset.lv) }); showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } }));
 }
-const showPlan = svg => { state.viewName = "plan.svg"; $("viewsel").value = "plan"; state.svgText = svg || ""; $("viewer").innerHTML = svg || `<div class="empty">${t("viewer_empty")}</div>`; clearSel(); selApply2d(); if (V3.on) refresh3d(false); olStale(); };
+const showPlan = svg => { state.viewName = "plan.svg"; $("viewsel").value = "plan"; state.svgText = svg || ""; $("viewer").innerHTML = svg || `<div class="empty">${t("viewer_empty")}</div>`; clearSel(); selApply2d(); if (V3.on) refresh3d(false); olStale(); drAfterPlan(); };
 $("showstruct").onchange = () => busy(async () => { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); });
 for (const k of ["undo", "redo"]) $(k).onclick = () => busy(async () => { const r = await call(k); showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } if (r.settings) { applyProject(r.settings); applySetbacks(r.settings); } renderSbc(r.sbc); refreshBim(); await refreshStatus(); });
 $("sync").onclick = () => busy(async () => { const r = await call("sync"); showPlan(r.svg); refreshStatus(); toast(t("sync_done").replace("{c}", r.created).replace("{r}", r.removed).replace("{u}", r.unchanged)); });
@@ -2371,6 +2379,7 @@ async function selectIds(ids, o = {}) {
   }
   selApply2d(); selApply3d(); selApplyRows();
   if (o.src !== "outline") olReveal();
+  if (typeof drOnSelect === "function") drOnSelect();
   const lbl = $("v3-pick"); if (lbl && ids.length > 1) lbl.textContent = `${ids.length} ${L("عنصراً", "elements")}`;
 }
 
@@ -2528,6 +2537,310 @@ function ovBuild() {
 }
 $("tab-ov").textContent = L("قواعد البلدية", "Municipal rules");
 document.querySelector('[data-tab="ov"]').addEventListener("click", () => busy(ovLoad));
+
+// ---------------------------------------------------------------- Milestone 8: BIM drafting on the plan
+// A Revit-style drafting mode over the model. The page draws the rubber band, the snap marker and the ghosts and sends the clicks; every
+// point it snaps to, every wall, opening and edit, and every refusal comes from the backend, so each edit is one undo step and lives in
+// the project (.nnx). The page keeps only the selection and the view (zoom and pan).
+const DR = {
+  on: false, tool: "select", frame: null, defaults: null, start: null, cur: null, snap: null, typed: "", base: null, ref: null,
+  placement: null, box: null, pan: null, vw: null, vb0: null, flight: false, queued: null, space: false, props: null,
+  opt: { thick: "", height: "", dw: "", dh: "", ww: "", wh: "", ws: "", chain: true, copy: false, axis: "x" },
+};
+const DR_TOOLS = [["select", "V", "تحديد", "Select"], ["wall", "W", "جدار", "Wall"], ["door", "D", "باب", "Door"], ["window", "N", "نافذة", "Window"], ["move", "M", "نقل", "Move"], ["copy", "C", "نسخ", "Copy"], ["rotate", "R", "تدوير", "Rotate"], ["mirror", "X", "انعكاس", "Mirror"], ["align", "A", "محاذاة", "Align"], ["split", "S", "تقسيم", "Split"], ["trim", "T", "قص للزاوية", "Trim"]];
+const drSvg = () => document.querySelector("#viewer svg");
+const drToWorld = p => [DR.frame.minx + (p.x - DR.frame.m) / DR.frame.s, DR.frame.maxy - (p.y - DR.frame.m) / DR.frame.s];
+const drToSvg = w => [DR.frame.m + (w[0] - DR.frame.minx) * DR.frame.s, DR.frame.m + (DR.frame.maxy - w[1]) * DR.frame.s];
+function drEvt(e) { const svg = drSvg(), m = svg && svg.getScreenCTM(); if (!m) return null; const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; return pt.matrixTransform(m.inverse()); }
+// Screen pixels per millimetre at the current zoom (the snap radius and the grid step follow it).
+function drScale() { const svg = drSvg(), vb = svg.viewBox.baseVal; return DR.frame.s * (svg.getBoundingClientRect().width / vb.width); }
+const drK = () => { const svg = drSvg(), vb = svg.viewBox.baseVal; return vb.width / svg.getBoundingClientRect().width; }; // svg units per screen pixel
+const drNum = s => { s = String(s ?? "").trim(); return s === "" ? null : Number(s); };
+const drIds = () => [...SEL.ids];
+const drSay = m => toast(m);
+
+// ---- the view: a world-space rectangle, so zoom and pan survive the plan being redrawn
+function drViewBox() {
+  const svg = drSvg(); if (!svg || !DR.frame) return;
+  if (!DR.vb0) DR.vb0 = svg.getAttribute("viewBox");
+  if (DR.vw) { const a = drToSvg([DR.vw[0], DR.vw[3]]), b = drToSvg([DR.vw[2], DR.vw[1]]); svg.setAttribute("viewBox", `${a[0]} ${a[1]} ${b[0] - a[0]} ${b[1] - a[1]}`); }
+  else if (DR.vb0) svg.setAttribute("viewBox", DR.vb0);
+}
+function drCurrentWorldView() { const svg = drSvg(), vb = svg.viewBox.baseVal, a = drToWorld({ x: vb.x, y: vb.y }), b = drToWorld({ x: vb.x + vb.width, y: vb.y + vb.height }); return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]; }
+function drZoom(k, cx, cy) {
+  const v = DR.vw || drCurrentWorldView(), w = [cx ?? (v[0] + v[2]) / 2, cy ?? (v[1] + v[3]) / 2];
+  const nv = [w[0] + (v[0] - w[0]) * k, w[1] + (v[1] - w[1]) * k, w[0] + (v[2] - w[0]) * k, w[1] + (v[3] - w[1]) * k];
+  if (nv[2] - nv[0] < 400 || nv[2] - nv[0] > 400000) return;
+  DR.vw = nv; drViewBox(); drDraw();
+}
+function drFit() { DR.vw = null; drRefreshPlan(); }
+async function drRefreshPlan() { const r = await call("svg", { show_structure: $("showstruct").checked }); DR.vw = null; DR.vb0 = null; showPlan(r.svg); }
+
+// ---- called by showPlan after every redraw of the plan
+function drAfterPlan() {
+  if (!DR.on) return;
+  const svg = drSvg(); if (!svg) return;
+  svg.classList.add("dr"); DR.vb0 = null;
+  if (DR.frame) { drViewBox(); drDraw(); }
+  call("draft_frame").then(r => { const moved = JSON.stringify(r.frame) !== JSON.stringify(DR.frame); DR.frame = r.frame; DR.defaults = r.defaults; if (moved) { drViewBox(); } drDraw(); drFillDefaults(); }).catch(() => {});
+  // elements that no longer exist drop out of the selection
+  if (SEL.ids.size) { const have = new Set([...document.querySelectorAll("#viewer [data-id]")].map(e => e.dataset.id)); const keep = drIds().filter(i => have.has(i)); if (keep.length !== SEL.ids.size) selectIds(keep, { src: "draft" }); }
+}
+
+// ---- the overlay: snap marker, rubber band, ghosts, box
+const NS = "http://www.w3.org/2000/svg";
+function drOv() {
+  const svg = drSvg(); if (!svg) return null;
+  let g = svg.querySelector("#dr-ov"); if (!g) { g = document.createElementNS(NS, "g"); g.id = "dr-ov"; g.setAttribute("pointer-events", "none"); svg.appendChild(g); }
+  return g;
+}
+function drEl(g, name, attrs, text) { const e = document.createElementNS(NS, name); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; g.appendChild(e); return e; }
+function drLabel(g, x, y, text) { const k = drK(); drEl(g, "text", { x, y, "font-size": 11 * k, fill: "#0b3d91", "paint-order": "stroke", stroke: "#fff", "stroke-width": 3 * k, "text-anchor": "middle" }, text); }
+function drDraw() {
+  const g = drOv(); if (!g || !DR.frame) return; g.innerHTML = "";
+  const k = drK(), acc = "#1f5fae", sw = 1.6 * k;
+  if (DR.cur) {
+    const s = DR.snap && DR.snap.p ? drToSvg(DR.snap.p) : null;
+    if (s) {
+      const r = 5 * k, kind = DR.snap.kind;
+      if (kind === "endpoint") drEl(g, "rect", { x: s[0] - r, y: s[1] - r, width: 2 * r, height: 2 * r, fill: "none", stroke: "#1b7a43", "stroke-width": sw });
+      else if (kind === "midpoint") drEl(g, "polygon", { points: `${s[0]},${s[1] - r} ${s[0] - r},${s[1] + r} ${s[0] + r},${s[1] + r}`, fill: "none", stroke: "#a65b00", "stroke-width": sw });
+      else if (kind === "intersection") { drEl(g, "line", { x1: s[0] - r, y1: s[1] - r, x2: s[0] + r, y2: s[1] + r, stroke: "#b3261e", "stroke-width": sw }); drEl(g, "line", { x1: s[0] - r, y1: s[1] + r, x2: s[0] + r, y2: s[1] - r, stroke: "#b3261e", "stroke-width": sw }); }
+      else drEl(g, "circle", { cx: s[0], cy: s[1], r: 3 * k, fill: acc });
+      if (kind !== "grid") drLabel(g, s[0], s[1] - 9 * k, ({ endpoint: L("نقطة طرف", "endpoint"), midpoint: L("منتصف", "midpoint"), intersection: L("تقاطع", "crossing"), perpendicular: L("عمودي", "perpendicular"), aligned: L("محاذاة", "aligned") })[kind] || kind);
+    }
+    if (DR.tool === "wall" && DR.start && s) {
+      const a = drToSvg(DR.start), t = Number(DR.opt.thick) || 150;
+      drEl(g, "line", { x1: a[0], y1: a[1], x2: s[0], y2: s[1], stroke: acc, "stroke-opacity": 0.45, "stroke-width": Math.max(2 * k, t * DR.frame.s) });
+      drEl(g, "line", { x1: a[0], y1: a[1], x2: s[0], y2: s[1], stroke: acc, "stroke-width": sw, "stroke-dasharray": `${4 * k} ${3 * k}` });
+      const len = Math.round(Math.hypot(DR.snap.p[0] - DR.start[0], DR.snap.p[1] - DR.start[1]));
+      drLabel(g, (a[0] + s[0]) / 2, (a[1] + s[1]) / 2 - 8 * k, DR.typed ? `${DR.typed} mm ⏎` : `${len} mm`);
+    }
+    if ((DR.tool === "door" || DR.tool === "window") && DR.placement) {
+      const p = DR.placement, c = drToSvg(p.center), w = (Number(DR.tool === "door" ? DR.opt.dw : DR.opt.ww) || 800) * DR.frame.s, d = Math.max(6 * k, 220 * DR.frame.s);
+      const [rw, rh] = p.horizontal ? [w, d] : [d, w];
+      drEl(g, "rect", { x: c[0] - rw / 2, y: c[1] - rh / 2, width: rw, height: rh, fill: p.fits ? "#1b7a43" : "#b3261e", "fill-opacity": 0.35, stroke: p.fits ? "#1b7a43" : "#b3261e", "stroke-width": sw });
+      drLabel(g, c[0], c[1] - (p.horizontal ? 12 : 0) * k - (p.horizontal ? 0 : 0), p.fits ? `${p.offset} mm` : L("لا يتسع", "does not fit"));
+    }
+    if ((DR.tool === "move" || DR.tool === "copy") && DR.base && DR.snap) {
+      const a = drToSvg(DR.base), dx = s[0] - a[0], dy = s[1] - a[1];
+      for (const id of drIds()) { const el = document.querySelector(`#viewer [data-id="${id}"]`); if (!el || el.closest("#dr-ov")) continue; const b = el.getBBox(); drEl(g, "rect", { x: b.x + dx, y: b.y + dy, width: b.width, height: b.height, fill: acc, "fill-opacity": 0.12, stroke: acc, "stroke-dasharray": `${5 * k} ${3 * k}`, "stroke-width": sw }); }
+      drEl(g, "line", { x1: a[0], y1: a[1], x2: s[0], y2: s[1], stroke: acc, "stroke-width": sw, "stroke-dasharray": `${4 * k} ${3 * k}` });
+      drLabel(g, (a[0] + s[0]) / 2, (a[1] + s[1]) / 2 - 8 * k, `Δ ${Math.round(DR.snap.p[0] - DR.base[0])}, ${Math.round(DR.snap.p[1] - DR.base[1])} mm`);
+    }
+  }
+  if (DR.box) { const a = DR.box.a, b = DR.box.b, cross = b.x < a.x; drEl(g, "rect", { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y), fill: acc, "fill-opacity": cross ? 0.06 : 0.12, stroke: acc, "stroke-width": sw, "stroke-dasharray": cross ? `${6 * k} ${4 * k}` : "none" }); }
+  if (DR.tool === "mirror" && DR.cur && DR.snap) { const s = drToSvg(DR.snap.p), vb = drSvg().viewBox.baseVal; DR.opt.axis === "x" ? drEl(g, "line", { x1: s[0], y1: vb.y, x2: s[0], y2: vb.y + vb.height, stroke: acc, "stroke-dasharray": `${8 * k} ${4 * k}` }) : drEl(g, "line", { x1: vb.x, y1: s[1], x2: vb.x + vb.width, y2: s[1], stroke: acc, "stroke-dasharray": `${8 * k} ${4 * k}` }); }
+}
+
+// ---- the pointer: snapping and previews go to the backend, one request at a time
+function drQuery(e) {
+  const p = drEvt(e); if (!p || !DR.frame) return; DR.cur = drToWorld(p); DR.last = e;
+  if (DR.flight) { DR.queued = true; return; }
+  DR.flight = true;
+  (async () => {
+    try {
+      do {
+        DR.queued = false; const w = DR.cur, scale = drScale();
+        if (DR.tool === "door" || DR.tool === "window") { const wd = drNum(DR.tool === "door" ? DR.opt.dw : DR.opt.ww); DR.placement = wd > 0 ? (await call("draft_place", { p: w, width: wd, scale })).placement : null; DR.snap = DR.placement ? { p: DR.placement.center, kind: "grid" } : null; }
+        else {
+          const from = (DR.tool === "wall" && DR.start) ? DR.start : (DR.base && ["move", "copy"].includes(DR.tool) ? DR.base : null);
+          DR.snap = await call("draft_snap", { p: w, scale, from, ortho: DR.tool === "wall" && !!DR.start });
+        }
+        drDraw();
+      } while (DR.queued);
+    } catch (x) { /* a pointer move must never raise an error */ } finally { DR.flight = false; }
+  })();
+}
+async function drEdit(cmd, args) {
+  try { const r = await call(cmd, args); if (r.frame) DR.frame = r.frame; if (r.defaults) DR.defaults = r.defaults; await afterEdit(r); if (r.notes && r.notes.length) drSay(r.notes.join(" · ")); return r; }
+  catch (x) { drSay(x.message || String(x)); return null; }
+}
+function drPickAt(e) {
+  for (const el of document.elementsFromPoint(e.clientX, e.clientY)) { const t = el.closest && el.closest("#viewer [data-id]"); if (t && !t.closest("#dr-ov") && !/\bmep|run\b/.test(t.getAttribute("class") || "")) return t; }
+  return null;
+}
+const drKindOf = el => { const c = (el.getAttribute("class") || "").split(" ")[0]; return c === "room" ? "Space" : c === "wall" ? "Wall" : c === "door" ? "Door" : c === "window" ? "Window" : c === "column" ? "Column" : c; };
+function drNeed(n, msg) { if (drIds().length < n) { drSay(msg || L("حدّد عناصر أولاً (انقر أو اسحب مربعاً)", "Select elements first (click, or drag a box)")); return false; } return true; }
+
+function drClick(e) {
+  if (!DR.cur || !DR.snap) return; const p = DR.snap.p, t = DR.tool;
+  if (t === "wall") {
+    if (!DR.start) { DR.start = p; DR.typed = ""; drDraw(); return; }
+    if (p[0] === DR.start[0] && p[1] === DR.start[1]) return;
+    const a = DR.start;
+    drEdit("draft_wall", { a, b: p, thickness: drNum(DR.opt.thick), height: drNum(DR.opt.height) }).then(r => { if (r) { DR.start = DR.opt.chain ? p : null; DR.typed = ""; } drDraw(); });
+  } else if (t === "door" || t === "window") {
+    const pl = DR.placement; if (!pl) { drSay(L("اقترب من جدار", "Move over a wall")); return; }
+    if (!pl.fits) { drSay(L("الجدار أقصر من أن يتسع له", "the wall is too short for it")); return; }
+    drEdit("draft_opening", { kind: t, wall: pl.wall, offset: pl.offset, side: pl.side, width: drNum(t === "door" ? DR.opt.dw : DR.opt.ww), height: drNum(t === "door" ? DR.opt.dh : DR.opt.wh), sill: t === "window" ? drNum(DR.opt.ws) : null }).then(r => { if (r) selectIds([r.opening], { src: "draft" }); });
+  } else if (t === "move" || t === "copy") {
+    if (!drNeed(1)) return;
+    if (!DR.base) { DR.base = p; drSay(L("انقر نقطة الوصول", "Click the target point")); drDraw(); return; }
+    const xf = { op: "move", dx: Math.round(p[0] - DR.base[0]), dy: Math.round(p[1] - DR.base[1]) }; DR.base = null;
+    if (!xf.dx && !xf.dy) return;
+    drEdit("draft_xform", { ids: drIds(), xf, copy: t === "copy" }).then(r => { if (r && r.created && r.created.length) selectIds(r.created, { src: "draft" }); drDraw(); });
+  } else if (t === "mirror") {
+    if (!drNeed(1)) return;
+    drEdit("draft_xform", { ids: drIds(), xf: { op: "mirror", axis: DR.opt.axis, at: DR.opt.axis === "x" ? p[0] : p[1] }, copy: DR.opt.copy });
+  } else if (["align", "split", "trim"].includes(t)) {
+    const el = drPickAt(e), id = el && drKindOf(el) === "Wall" ? el.dataset.id : null;
+    if (!id) { drSay(L("انقر جداراً", "Click a wall")); return; }
+    if (t === "split") {
+      call("describe", { id }).then(d => { const horiz = d.horizontal; return drEdit("draft_split", { wall: id, at: horiz ? p[0] : p[1] }); });
+    } else if (!DR.ref) { DR.ref = { id, x: DR.cur[0], y: DR.cur[1] }; selectIds([id], { src: "draft" }); drSay(t === "align" ? L("انقر الجدار المراد محاذاته", "Click the wall to bring onto that line") : L("انقر الجدار الثاني", "Click the second wall")); }
+    else { const a = DR.ref; DR.ref = null; (t === "align" ? drEdit("draft_align", { reference: a.id, target: id }) : drEdit("draft_trim", { a, b: { id, x: DR.cur[0], y: DR.cur[1] } })); }
+  }
+}
+function drSelectClick(e, additive) {
+  const el = drPickAt(e); const id = el ? el.dataset.id : null;
+  if (!id) { if (!additive) selectIds([], { src: "draft" }); return; }
+  let ids = drIds();
+  if (additive) ids = ids.includes(id) ? ids.filter(i => i !== id) : [...ids, id]; else ids = [id];
+  selectIds(ids, { src: "draft" });
+}
+async function drBoxSelect(a, b, additive) {
+  const wa = drToWorld(a), wb = drToWorld(b), mode = b.x >= a.x ? "window" : "crossing";
+  const r = await call("draft_box", { box: [wa[0], wa[1], wb[0], wb[1]], mode });
+  let ids = r.ids; if (additive) ids = [...new Set([...drIds(), ...ids])];
+  selectIds(ids, { src: "draft" });
+}
+
+function drBind() {
+  const v = $("viewer");
+  v.addEventListener("mousedown", e => {
+    if (!DR.on) return; e.stopImmediatePropagation(); e.preventDefault();
+    if (e.button === 1 || (e.button === 0 && DR.space)) { DR.pan = { x: e.clientX, y: e.clientY, v: DR.vw || drCurrentWorldView() }; return; }
+    if (e.button !== 0) return;
+    const p = drEvt(e); DR.down = { x: e.clientX, y: e.clientY, p, e, moved: false };
+  }, true);
+  window.addEventListener("mousemove", e => {
+    if (!DR.on) return;
+    if (DR.pan) { const k = drK() / DR.frame.s, dx = (e.clientX - DR.pan.x) * k, dy = (e.clientY - DR.pan.y) * k, v = DR.pan.v; DR.vw = [v[0] - dx, v[1] + dy, v[2] - dx, v[3] + dy]; drViewBox(); drDraw(); return; }
+    if (DR.down && DR.tool === "select" && !DR.down.moved && Math.hypot(e.clientX - DR.down.x, e.clientY - DR.down.y) > 5) { DR.down.moved = true; }
+    if (DR.down && DR.down.moved && DR.tool === "select") { DR.box = { a: DR.down.p, b: drEvt(e) }; drDraw(); return; }
+    if (e.target.closest && e.target.closest("#viewer")) drQuery(e);
+  });
+  window.addEventListener("mouseup", e => {
+    if (!DR.on) return;
+    if (DR.pan) { DR.pan = null; return; }
+    const d = DR.down; DR.down = null; if (!d) return;
+    if (DR.tool === "select") { if (d.moved) { const b = drEvt(e); DR.box = null; drDraw(); busy(() => drBoxSelect(d.p, b, e.shiftKey)); } else drSelectClick(d.e, e.shiftKey); return; }
+    if (e.button === 0) { if (DR.last) { drQueryNow(e).then(() => drClick(e)); } }
+  });
+  v.addEventListener("click", e => { if (DR.on) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+  v.addEventListener("dblclick", e => { if (DR.on) { e.stopImmediatePropagation(); if (DR.tool === "wall") { DR.start = null; drDraw(); } } }, true);
+  v.addEventListener("contextmenu", e => { if (!DR.on) return; e.preventDefault(); e.stopImmediatePropagation(); if (DR.start) { DR.start = null; DR.typed = ""; drDraw(); } else if (DR.tool !== "select") drSetTool("select"); }, true);
+  v.addEventListener("wheel", e => { if (!DR.on || !DR.frame) return; e.preventDefault(); const w = drToWorld(drEvt(e)); drZoom(e.deltaY < 0 ? 0.8 : 1.25, w[0], w[1]); }, { passive: false });
+  window.addEventListener("keydown", e => { if (e.code === "Space" && DR.on && !drTyping(e)) { DR.space = true; e.preventDefault(); } });
+  window.addEventListener("keyup", e => { if (e.code === "Space") DR.space = false; });
+  window.addEventListener("keydown", drKey);
+}
+// The click uses the freshest snap: ask once more for the exact pointer position before acting on it.
+async function drQueryNow(e) {
+  const p = drEvt(e); if (!p) return; DR.cur = drToWorld(p);
+  while (DR.flight) await new Promise(r => setTimeout(r, 5));
+  DR.flight = true;
+  try {
+    const w = DR.cur, scale = drScale();
+    if (DR.tool === "door" || DR.tool === "window") { const wd = drNum(DR.tool === "door" ? DR.opt.dw : DR.opt.ww); DR.placement = wd > 0 ? (await call("draft_place", { p: w, width: wd, scale })).placement : null; DR.snap = DR.placement ? { p: DR.placement.center, kind: "grid" } : null; }
+    else { const from = (DR.tool === "wall" && DR.start) ? DR.start : (DR.base && ["move", "copy"].includes(DR.tool) ? DR.base : null); DR.snap = await call("draft_snap", { p: w, scale, from, ortho: DR.tool === "wall" && !!DR.start }); }
+  } catch (x) { /* the click is dropped */ } finally { DR.flight = false; }
+}
+const drTyping = e => { const t = e.target && e.target.tagName; return t === "INPUT" || t === "SELECT" || t === "TEXTAREA"; };
+function drKey(e) {
+  if (!DR.on || drTyping(e) || e.altKey) return;
+  if ((e.ctrlKey || e.metaKey) && ["z", "y"].includes(e.key.toLowerCase())) { e.preventDefault(); $(e.key.toLowerCase() === "z" && !e.shiftKey ? "undo" : "redo").click(); return; }
+  if (e.ctrlKey || e.metaKey) return;
+  const k = e.key;
+  if (DR.tool === "wall" && DR.start && /^[0-9]$/.test(k)) { DR.typed += k; drDraw(); e.preventDefault(); return; }
+  if (DR.tool === "wall" && DR.start && k === "Backspace" && DR.typed) { DR.typed = DR.typed.slice(0, -1); drDraw(); e.preventDefault(); return; }
+  if (DR.tool === "wall" && DR.start && k === "Enter" && DR.typed && DR.cur) {
+    const len = Number(DR.typed), a = DR.start, dx = DR.cur[0] - a[0], dy = DR.cur[1] - a[1], horiz = Math.abs(dx) >= Math.abs(dy);
+    const b = horiz ? [a[0] + Math.sign(dx || 1) * len, a[1]] : [a[0], a[1] + Math.sign(dy || 1) * len]; e.preventDefault();
+    drEdit("draft_wall", { a, b, thickness: drNum(DR.opt.thick), height: drNum(DR.opt.height) }).then(r => { if (r) { DR.start = DR.opt.chain ? b : null; DR.typed = ""; } drDraw(); }); return;
+  }
+  if (k === "Escape") { if (DR.start || DR.base || DR.ref) { DR.start = DR.base = DR.ref = null; DR.typed = ""; drDraw(); } else if (DR.tool !== "select") drSetTool("select"); else selectIds([], { src: "draft" }); return; }
+  if (k === "Delete") { if (drNeed(1)) { e.preventDefault(); drEdit("draft_delete", { ids: drIds() }); } return; }
+  if (k === "Home") { drFit(); return; }
+  if (k === "+" || k === "=") { drZoom(0.8); return; }
+  if (k === "-" || k === "_") { drZoom(1.25); return; }
+  const hit = DR_TOOLS.find(t => t[1].toLowerCase() === k.toLowerCase()); if (hit) { e.preventDefault(); drSetTool(hit[0]); }
+}
+
+// ---- the toolbar
+function drSetTool(t) { DR.tool = t; DR.start = DR.base = DR.ref = null; DR.typed = ""; DR.placement = null; DR.snap = null; if (t === "rotate") { drRotate(1); DR.tool = "select"; } drBar(); drDraw(); drHint(); }
+function drHint() {
+  const h = { select: L("انقر لتحديد، Shift للإضافة، اسحب مربعاً (يميناً: يحتوي، يساراً: يلامس)", "Click to select, Shift to add, drag a box (right: holds, left: touches)"), wall: L("انقر البداية ثم النهاية؛ اكتب الطول ثم Enter؛ Esc ينهي", "Click the start, then the end; type a length and Enter; Esc ends"), door: L("حرّك فوق جدار وانقر", "Move over a wall and click"), window: L("حرّك فوق جدار وانقر", "Move over a wall and click"), move: L("حدّد أولاً ثم انقر نقطة الأساس ثم الوصول", "Select first, then click a base point and a target"), copy: L("حدّد أولاً ثم انقر نقطة الأساس ثم الوصول", "Select first, then click a base point and a target"), mirror: L("حدّد أولاً ثم انقر نقطة على محور الانعكاس", "Select first, then click a point on the mirror line"), align: L("انقر الجدار المرجع ثم الجدار المراد نقله", "Click the reference wall, then the wall to move"), split: L("انقر على جدار عند نقطة القطع", "Click a wall where it is to be cut"), trim: L("انقر الجدار الأول (الجزء المراد إبقاؤه) ثم الثاني", "Click the first wall (on the part to keep), then the second") }[DR.tool];
+  const e = $("dr-hint"); if (e) e.textContent = h || "";
+}
+function drFillDefaults() {
+  const d = DR.defaults || {}, o = DR.opt, set = (k, v) => { if (o[k] === "" && v != null) o[k] = String(v); };
+  set("thick", d.wall && d.wall.thickness); set("height", d.wall && d.wall.height); set("dw", d.door && d.door.width); set("dh", d.door && d.door.height);
+  set("ww", d.window && d.window.width); set("wh", d.window && d.window.height); set("ws", d.window && d.window.sill); drBar(true);
+}
+function drBar(keepFocus) {
+  const bar = $("draftbar"); if (!bar || !DR.on) return;
+  if (keepFocus && bar.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;
+  const num = (k, label, w = 62) => `<label style="display:flex;gap:3px;align-items:center;margin:0">${label}<input data-dopt="${k}" type="number" step="any" dir="ltr" value="${esc(DR.opt[k])}" style="width:${w}px"></label>`;
+  const tools = DR_TOOLS.map(([id, key, ar, en]) => `<button data-dtool="${id}" class="${DR.tool === id ? "primary" : ""}" title="${key}">${L(ar, en)} <small>${key}</small></button>`).join("");
+  const opts = { wall: num("thick", L("السماكة", "Thickness")) + num("height", L("الارتفاع", "Height")) + `<label style="display:flex;gap:3px;align-items:center;margin:0"><input type="checkbox" data-dopt="chain" ${DR.opt.chain ? "checked" : ""}>${L("متابعة", "Chain")}</label>`,
+    door: num("dw", L("العرض", "Width")) + num("dh", L("الارتفاع", "Height")), window: num("ww", L("العرض", "Width")) + num("wh", L("الارتفاع", "Height")) + num("ws", L("الحافة", "Sill")),
+    copy: "", mirror: `<select data-dopt="axis" style="width:auto"><option value="x" ${DR.opt.axis === "x" ? "selected" : ""}>${L("محور رأسي", "vertical axis")}</option><option value="y" ${DR.opt.axis === "y" ? "selected" : ""}>${L("محور أفقي", "horizontal axis")}</option></select><label style="display:flex;gap:3px;align-items:center;margin:0"><input type="checkbox" data-dopt="copy" ${DR.opt.copy ? "checked" : ""}>${L("نسخة", "Copy")}</label>`,
+    select: "" }[DR.tool] || "";
+  bar.innerHTML = `<div style="display:flex;gap:4px;flex-wrap:wrap">${tools}</div><span style="width:8px"></span>${opts}<span style="flex:1"></span>
+    <button data-dact="rot-l" title="${L("تدوير 90° عكس عقارب الساعة", "Rotate 90° counter-clockwise")}">⟲</button><button data-dact="rot-r" title="${L("تدوير 90° مع عقارب الساعة", "Rotate 90° clockwise")}">⟳</button>
+    <button data-dact="del" title="Delete">🗑</button><button data-dact="zin">＋</button><button data-dact="zout">－</button><button data-dact="fit">${L("ملاءمة", "Fit")}</button>
+    <div id="dr-hint" class="note" style="flex-basis:100%;margin:0"></div>`;
+  bar.querySelectorAll("[data-dtool]").forEach(b => b.onclick = () => drSetTool(b.dataset.dtool));
+  bar.querySelectorAll("[data-dopt]").forEach(i => i.onchange = () => { DR.opt[i.dataset.dopt] = i.type === "checkbox" ? i.checked : i.value; });
+  bar.querySelectorAll("[data-dact]").forEach(b => b.onclick = () => { const a = b.dataset.dact; if (a === "rot-l") drRotate(1); else if (a === "rot-r") drRotate(-1); else if (a === "del") { if (drNeed(1)) drEdit("draft_delete", { ids: drIds() }); } else if (a === "zin") drZoom(0.8); else if (a === "zout") drZoom(1.25); else drFit(); });
+  drHint();
+}
+// A quarter turn about the middle of the selection (rounded to 50 mm, so the result stays on the grid).
+function drRotate(turns) {
+  if (!drNeed(1)) return;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const id of drIds()) { const el = document.querySelector(`#viewer [data-id="${id}"]`); if (!el) continue; const b = el.getBBox(), a = drToWorld({ x: b.x, y: b.y + b.height }), c = drToWorld({ x: b.x + b.width, y: b.y }); x0 = Math.min(x0, a[0]); y0 = Math.min(y0, a[1]); x1 = Math.max(x1, c[0]); y1 = Math.max(y1, c[1]); }
+  if (!isFinite(x0)) return;
+  const r50 = v => Math.round(v / 50) * 50;
+  drEdit("draft_xform", { ids: drIds(), xf: { op: "rotate", cx: r50((x0 + x1) / 2), cy: r50((y0 + y1) / 2), turns }, copy: DR.opt.copy });
+}
+
+// ---- the properties of the selection
+function drOnSelect() { if (DR.on) drProps(); }
+async function drProps() {
+  const box = $("dr-props"); if (!box) return; const ids = drIds();
+  // The panel keeps its height while drafting: it must not push the plan around under the pointer.
+  if (!DR.on) { box.style.display = "none"; box.innerHTML = ""; return; }
+  box.style.display = "flex";
+  if (!ids.length) { box.innerHTML = `<span class="hint">${L("حدّد عنصراً لعرض خصائصه وتعديلها", "Select an element to see and edit its properties")}</span>`; return; }
+  if (ids.length > 1) { box.innerHTML = `<b>${ids.length} ${L("عنصراً محدداً", "elements selected")}</b><span class="hint">${L("نقل/نسخ/تدوير/انعكاس/حذف ينطبق على الكل", "move, copy, rotate, mirror and delete apply to all")}</span>`; return; }
+  try {
+    const p = await call("draft_props", { id: ids[0] }); if (drIds()[0] !== ids[0]) return; DR.props = p;
+    const src = p.source === "user" ? L("رسمه المستخدم", "drawn by you") : L("ولّده التخطيط (يُعاد بناؤه عند تحريك الجدران الفاصلة)", "generated by the layout (rebuilt when a partition moves)");
+    const ctl = f => f.editable ? (f.unit === "bool" ? `<input type="checkbox" data-pf="${f.key}" ${f.value ? "checked" : ""}>` : `<input data-pf="${f.key}" type="number" step="1" dir="ltr" value="${f.value ?? ""}" style="width:80px">`) : `<span dir="ltr">${esc(f.value ?? "—")}</span>`;
+    box.innerHTML = `<b>${esc(p.kind)}</b><span class="hint">${src}${p.locked || p.wallLocked ? " · 🔒" : ""}</span>` + p.fields.map(f => `<label style="display:flex;gap:4px;align-items:center;margin:0">${esc(L(f.ar, f.en))}${ctl(f)}</label>`).join("");
+    box.querySelectorAll("[data-pf]").forEach(i => i.onchange = async () => { const v = i.type === "checkbox" ? i.checked : (i.value === "" ? null : Number(i.value)); const r = await drEdit("draft_set", { id: ids[0], key: i.dataset.pf, value: v }); if (!r) drProps(); });
+  } catch (x) { box.innerHTML = `<span class="bad">${esc(x.message || x)}</span>`; }
+}
+
+// ---- turning the mode on and off
+async function drToggle(on) {
+  if (on === DR.on) return;
+  if (on) {
+    if (V3.on && !V3.split) { V3.split = true; applyMode(); }
+    if ($("viewsel").value !== "plan") { $("viewsel").value = "plan"; await showView(); }
+    const r = await call("draft_frame"); if (!r.frame) throw new Error(L("ولّد مخططاً أو افتح مشروعاً أولاً", "Generate a plan or open a project first")); DR.frame = r.frame; DR.defaults = r.defaults; DR.on = true;
+  } else DR.on = false;
+  $("draft").classList.toggle("primary", DR.on); $("viewer").classList.toggle("draft", DR.on); $("draftbar").style.display = DR.on ? "flex" : "none";
+  DR.start = DR.base = DR.ref = DR.cur = DR.snap = DR.placement = null; DR.vw = null; DR.vb0 = null; DR.tool = "select";
+  const svg = drSvg(); if (svg) { svg.classList.toggle("dr", DR.on); const g = svg.querySelector("#dr-ov"); if (g) g.remove(); if (!DR.on && DR.vb0 == null) { /* the plan returns to its own box */ } }
+  if (DR.on) { drFillDefaults(); drBar(); drViewBox(); drProps(); } else { $("draftbar").innerHTML = ""; drProps(); if (svg) { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); } }
+}
+$("draft").onclick = () => busy(() => drToggle(!DR.on));
+$("draft").textContent = L("رسم BIM", "BIM draft");
+drBind();
 
 applyLang();
 call("assumptions").then(a => { state.assumptions = a; if (state.rooms_out) renderNotes(); });

@@ -50,9 +50,30 @@ pub fn frame(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Option<(f64, 
     if spaces.is_empty() {
         return None;
     }
-    let minx = spaces.iter().map(|(_, s)| s.x as f64).fold(f64::INFINITY, f64::min);
-    let maxy = spaces.iter().map(|(_, s)| (s.y + s.h) as f64).fold(f64::NEG_INFINITY, f64::max);
+    let (minx, _, _, maxy) = extents(model, level, &spaces);
     Some((minx, maxy, opts.px_per_m / 1000.0, opts.margin_px))
+}
+
+/// `(min x, min y, max x, max y)` of the plan: the rooms, and any wall or column drawn beyond them, so nothing the user drafts outside the
+/// building is cut off. For a generated plan every wall lies on a room edge, so this is the rooms' own extent.
+fn extents(model: &Model, level: Option<Id>, spaces: &[(&Element, Space)]) -> (f64, f64, f64, f64) {
+    let mut e = (
+        spaces.iter().map(|(_, s)| s.x as f64).fold(f64::INFINITY, f64::min),
+        spaces.iter().map(|(_, s)| s.y as f64).fold(f64::INFINITY, f64::min),
+        spaces.iter().map(|(_, s)| (s.x + s.w) as f64).fold(f64::NEG_INFINITY, f64::max),
+        spaces.iter().map(|(_, s)| (s.y + s.h) as f64).fold(f64::NEG_INFINITY, f64::max),
+    );
+    let mut grow = |x: i64, y: i64| {
+        e = (e.0.min(x as f64), e.1.min(y as f64), e.2.max(x as f64), e.3.max(y as f64));
+    };
+    for (_, w) in collect::<Wall>(model, level) {
+        grow(w.x1, w.y1);
+        grow(w.x2, w.y2);
+    }
+    for (_, c) in collect::<crate::typed::Column>(model, level) {
+        grow(c.x, c.y);
+    }
+    e
 }
 
 fn collect<T: Typed>(model: &Model, level: Option<Id>) -> Vec<(&Element, T)> {
@@ -81,10 +102,7 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
         return Err(DrawError::NoSpaces);
     }
 
-    let minx = spaces.iter().map(|(_, s)| s.x as f64).fold(f64::INFINITY, f64::min);
-    let miny = spaces.iter().map(|(_, s)| s.y as f64).fold(f64::INFINITY, f64::min);
-    let maxx = spaces.iter().map(|(_, s)| (s.x + s.w) as f64).fold(f64::NEG_INFINITY, f64::max);
-    let maxy = spaces.iter().map(|(_, s)| (s.y + s.h) as f64).fold(f64::NEG_INFINITY, f64::max);
+    let (minx, miny, maxx, maxy) = extents(model, level, &spaces);
 
     let s = opts.px_per_m / 1000.0;
     let m = opts.margin_px;
