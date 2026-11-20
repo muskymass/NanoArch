@@ -148,13 +148,23 @@ fn pick_sketch() -> Result<Value, String> {
     Ok(json!({ "picked": { "name": name, "kind": kind, "mime": mime, "b64": nnx_core::xlsx::base64_encode(&bytes) } }))
 }
 
+/// Where a project file is saved or opened. The user picks it in a dialog; `NANOARCH_EXPORT_DIR` (the seam of `pick_save_path`) makes it
+/// `project.nnx` in that folder, so an end-to-end test of the real window can save and reopen a project.
+fn project_path(save: bool) -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("NANOARCH_EXPORT_DIR") {
+        return Some(Path::new(&dir).join("project.nnx"));
+    }
+    let dialog = rfd::FileDialog::new().add_filter("NanoArch project", &["nnx"]);
+    if save { dialog.set_file_name("project.nnx").save_file() } else { dialog.pick_file() }
+}
+
 /// Saves the open plan as `.nnx`, then records that state as saved so the close warning goes away.
 fn save_project(app: &Shared) -> Result<Value, String> {
     let (model, settings) = {
         let guard = lock(app);
         (guard.model()?.clone(), guard.settings())
     };
-    match rfd::FileDialog::new().set_file_name("project.nnx").add_filter("NanoArch project", &["nnx"]).save_file() {
+    match project_path(true) {
         Some(path) => {
             nnx_core::persist::save_with_settings(&model, &settings, &path).map_err(|e| e.to_string())?;
             lock(app).mark_saved();
@@ -167,7 +177,7 @@ fn save_project(app: &Shared) -> Result<Value, String> {
 /// Opens a saved `.nnx` project, replacing the current plan. The page is told to ask first if there are
 /// unsaved changes (it checks `status`), so this only reads the file.
 fn open_project(app: &Shared) -> Result<Value, String> {
-    let Some(path) = rfd::FileDialog::new().add_filter("NanoArch project", &["nnx"]).pick_file() else {
+    let Some(path) = project_path(false) else {
         return Ok(json!({ "opened": null }));
     };
     let (model, settings) = nnx_core::persist::load_with_settings(&path).map_err(|e| format!("{}: {e}", path.display()))?;

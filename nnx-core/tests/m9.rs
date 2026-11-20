@@ -498,3 +498,144 @@ fn a_locked_room_the_stair_block_and_a_separator_that_stops_short_are_not_divide
     assert!(s.blocked.iter().any(|b| b.contains("'hall'") && b.contains("does not reach both sides")), "{:?}", s.blocked);
     assert_eq!(rooms(&doc).len(), 3, "nothing was divided");
 }
+
+// ------------------------------------------------------------------ a divided layout room: openings, MEP, numbers, exports and the file
+
+fn qto_numbers(doc: &Document) -> Vec<(String, f64)> {
+    let q = qto::compute(&doc.model, &qto::QtoOpts::default());
+    q.items.iter().map(|i| (i.code.clone(), i.quantity)).collect()
+}
+
+fn prop(doc: &Document, id: Id, key: &str) -> serde_json::Value {
+    doc.model.get(&id).unwrap().props[key].clone()
+}
+
+fn rooms_area(doc: &Document) -> f64 {
+    doc.model.elements.values().filter(|e| e.kind == "Space").map(|e| e.typed::<Space>().unwrap().area).sum()
+}
+
+/// A 9 x 4 m layout room 'living' with a wall along its south side, a window and a door in the part x < 3000, a window in the rest, and
+/// two MEP points, one in each part.
+fn living_with_openings() -> (Document, [Id; 3], [Id; 2]) {
+    let mut doc = blank();
+    layout_room(&mut doc, "living", "living", [0, 0, 9000, 4000]);
+    let level = level(&doc);
+    let (wc, wall_id) = draft::wall_command(&doc.model, level, &WallSpec { a: [0, 0], b: [9000, 0], thickness: 200, height: 3000 }).unwrap_or_else(|e| panic!("{e}"));
+    doc.commit("wall", Origin::User, vec![wc]).unwrap_or_else(|e| panic!("{e}"));
+    let mut ids = Vec::new();
+    for (kind, offset, width, sill) in [(draft::OpeningKind::Window, 1000, 1200, Some(900)), (draft::OpeningKind::Window, 6000, 1200, Some(900)), (draft::OpeningKind::Door, 2200, 900, None)] {
+        let height = if sill.is_some() { 1200 } else { 2100 };
+        let (cmds, id) = draft::opening_command(&doc.model, &draft::OpeningSpec { kind, wall: wall_id, offset, width, height, sill, side: Some(1) }).unwrap_or_else(|e| panic!("{e}"));
+        doc.commit("opening", Origin::User, cmds).unwrap_or_else(|e| panic!("{e}"));
+        // The openings name the room explicitly, as those of a generated layout do.
+        let fields: &[&str] = if sill.is_some() { &["room"] } else { &["from", "opensInto"] };
+        let sets = fields.iter().map(|f| Command::SetProp { id, key: (*f).into(), value: Some(json!("living")) }).collect();
+        doc.commit("name the room", Origin::User, sets).unwrap_or_else(|e| panic!("{e}"));
+        ids.push(id);
+    }
+    let mut pts = Vec::new();
+    for (x, y) in [(1500, 2000), (6000, 2000)] {
+        let mut el = typed::element_of(&typed::MepPoint { role: "light".into(), x, y, room: "living".into(), watts: None, circuit: None, label: None, extra: Default::default() }, Source::Generated);
+        el.level_id = level;
+        pts.push(el.id);
+        doc.commit("point", Origin::Generator, vec![Command::Create(el)]).unwrap_or_else(|e| panic!("{e}"));
+    }
+    doc.mark_saved();
+    (doc, [ids[0], ids[1], ids[2]], [pts[0], pts[1]])
+}
+
+#[test]
+fn dividing_a_layout_room_sends_each_opening_and_mep_point_to_the_part_it_stands_in_and_the_numbers_follow() {
+    let (mut doc, [w_left, w_right, door], [p_left, p_right]) = living_with_openings();
+    let qto_before = qto_numbers(&doc);
+    let skipped_before = rules::check(&doc.model, &rules::RuleSet::default()).skipped.len();
+    let area_before = rooms_area(&doc);
+    assert_eq!(area_before, 36.0);
+    let before3d = model3d::build(&doc.model).boxes.iter().filter(|b| b.kind == "Space").count();
+    let (sep, s) = separator(&mut doc, [3000, 0], [3000, 4000]);
+    assert!(s.notes.iter().any(|n| n.contains("was divided")), "{:?}", s.notes);
+    // Left of the separator is 'living-2'; the rest keeps 'living'.
+    assert_eq!(prop(&doc, w_left, "room"), "living-2");
+    assert_eq!(prop(&doc, w_right, "room"), "living");
+    assert_eq!((prop(&doc, door, "from"), prop(&doc, door, "opensInto")), (json!("living-2"), json!("living-2")));
+    assert_eq!((prop(&doc, p_left, "room"), prop(&doc, p_right, "room")), (json!("living-2"), json!("living")));
+    // Areas add up to the room's, exactly: 12 + 24 = 36 m².
+    assert_eq!(rooms_area(&doc), area_before);
+    let by_key: std::collections::BTreeMap<String, f64> = doc.model.elements.values().filter(|e| e.kind == "Space").map(|e| { let s = e.typed::<Space>().unwrap(); (s.requirement_key, s.area) }).collect();
+    assert_eq!((by_key["living"], by_key["living-2"]), (24.0, 12.0));
+    // Take-off: walls, openings and the gross area are what they were. Floor and ceiling split by function (24 m² 'living', 12 m² 'room'),
+    // and the skirting is the same length in all: no skirting runs along the separator, which is not a wall.
+    let after = qto_numbers(&doc);
+    let get = |v: &[(String, f64)], c: &str| v.iter().find(|i| i.0 == c).map(|i| i.1);
+    for code in ["WALL.EXT.AREA", "WALL.EXT.VOL", "WALL.OPENINGS.AREA", "WALL.FACES.AREA", "DOOR.900x2100", "WINDOW.1200x1200", "WINDOW.AREA", "SPACE.GROSS.AREA"] {
+        assert_eq!(get(&after, code), get(&qto_before, code), "{code}");
+    }
+    assert_eq!((get(&after, "FLOOR.AREA.living"), get(&after, "FLOOR.AREA.room"), get(&after, "CEILING.AREA.living"), get(&after, "CEILING.AREA.room")), (Some(24.0), Some(12.0), Some(24.0), Some(12.0)));
+    let skirting_before = get(&qto_before, "SKIRTING.living").unwrap();
+    let skirting_after = get(&after, "SKIRTING.living").unwrap() + get(&after, "SKIRTING.room").unwrap();
+    assert!((skirting_before - skirting_after).abs() < 0.011, "{skirting_before} vs {skirting_after}");
+    assert!(qto::compute(&doc.model, &qto::QtoOpts::default()).warnings.iter().any(|w| w.contains("room separators")));
+    // The audit skips what it skipped before and applies no rule of a function to the new part.
+    let report = rules::check(&doc.model, &rules::RuleSet::default());
+    assert_eq!(report.skipped.len(), skipped_before);
+    assert!(report.findings.iter().all(|f| !format!("{f:?}").contains("living-2")), "no rule applies to the part until it is given a function");
+    // 3D: one box per room, now two.
+    let after3d = model3d::build(&doc.model).boxes.iter().filter(|b| b.kind == "Space").count();
+    assert_eq!((before3d, after3d), (1, 2));
+    // DXF: the separator is on its layer and the part is named.
+    let out = dxf::export_dxf(&doc.model, &[level(&doc)], &dxf_opts()).unwrap();
+    assert_eq!(out.counts.get("A-ROOM-SEP"), Some(&1));
+    assert!(out.text.contains("living-2"), "the part's name is in the drawing");
+    // One undo gives every reference back to the whole room.
+    assert!(doc.undo());
+    assert_eq!((prop(&doc, w_left, "room"), prop(&doc, door, "from"), prop(&doc, p_left, "room")), (json!("living"), json!("living"), json!("living")));
+    assert!(doc.model.get(&sep).is_none() && rooms(&doc).len() == 1);
+}
+
+#[test]
+fn a_divided_room_survives_the_file_undo_and_redo_and_is_clean_after_reopening() {
+    let (mut doc, [w_left, ..], [p_left, _]) = living_with_openings();
+    let (sep, _) = separator(&mut doc, [3000, 0], [3000, 4000]);
+    assert!(doc.is_dirty());
+    let path = std::env::temp_dir().join(format!("nanoarch-split-{}.nnx", std::process::id()));
+    persist::save(&doc.model, &path).unwrap();
+    doc.mark_saved();
+    assert!(!doc.is_dirty());
+    let loaded = persist::load(&path).unwrap();
+    std::fs::remove_file(&path).ok();
+    assert_eq!(loaded.state_hash(), doc.model.state_hash(), "the file holds exactly the divided model");
+    let mut back = Document::new(loaded);
+    assert!(!back.is_dirty(), "a reopened project is clean");
+    assert!(!back.undo(), "history starts at the file");
+    // Both parts, their link to the original and the separator are there.
+    assert_eq!(rooms(&back).len(), 2);
+    let part = back.model.elements.values().find(|e| e.kind == "Space" && e.props["requirementKey"] == "living-2").unwrap().typed::<Space>().unwrap();
+    assert_eq!(part.extra["splitFrom"]["requirementKey"], "living");
+    assert_eq!((prop(&back, w_left, "room"), prop(&back, p_left, "room")), (json!("living-2"), json!("living-2")));
+    assert!(back.model.get(&sep).is_some());
+    // Nothing is left to do: the reopened plan is already divided.
+    let again = annot::rooms_sync(&back.model, level(&back));
+    assert!(again.cmds.is_empty(), "a second pass changes nothing: {:?}", again.notes);
+    // Deleting the separator in the reopened project gives the room back as one step; undo and redo walk it.
+    let divided_hash = back.model.state_hash();
+    let mut cmds = draft::delete(&back.model, &[sep]).unwrap().cmds;
+    let mut scratch = Document::new(back.model.clone());
+    scratch.commit("x", Origin::User, cmds.clone()).unwrap_or_else(|e| panic!("{e}"));
+    cmds.extend(annot::rooms_sync(&scratch.model, level(&back)).cmds);
+    back.commit("Delete", Origin::User, cmds).unwrap_or_else(|e| panic!("{e}"));
+    assert!(back.is_dirty());
+    assert_eq!(rooms(&back), vec![("living".to_string(), [0, 0, 9000, 4000], Source::Generated)]);
+    assert_eq!((prop(&back, w_left, "room"), prop(&back, p_left, "room")), (json!("living"), json!("living")));
+    let whole_hash = back.model.state_hash();
+    assert!(back.undo());
+    assert_eq!(back.model.state_hash(), divided_hash);
+    assert!(!back.is_dirty(), "back at the saved state it is clean");
+    assert!(back.redo());
+    assert_eq!(back.model.state_hash(), whole_hash);
+    // The whole room saved and reopened has no trace of the division.
+    let path2 = std::env::temp_dir().join(format!("nanoarch-split2-{}.nnx", std::process::id()));
+    persist::save(&back.model, &path2).unwrap();
+    let whole = persist::load(&path2).unwrap();
+    std::fs::remove_file(&path2).ok();
+    assert!(whole.elements.values().filter(|e| e.kind == "Space").all(|e| e.props.get("splitFrom").is_none()));
+}

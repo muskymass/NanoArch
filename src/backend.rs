@@ -4942,6 +4942,82 @@ mod tests {
         assert_eq!(rooms_of(&app).len(), n);
     }
 
+    /// The room fields of every window, door and MEP point of the model, by element id.
+    fn room_refs(app: &App) -> std::collections::BTreeMap<String, Vec<String>> {
+        let mut out = std::collections::BTreeMap::new();
+        for e in model_of(app).elements.values() {
+            let fields: &[&str] = match e.kind.as_str() {
+                "Window" | "MepPoint" => &["room"],
+                "Door" => &["from", "to", "opensInto"],
+                _ => continue,
+            };
+            out.insert(e.id.to_string(), fields.iter().map(|f| e.props.get(*f).and_then(Value::as_str).unwrap_or("").to_string()).collect());
+        }
+        out
+    }
+
+    #[test]
+    fn dividing_a_generated_room_moves_its_mep_points_and_openings_to_the_part_they_stand_in_and_the_file_keeps_it() {
+        let mut app = started();
+        app.handle("mep", &json!({ "inputs": mep_inputs(), "apply": true, "show": true })).unwrap();
+        // The room with the most MEP points, divided down its middle.
+        let spaces: Vec<nnx_core::typed::Space> = model_of(&app).elements.values().filter(|e| e.kind == "Space").map(|e| e.typed::<nnx_core::typed::Space>().unwrap()).collect();
+        let points: Vec<(String, i64, i64)> = model_of(&app).elements.values().filter(|e| e.kind == "MepPoint").map(|e| (e.props["room"].as_str().unwrap().to_string(), e.props["x"].as_i64().unwrap(), e.props["y"].as_i64().unwrap())).collect();
+        assert!(!points.is_empty(), "the MEP step made points");
+        let room = spaces.iter().filter(|s| !s.requirement_key.starts_with("stair") && s.w >= 3000).max_by_key(|s| points.iter().filter(|p| p.0 == s.requirement_key).count()).unwrap().clone();
+        let cut = room.x + room.w / 2;
+        let before = room_refs(&app);
+        let r = app.handle("draft_separator", &json!({ "a": [cut, room.y], "b": [cut, room.y + room.h] })).unwrap();
+        assert!(r["notes"].as_array().unwrap().iter().any(|s| s.as_str().unwrap().contains("was divided")), "{}", r["notes"]);
+        let after = room_refs(&app);
+        let part = format!("{}-2", room.requirement_key);
+        let names: std::collections::BTreeSet<String> = rooms_of(&app).into_iter().collect();
+        assert!(names.contains(&part) && names.contains(&room.requirement_key), "both parts exist");
+        // Every reference names a room that exists; only references to the divided room changed, and only to its new part.
+        for (id, refs) in &after {
+            // A door also names what is not a room (outside, a reserve): such a name is left exactly as it was.
+            for (was, now) in before[id].iter().zip(refs) {
+                assert!(was == now || (*was == room.requirement_key && *now == part), "{id}: '{was}' became '{now}'");
+            }
+        }
+        // Each MEP point is in the room it names, and the points left of the cut are the new part's.
+        let new_part = model_of(&app).elements.values().filter(|e| e.kind == "Space").map(|e| e.typed::<nnx_core::typed::Space>().unwrap()).find(|s| s.requirement_key == part).unwrap();
+        for e in model_of(&app).elements.values().filter(|e| e.kind == "MepPoint") {
+            let (x, y, key) = (e.props["x"].as_i64().unwrap(), e.props["y"].as_i64().unwrap(), e.props["room"].as_str().unwrap());
+            if before[&e.id.to_string()][0] == room.requirement_key {
+                let inside = x >= new_part.x && x <= new_part.x + new_part.w && y >= new_part.y && y <= new_part.y + new_part.h;
+                let on_cut = x == cut;
+                assert!(on_cut || (key == part) == inside, "the point at ({x}, {y}) names '{key}'; the new part is {}..{}", new_part.x, new_part.x + new_part.w);
+            }
+        }
+        let moved = after.iter().filter(|(id, refs)| before[*id] != **refs).count();
+        assert!(moved >= 1, "something that named the room now names its part");
+        // Saved and reopened: the same model, clean, the division intact, and removing the separator undoes to it again.
+        let dir = std::env::temp_dir().join(format!("nanoarch-split-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("split.nnx");
+        nnx_core::persist::save_with_settings(app.model().unwrap(), &app.settings(), &file).unwrap();
+        let divided = hash(&app);
+        let (loaded, settings) = nnx_core::persist::load_with_settings(&file).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let mut reopened = App::default();
+        let opened = reopened.open(loaded, &settings).unwrap();
+        assert_eq!(hash(&reopened), divided, "the file holds the divided model");
+        assert!(!reopened.is_dirty(), "a reopened project is clean");
+        assert!(opened["warnings"].as_array().unwrap().is_empty(), "{}", opened["warnings"]);
+        assert_eq!(room_refs(&reopened), after);
+        assert_eq!(rooms_of(&reopened).len(), rooms_of(&app).len());
+        assert!(reopened.handle("export_dxf", &json!({})).unwrap()["counts"]["A-ROOM-SEP"].as_u64().unwrap() >= 1);
+        let sep = r["separator"].as_str().unwrap().to_string();
+        let del = reopened.handle("draft_delete", &json!({ "ids": [sep] })).unwrap();
+        assert!(del["notes"].as_array().unwrap().iter().any(|s| s.as_str().unwrap().contains("one room again")), "{}", del["notes"]);
+        assert!(reopened.is_dirty());
+        assert_eq!(room_refs(&reopened), before, "every reference is as the layout made it");
+        reopened.handle("undo", &json!({})).unwrap();
+        assert_eq!(hash(&reopened), divided);
+        assert!(!reopened.is_dirty(), "back at the saved state it is clean again");
+    }
+
     #[test]
     fn offset_copies_a_wall_a_typed_distance_to_the_pointers_side_in_one_undoable_step() {
         let mut app = boxed_app();

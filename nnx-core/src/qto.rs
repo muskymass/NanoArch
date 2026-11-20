@@ -155,6 +155,19 @@ impl Acc<'_> {
     }
 }
 
+/// Length (mm) of the room separator `sep` that lies along the sides of the room rectangle `s`.
+fn along_edges(sep: &crate::typed::RoomSeparator, s: &crate::typed::Space) -> f64 {
+    let (x0, y0, x1, y1) = (s.x, s.y, s.x + s.w, s.y + s.h);
+    let overlap = |a: i64, b: i64, lo: i64, hi: i64| (a.max(b).min(hi) - a.min(b).max(lo)).max(0) as f64;
+    if sep.x1 == sep.x2 && (sep.x1 == x0 || sep.x1 == x1) {
+        overlap(sep.y1, sep.y2, y0, y1)
+    } else if sep.y1 == sep.y2 && (sep.y1 == y0 || sep.y1 == y1) {
+        overlap(sep.x1, sep.x2, x0, x1)
+    } else {
+        0.0
+    }
+}
+
 pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     let mut acc = Acc { items: Vec::new(), opts };
     let mut warnings = Vec::new();
@@ -322,6 +335,9 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     // ---- finishes by room function ----
     let mut floor: BTreeMap<String, (f64, Vec<Id>)> = BTreeMap::new();
     let mut skirting: BTreeMap<String, (f64, Vec<Id>)> = BTreeMap::new();
+    // A room separator is a line on the drawing, not a wall: no skirting runs along it.
+    let separators = collect::<crate::typed::RoomSeparator>(model, opts.level);
+    let mut open_edge_mm = 0.0;
     for (e, s) in &spaces {
         let area = s.net_area.unwrap_or(s.area);
         let f = floor.entry(s.func.clone()).or_default();
@@ -329,7 +345,9 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
         f.1.push(e.id);
 
         let door_widths: f64 = doors.iter().filter(|(_, d)| d.from == s.requirement_key || d.to == s.requirement_key).map(|(_, d)| d.width as f64).sum();
-        let perimeter = 2.0 * (s.w + s.h) as f64;
+        let open: f64 = separators.iter().map(|(_, sep)| along_edges(sep, s)).sum();
+        open_edge_mm += open;
+        let perimeter = 2.0 * (s.w + s.h) as f64 - open;
         let k = skirting.entry(s.func.clone()).or_default();
         k.0 += ((perimeter - door_widths) / 1000.0).max(0.0);
         k.1.push(e.id);
@@ -337,6 +355,9 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     for (func, (area, ids)) in floor {
         acc.add(&format!("FLOOR.AREA.{func}"), &format!("Floor finish, {func} (net area)"), Unit::M2, area, ids.clone());
         acc.add(&format!("CEILING.AREA.{func}"), &format!("Ceiling, {func} (net area)"), Unit::M2, area, ids);
+    }
+    if open_edge_mm > 0.0 {
+        warnings.push(format!("skirting leaves out {:.2} m of room edge that lies along room separators (no wall there)", open_edge_mm / 1000.0));
     }
     for (func, (len, ids)) in skirting {
         acc.add(&format!("SKIRTING.{func}"), &format!("Skirting, {func} (perimeter minus doors)"), Unit::M, len, ids);

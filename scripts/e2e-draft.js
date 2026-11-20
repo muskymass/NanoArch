@@ -8,7 +8,7 @@
 // split view following the edit, undo and redo; then a BLANK project drafted from nothing: walls and the room they enclose, a door, a window,
 // grid lines, a permanent dimension attached to the walls, a room tag, renaming in the property panel, DXF and elevation output;
 // then v2.0.0: a click on every thin element (first click, at a small zoom too), a room separator that makes two rooms, Offset, door tags, Split, Align and Trim to corner,
-// a wall assembly made in the dialog and given to a wall, the real DXF export button, the toolbar on one row at 900 px, and a Blank project that inherits no sizes. Needs Node 22 or later (built-in WebSocket). Exits 1 if any check fails.
+// a wall assembly made in the dialog and given to a wall, the real DXF export button, the toolbar on one row at 900 px (and a plan canvas that keeps its room there, with the side panels put away on demand), a Blank project that inherits no sizes, and, after v2.0.0: a room of the generated plan divided by a separator, its openings, a saved and reopened .nnx, and the DXF. Needs Node 22 or later (built-in WebSocket). Exits 1 if any check fails.
 // Drives the REAL NanoArch window over the WebView2 debugging port with real mouse / keyboard events.
 const { spawn } = require("child_process");
 const fs = require("fs");
@@ -175,6 +175,10 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     check("a room of the generated plan was found", Array.isArray(gen), JSON.stringify(gen));
     const gx = Math.round((gen[0] + gen[2]) / 2 / 100) * 100;
     const roomsGen0 = await count("#viewer rect.room"), wallsGen0 = await count("#viewer rect.wall"), tagsGen0 = await count("#viewer g.tag");
+    // What the openings of the plan name before the division: a door or window names its room(s) by key.
+    const refsExpr = `(async()=>{ const m=await call("draft_box",{box:[-1e6,-1e6,1e6,1e6],mode:"crossing"}); const out={}; for (const id of m.ids) { const p=await call("draft_props",{id}); if (p.kind==="Door"||p.kind==="Window") out[id]=p.fields.filter(f=>["room","from","to"].includes(f.key)).map(f=>f.value); } const lv=await call("level",{index:0}); return JSON.stringify({refs:out, rooms:(lv.rooms||[]).map(r=>r.key||r.requirementKey)}); })()`;
+    const refs0 = JSON.parse(await ev(refsExpr));
+    check("the plan's openings name rooms of the plan", Object.keys(refs0.refs).length > 5 && refs0.rooms.length >= 8, `${Object.keys(refs0.refs).length} openings, ${refs0.rooms.length} rooms`);
     const gp0 = await px(gx, gen[1] + 20), gp1 = await px(gx, gen[3] - 20);
     await click(gp0[0], gp0[1]); await click(gp1[0], gp1[1]);
     await key("Escape"); await key("Escape");
@@ -187,6 +191,36 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     check("one Ctrl+Z takes the division back: the room and the separator are gone", (await count("#viewer rect.room")) === roomsGen0 && (await count("#viewer g.separator")) === 0 && (await count("#viewer g.tag")) === tagsGen0, `${await count("#viewer rect.room")} rooms`);
     await key("y", { modifiers: 2 }); await sleep(900);
     check("Ctrl+Y divides it again", (await count("#viewer rect.room")) === roomsGen0 + 1 && (await count("#viewer g.separator")) === 1);
+    // ---- the divided plan: openings still name rooms that exist, the saved file keeps the division, the DXF carries the separator
+    const refs1 = JSON.parse(await ev(refsExpr));
+    const newKeys = refs1.rooms.filter(k => !refs0.rooms.includes(k));
+    check("the division made one new room, named after the room it came from", newKeys.length === 1 && /-2$/.test(newKeys[0]) && refs0.rooms.includes(newKeys[0].replace(/-2$/, "")), JSON.stringify(newKeys));
+    const bad = Object.entries(refs1.refs).filter(([id, now]) => now.some((v, i) => { const was = refs0.refs[id][i]; return !(v === was || v === was + "-2") || (v !== was && !refs1.rooms.includes(v)); }));
+    check("every opening names what it named, or the new part of that room: none names a room that is gone", bad.length === 0 && Object.keys(refs1.refs).length === Object.keys(refs0.refs).length, JSON.stringify(bad).slice(0, 200));
+    const sv = await ev(`(()=>{const b=$("saveproj").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
+    try { fs.unlinkSync(`${D}\\project.nnx`); } catch (e) {}
+    await click(sv[0], sv[1]); await sleep(1500);
+    check("the real Save button wrote the .nnx file and the project is clean", fs.existsSync(`${D}\\project.nnx`) && fs.statSync(`${D}\\project.nnx`).size > 1000 && (await ev(`(async()=>(await call("status")).dirty)()`)) === false);
+    for (const f of fs.readdirSync(D)) if (/\.dxf$/i.test(f)) fs.unlinkSync(`${D}\\${f}`);
+    const dxb = await ev(`(()=>{const b=$("exportdxf").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
+    await click(dxb[0], dxb[1]); await sleep(2500);
+    const dxfs = fs.readdirSync(D).filter(f => /\.dxf$/i.test(f));
+    const dtxt = dxfs.length ? fs.readFileSync(`${D}\\${dxfs[0]}`, "utf8") : "";
+    check("the DXF of the divided plan has the separator on A-ROOM-SEP and the new part's room", dxfs.length === 1 && dtxt.includes("A-ROOM-SEP") && dtxt.includes(newKeys[0]), `${dxfs.length} files`);
+    await ev(`window.confirm = () => true`);
+    const op = await ev(`(()=>{const b=$("openproj").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
+    await click(op[0], op[1]); await sleep(2000);
+    const refs2 = JSON.parse(await ev(refsExpr));
+    check("the reopened file has the division: the parts, the separator, and the same references", (await count("#viewer rect.room")) === roomsGen0 + 1 && (await count("#viewer g.separator")) === 1 && JSON.stringify(refs2) === JSON.stringify(refs1), `${await count("#viewer rect.room")} rooms`);
+    check("the reopened project is clean", (await ev(`(async()=>(await call("status")).dirty)()`)) === false);
+    await shot("e2e_4c_divided_plan_reopened");
+    // In the reopened project the separator can still be deleted (the room comes back as the layout made it) and the edit undone.
+    await key("v"); await sleep(300);
+    const sepc = await ev(`(()=>{const l=document.querySelector("#viewer g.separator line, #viewer g.separator"); const b=l.getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
+    await click(sepc[0], sepc[1]); await sleep(300); await key("Delete"); await sleep(900);
+    check("deleting the separator of the reopened project gives the room back", (await count("#viewer rect.room")) === roomsGen0 && (await count("#viewer g.separator")) === 0, `${await count("#viewer rect.room")} rooms`);
+    await key("z", { modifiers: 2 }); await sleep(900);
+    check("Ctrl+Z divides it again and the project is clean again", (await count("#viewer rect.room")) === roomsGen0 + 1 && (await ev(`(async()=>(await call("status")).dirty)()`)) === false);
     await key("z", { modifiers: 2 }); await sleep(900); await key("v");
 
     // ================================================================ a BLANK project, drafted from nothing
@@ -383,6 +417,19 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
       const rows = await ev(`(()=>{ const bar=$("draftbar"); const tops=new Set([...bar.querySelectorAll(".grp")].map(g=>Math.round(g.getBoundingClientRect().top))); return { tops: tops.size, h: Math.round(bar.getBoundingClientRect().height) }; })()`);
       check(`the drafting toolbar is one compact row at ${w} px`, rows.tops === 1 && rows.h >= 30 && rows.h < 60, JSON.stringify(rows));
       await shot(`e2e_10_narrow_${w}`);
+      // the plan keeps its room: the side panels give way, the window toolbar is one row, and nothing makes the page scroll sideways
+      const lay = await ev(`(()=>{ const r=e=>{const b=e.getBoundingClientRect(); return {x:b.x,y:b.y,w:b.width,h:b.height};}; const cols=[...document.querySelectorAll("main > .col")]; return JSON.stringify({ viewer:r($("vp")), top:r(document.querySelector("main > .col:nth-child(2) > .bar")), brief:getComputedStyle(cols[0]).display, results:r(cols[2]), scrollW:document.documentElement.scrollWidth, inner:innerWidth }); })()`);
+      const L = JSON.parse(lay);
+      check(`at ${w} px the plan canvas is at least 500 x 300 px`, L.viewer.w >= 500 && L.viewer.h >= 300, lay);
+      check(`at ${w} px the window toolbar is one row and the page does not scroll sideways`, L.top.h < 60 && L.scrollW <= L.inner, lay);
+      check(`at ${w} px the brief panel is put away once there is a plan, and the results panel stays readable`, L.brief === "none" && L.results.w >= 240, lay);
+      // the header button brings the brief back, and a second press puts it away
+      const pl = await ev(`(()=>{const b=$("pan-l").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
+      await click(pl[0], pl[1]);
+      const shown = JSON.parse(await ev(`(()=>{ const cols=[...document.querySelectorAll("main > .col")]; const b=cols[0].getBoundingClientRect(); const v=$("vp").getBoundingClientRect(); return JSON.stringify({ brief:b.width, viewer:v.width, scrollW:document.documentElement.scrollWidth, inner:innerWidth }); })()`));
+      check(`at ${w} px the Brief button shows the brief panel and the plan still has room`, shown.brief >= 240 && shown.viewer >= 300 && shown.scrollW <= shown.inner, JSON.stringify(shown));
+      await click(pl[0], pl[1]);
+      check(`at ${w} px a second press puts the brief away again`, (await ev(`getComputedStyle(document.querySelector("main > .col")).display`)) === "none");
     }
     await send("Emulation.clearDeviceMetricsOverride"); await sleep(500);
 

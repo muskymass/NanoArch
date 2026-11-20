@@ -111,7 +111,23 @@ ul.clean li{margin:3px 0}
 #busy.on{display:flex}
 #toast{position:fixed;bottom:16px;inset-inline-start:16px;background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:6px;opacity:0;transition:opacity .2s;z-index:10;max-width:60vw}
 #toast.on{opacity:1}
-@media (max-width:1200px){main{grid-template-columns:340px 1fr 340px}}
+main>.col{min-width:0}
+/* The side panels can be put away so the plan has the room: main.hl hides the brief column, main.hr the results column. */
+main.hl>.col:first-child,main.hr>.col:last-child{display:none}
+main.hl{grid-template-columns:1fr 420px}main.hr{grid-template-columns:400px 1fr}main.hl.hr{grid-template-columns:1fr}
+header .pan{padding:3px 10px;font-size:12px}
+@media (max-width:1200px){main{grid-template-columns:340px 1fr 340px}main.hl{grid-template-columns:1fr 340px}main.hr{grid-template-columns:340px 1fr}main.hl.hr{grid-template-columns:1fr}}
+/* Narrow window (900 px and the like): thinner panels and tighter gaps, and the plan's own toolbar on one scrolling row, so the canvas keeps its size. */
+@media (max-width:1100px){
+  main{grid-template-columns:250px 1fr 280px;gap:8px;padding:8px}main.hl{grid-template-columns:1fr 280px}main.hr{grid-template-columns:250px 1fr}main.hl.hr{grid-template-columns:1fr}
+  header{padding:6px 10px;gap:8px}header .sub{display:none}
+  main>.col:nth-child(2)>.bar:first-child{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;white-space:nowrap;scrollbar-width:thin;padding:6px 8px}
+  main>.col:nth-child(2)>.bar:first-child>*{flex:0 0 auto}
+  main>.col:nth-child(2){overflow-y:auto}
+  #vp{min-height:300px}
+  /* While drafting, the alternatives strip is not needed: the plan is chosen. */
+  main>.col:nth-child(2):has(#viewer.draft)>.alts{display:none}
+}
 </style>
 </head>
 <body>
@@ -119,6 +135,7 @@ ul.clean li{margin:3px 0}
   <h1>NanoArch</h1><span class="sub" data-i="subtitle"></span>
   <span class="grow"></span>
   <span class="badge" data-i="prelim"></span>
+  <button id="pan-l" class="pan" data-i="pan_brief"></button><button id="pan-r" class="pan" data-i="pan_results"></button>
   <button id="lang">English</button>
 </header>
 <main>
@@ -356,7 +373,7 @@ const call = (cmd, args = {}) => new Promise((resolve, reject) => {
 // ---------------------------------------------------------------- text
 const T = {
 ar: {
-  v_furn:"الأثاث والممرات", lock_wall:"قفل الجدار", locked:"قُفل", unlocked:"فُتح",
+  pan_brief:"المدخلات", pan_results:"النتائج", v_furn:"الأثاث والممرات", lock_wall:"قفل الجدار", locked:"قُفل", unlocked:"فُتح",
   h_tpl:"مشاريع جاهزة بنقرة", tpl_note:"تملأ الأرض والطراز والأدوار والغرف؛ الارتدادات تُحسب بقاعدة الوزارة. الأرقام نقطة بداية قابلة للتعديل (الغرف المظلّلة مساحاتها مقترحة).", tpl_sb:"مصدر الارتدادات", tpl_applied:"طُبّق القالب: راجع الأرقام ثم ولّد", sugg_tip:"مساحة مقترحة من التطبيق (أعلى من الحد الأدنى في الكود): راجعها",
   h_ai:"مساعد الوصف (Ollama محلي، اختياري)", ai_note:"اكتب وصف المشروع بالعربية أو الإنجليزية، فيملأ الحقول لتراجعها. لا يُرسل النص إلا إلى خادم على جهازك؛ وإن لم يعمل Ollama تُستخرج الحقول من الكلمات المفتاحية.", ai_ph:"مثال: فيلا دورين وملحق في الجبيل على أرض 600م طراز نجدي حديث", ai_endpoint:"عنوان Ollama", ai_model:"النموذج", ai_check:"فحص الاتصال", ai_run:"املأ الموجز", ai_online:"متصل", ai_offline:"غير متصل", ai_src_kw:"من الكلمات المفتاحية", ai_src_model:"من النموذج", ai_review:"اقتراح — راجعه قبل التوليد", ai_applied:"طُبّقت الحقول", ai_rooms:"غرف مقترحة", ai_assumed:"مفترضة", ai_empty:"اكتب وصفاً أولاً",
   plot_shape:"شكل الأرض", shape_rect:"مستطيل", shape_poly:"مضلع (شبه منحرف، شطفة، حرف L...)", poly_note:"أدخل رؤوس حد الأرض بالأمتار مرتبة حول الحد. الضلع i يمتد من الرأس i إلى التالي. حدّد نوع كل ضلع وعرض شارعه، ثم حلّل: يُحسب الارتداد لكل ضلع ويُوضع أكبر مستطيل بناء.", tpl_trap:"شبه منحرف", tpl_chamfer:"شطفة ركنية", tpl_l:"حرف L", edge_kind:"نوع الضلع", street_w:"عرض الشارع (م)", edge_sb:"ارتداد يدوي (م)", poly_add:"+ رأس", poly_analyze:"حلّل الأرض", rule_villa:"فلل (الوزارة 4-1)", rule_apt:"عمارات (الوزارة 4-2)", rule_manual:"يدوي (أدخل ارتداد كل ضلع)", ek_front_street:"شارع أمامي", ek_side_street:"شارع جانبي", ek_neighbour:"جار", ek_plaza:"ساحة", site_area:"مساحة الأرض", site_bld:"مستطيل البناء", site_cov:"نسبة التغطية", site_unused:"مساحة قابلة للبناء غير مستغلة", site_src:"مصدر قواعد الارتداد", site_first:"حلّل الأرض أولاً (وأعد التحليل بعد أي تعديل)", v_site:"موقع عام",
@@ -403,7 +420,7 @@ ar: {
   b_boq:"جدول الكميات والأسعار", b_no:"رقم", b_desc:"الوصف", b_rate:"السعر", b_amount:"المبلغ", b_materials:"قائمة المواد", b_material:"المادة", b_spec:"المواصفة", b_specs:"جدول المواصفات والكميات", b_no_materials:"لا معاملات استهلاك مُدخلة، فلا قائمة مواد.", m_cleared:"عُدّل المخطط وأُزيلت {n} نقطة كهروميكانيكية: أعد الحساب لوضعها من جديد (التراجع يعيدها)",
 },
 en: {
-  v_furn:"Furniture and walkways", lock_wall:"Lock wall", locked:"Locked", unlocked:"Unlocked",
+  pan_brief:"Brief", pan_results:"Results", v_furn:"Furniture and walkways", lock_wall:"Lock wall", locked:"Locked", unlocked:"Unlocked",
   h_tpl:"One-click starter projects", tpl_note:"Fills the plot, style, floors and rooms; the setbacks are computed by the Ministry rule. The figures are editable starting points (shaded room areas are suggestions).", tpl_sb:"Setbacks from", tpl_applied:"Template applied: review the figures, then generate", sugg_tip:"Suggested by the application (above the code minimum): review it",
   h_ai:"Brief assistant (local Ollama, optional)", ai_note:"Describe the project in Arabic or English and the fields are filled for you to review. The text goes only to a server on this computer; if Ollama is not running the fields are read from keywords.", ai_ph:"e.g. A two-floor villa with an annex in Jubail on a 600 m2 plot, modern Najdi style", ai_endpoint:"Ollama address", ai_model:"Model", ai_check:"Check connection", ai_run:"Fill the brief", ai_online:"online", ai_offline:"offline", ai_src_kw:"from keywords", ai_src_model:"from the model", ai_review:"Suggestion - review it before generating", ai_applied:"Fields applied", ai_rooms:"Proposed rooms", ai_assumed:"assumed", ai_empty:"Write a description first",
   plot_shape:"Plot shape", shape_rect:"Rectangle", shape_poly:"Polygon (trapezoid, chamfer, L...)", poly_note:"Enter the plot boundary vertices in metres, in order around the boundary. Edge i runs from vertex i to the next. Set each edge's kind and street width, then analyse: every edge gets its own setback and the largest buildable rectangle is placed.", tpl_trap:"Trapezoid", tpl_chamfer:"Corner chamfer", tpl_l:"L shape", edge_kind:"Edge kind", street_w:"Street width (m)", edge_sb:"Manual setback (m)", poly_add:"+ Vertex", poly_analyze:"Analyse plot", rule_villa:"Villa (Ministry 4-1)", rule_apt:"Apartment (Ministry 4-2)", rule_manual:"Manual (enter every edge's setback)", ek_front_street:"Front street", ek_side_street:"Side street", ek_neighbour:"Neighbour", ek_plaza:"Plaza", site_area:"Plot area", site_bld:"Building rectangle", site_cov:"Coverage", site_unused:"Buildable area left unused", site_src:"Setback rule source", site_first:"Analyse the plot first (and again after any change)", v_site:"Site plan",
@@ -652,12 +669,25 @@ function setLevels(l) {
   bar.innerHTML = list.map(x => `<button class="${x.index === l.current ? "primary" : ""}" data-lv="${x.index}">${levelLabel(x.index)}</button>`).join("");
   bar.querySelectorAll("[data-lv]").forEach(b => b.onclick = () => busy(async () => { const r = await call("level", { index: Number(b.dataset.lv) }); showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } }));
 }
-const showPlan = svg => { state.viewName = "plan.svg"; $("viewsel").value = "plan"; state.svgText = svg || ""; $("viewer").innerHTML = svg || `<div class="empty">${t("viewer_empty")}</div>`; clearSel(); selApply2d(); if (V3.on) refresh3d(false); olStale(); drAfterPlan(); };
+const showPlan = svg => { state.viewName = "plan.svg"; $("viewsel").value = "plan"; state.svgText = svg || ""; $("viewer").innerHTML = svg || `<div class="empty">${t("viewer_empty")}</div>`; clearSel(); selApply2d(); if (V3.on) refresh3d(false); olStale(); drAfterPlan(); layoutApply(); };
 $("showstruct").onchange = () => busy(async () => { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); });
 for (const k of ["undo", "redo"]) $(k).onclick = () => busy(async () => { const r = await call(k); showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } if (r.settings) { applyProject(r.settings); applySetbacks(r.settings); } renderSbc(r.sbc); refreshBim(); await refreshStatus(); });
 $("sync").onclick = () => busy(async () => { const r = await call("sync"); showPlan(r.svg); refreshStatus(); toast(t("sync_done").replace("{c}", r.created).replace("{r}", r.removed).replace("{u}", r.unchanged)); });
 $("exportsvg").onclick = () => busy(async () => { const r = await call("export", { name: state.viewName || "plan.svg", data: '<?xml version="1.0" encoding="UTF-8"?>\n' + (state.svgText || "") }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
 $("saveproj").onclick = () => busy(async () => { const r = await call("save_project"); refreshStatus(); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
+// Side panels: automatic (null) puts the brief away on a narrow window once there is a plan to draw; the buttons in the header override it.
+const LAY = { l: null, r: null };
+function layoutApply() {
+  const main = document.querySelector("main"), plan = !!$("viewer").querySelector("svg");
+  const hl = LAY.l ?? (innerWidth <= 1100 && plan), hr = LAY.r ?? false;
+  main.classList.toggle("hl", hl); main.classList.toggle("hr", hr);
+  $("pan-l").classList.toggle("primary", !hl); $("pan-r").classList.toggle("primary", !hr);
+  $("pan-l").setAttribute("aria-pressed", String(!hl)); $("pan-r").setAttribute("aria-pressed", String(!hr));
+}
+$("pan-l").onclick = () => { LAY.l = !document.querySelector("main").classList.contains("hl"); layoutApply(); };
+$("pan-r").onclick = () => { LAY.r = !document.querySelector("main").classList.contains("hr"); layoutApply(); };
+window.addEventListener("resize", layoutApply);
+layoutApply();
 $("lang").onclick = () => { lang = lang === "ar" ? "en" : "ar"; applyLang(); };
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === b));
