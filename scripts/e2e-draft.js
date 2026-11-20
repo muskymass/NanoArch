@@ -234,7 +234,7 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     const bad = Object.entries(refs1.refs).filter(([id, now]) => now.some((v, i) => { const was = refs0.refs[id][i]; return !(v === was || v === was + "-2") || (v !== was && !refs1.rooms.includes(v)); }));
     check("every opening names what it named, or the new part of that room: none names a room that is gone", bad.length === 0 && Object.keys(refs1.refs).length === Object.keys(refs0.refs).length, JSON.stringify(bad).slice(0, 200));
     try { fs.unlinkSync(`${D}\\project.nnx`); } catch (e) {}
-    const tagsTxt = () => ev(`JSON.stringify([...document.querySelectorAll("#viewer g.tag")].map(g => g.textContent.replace(/\s+/g, " ").trim()).sort())`);
+    const tagsTxt = () => ev(`JSON.stringify([...document.querySelectorAll("#viewer g.tag")].map(g => g.textContent.replace(/[ \t]+/g, " ").trim()).sort())`);
     await ev(`(async()=>{ await drEdit("draft_tag", {}); })()`); await sleep(900);
     const tagsSaved = await tagsTxt();
     await menuPress("#saveproj"); await sleep(1500);
@@ -251,6 +251,8 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     check("the reopened project is clean", (await ev(`(async()=>(await call("status")).dirty)()`)) === false);
     const tagsBack = await tagsTxt();
     check("the reopened plan keeps every room tag with its name and area (the division's parts included)", tagsBack === tagsSaved && JSON.parse(tagsBack).length === roomsGen0 + 1 && JSON.parse(tagsBack).every(t => /m²/.test(t)), tagsBack.slice(0, 200));
+    // A part is named by its key, whole: no letter of a name is lost or turned into a space (a regression the page's own text helper once caused).
+    check("the divided part's tag shows its name exactly (the key, whole, with no stray space)", JSON.parse(tagsBack).some(t => t.split("\n")[0] === newKeys[0]) && JSON.parse(tagsBack).every(t => !/^\w{1,3} \w{3,}-\d$/.test(t.split("\n")[0])), JSON.stringify(newKeys) + " " + tagsBack.slice(0, 160));
     {
       const st0 = await ev(`(async()=>JSON.stringify(await call("status")))()`), r0 = await count("#viewer rect.room");
       await key("z", { modifiers: 2 }); await sleep(900);

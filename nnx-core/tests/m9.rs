@@ -718,3 +718,32 @@ fn the_dxf_of_a_divided_room_is_the_same_after_the_file_is_saved_and_reopened() 
     assert_eq!(after.counts, before.counts);
     assert_eq!(after.text, before.text);
 }
+
+#[test]
+fn the_tag_of_a_divided_part_names_it_by_its_whole_key_and_its_own_area_with_no_stray_space() {
+    let mut doc = blank();
+    layout_room(&mut doc, "reserve", "bedroom", [0, 0, 9000, 4000]);
+    separator(&mut doc, [3000, 0], [3000, 4000]);
+    let (tc, _) = annot::tag_commands(&doc.model, &doc.model.elements.values().filter(|e| e.kind == "Space").map(|e| e.id).collect::<Vec<_>>()).unwrap();
+    doc.commit("tag all", Origin::User, tc).unwrap_or_else(|e| panic!("{e}"));
+    let none = std::collections::BTreeMap::new();
+    let mut names: Vec<(String, String)> = doc
+        .model
+        .elements
+        .values()
+        .filter(|e| e.kind == "Tag")
+        .map(|t| {
+            let host = doc.model.get(&t.host_id.unwrap()).unwrap();
+            let lines = annot::tag_lines(&doc.model, host, &t.typed().unwrap(), &none);
+            (lines[0].clone(), lines[1].clone())
+        })
+        .collect();
+    names.sort();
+    // The part is named by its key exactly (every letter present, no space), and shows its own area, not the original's.
+    assert_eq!(names, vec![("reserve".to_string(), "24.00 m²".to_string()), ("reserve-2".to_string(), "12.00 m²".to_string())]);
+    // A display name given for the original room never turns into a split word either.
+    let named: std::collections::BTreeMap<String, String> = [("reserve".to_string(), "Reserve room".to_string())].into();
+    let part = doc.model.elements.values().find(|e| e.kind == "Space" && e.props["requirementKey"] == "reserve-2").unwrap();
+    let tag = doc.model.elements.values().find(|e| e.kind == "Tag" && e.host_id == Some(part.id)).unwrap();
+    assert_eq!(annot::tag_lines(&doc.model, part, &tag.typed().unwrap(), &named)[0], "reserve-2");
+}
