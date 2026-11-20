@@ -15,7 +15,7 @@
 use crate::building;
 use crate::command::Command;
 use crate::model::{Element, Id, Model, Source};
-use crate::typed::{Column, Dimension, Door, Grid, Space, Typed, Wall, Window, element_of};
+use crate::typed::{Column, Dimension, Door, Grid, RoomSeparator, Space, Typed, Wall, Window, element_of};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -136,6 +136,14 @@ pub fn snap(model: &Model, level: Option<Id>, world: P, ctx: &SnapCtx) -> Snap {
         points.push(b);
         lines.push((a, b));
     }
+    // Room separators are drawn like walls: their ends, crossings and middles attract the pointer.
+    let seps: Vec<RoomSeparator> = model.elements.values().filter(|e| e.kind == RoomSeparator::KIND && on_level(e, level) && !ctx.exclude.contains(&e.id)).filter_map(|e| e.typed::<RoomSeparator>().ok()).collect();
+    for s in &seps {
+        let (a, b) = ([s.x1 as f64, s.y1 as f64], [s.x2 as f64, s.y2 as f64]);
+        points.push(a);
+        points.push(b);
+        lines.push((a, b));
+    }
     for e in model.elements.values().filter(|e| e.kind == Column::KIND && on_level(e, level) && !ctx.exclude.contains(&e.id)) {
         if let Ok(c) = e.typed::<Column>() {
             points.push([c.x as f64, c.y as f64]);
@@ -147,7 +155,7 @@ pub fn snap(model: &Model, level: Option<Id>, world: P, ctx: &SnapCtx) -> Snap {
     }
     // Where two centre lines cross (a horizontal and a vertical one), walls and grid lines alike.
     let mut crossings = Vec::new();
-    let segs: Vec<(bool, i64, i64, i64)> = walls.iter().map(|(_, w)| (w.horizontal(), if w.horizontal() { w.y1 } else { w.x1 }, if w.horizontal() { w.x1.min(w.x2) } else { w.y1.min(w.y2) }, if w.horizontal() { w.x1.max(w.x2) } else { w.y1.max(w.y2) })).chain(grids.iter().map(|g| (g.horizontal(), g.coord(), if g.horizontal() { g.x1.min(g.x2) } else { g.y1.min(g.y2) }, if g.horizontal() { g.x1.max(g.x2) } else { g.y1.max(g.y2) }))).collect();
+    let segs: Vec<(bool, i64, i64, i64)> = walls.iter().map(|(_, w)| (w.horizontal(), if w.horizontal() { w.y1 } else { w.x1 }, if w.horizontal() { w.x1.min(w.x2) } else { w.y1.min(w.y2) }, if w.horizontal() { w.x1.max(w.x2) } else { w.y1.max(w.y2) })).chain(grids.iter().map(|g| (g.horizontal(), g.coord(), if g.horizontal() { g.x1.min(g.x2) } else { g.y1.min(g.y2) }, if g.horizontal() { g.x1.max(g.x2) } else { g.y1.max(g.y2) }))).chain(seps.iter().map(|s| (s.horizontal(), if s.horizontal() { s.y1 } else { s.x1 }, if s.horizontal() { s.x1.min(s.x2) } else { s.y1.min(s.y2) }, if s.horizontal() { s.x1.max(s.x2) } else { s.y1.max(s.y2) }))).collect();
     for (_, y, hx0, hx1) in segs.iter().filter(|s| s.0) {
         for (_, x, vy0, vy1) in segs.iter().filter(|s| !s.0) {
             if (*hx0..=*hx1).contains(x) && (*vy0..=*vy1).contains(y) {
@@ -459,6 +467,7 @@ pub fn pick_box(model: &Model, level: Option<Id>, b: [f64; 4], mode: BoxMode) ->
                 let t = w.thickness as f64 / 2.0;
                 [w.x1.min(w.x2) as f64 - if w.horizontal() { 0.0 } else { t }, w.y1.min(w.y2) as f64 - if w.horizontal() { t } else { 0.0 }, w.x1.max(w.x2) as f64 + if w.horizontal() { 0.0 } else { t }, w.y1.max(w.y2) as f64 + if w.horizontal() { t } else { 0.0 }]
             }),
+            "RoomSeparator" => e.typed::<RoomSeparator>().ok().map(|s| [s.x1.min(s.x2) as f64, s.y1.min(s.y2) as f64, s.x1.max(s.x2) as f64, s.y1.max(s.y2) as f64]),
             "Column" => e.typed::<Column>().ok().map(|c| [(c.x - c.b / 2) as f64, (c.y - c.h / 2) as f64, (c.x + c.b / 2) as f64, (c.y + c.h / 2) as f64]),
             "Door" | "Window" => {
                 let host = e.host_id.and_then(|h| model.get(&h)).and_then(|h| h.typed::<Wall>().ok());
@@ -561,6 +570,7 @@ pub fn xform(model: &Model, ids: &[Id], xf: Xf, copy: bool) -> Result<Edit, Stri
     let mut walls: Vec<(Id, Wall, Element)> = Vec::new();
     let mut columns: Vec<(Id, Column, Element)> = Vec::new();
     let mut grids: Vec<(Id, Grid, Element)> = Vec::new();
+    let mut seps: Vec<(Id, RoomSeparator, Element)> = Vec::new();
     for id in ids {
         let e = model.get(id).ok_or("an element in the selection no longer exists")?;
         match e.kind.as_str() {
@@ -577,15 +587,16 @@ pub fn xform(model: &Model, ids: &[Id], xf: Xf, copy: bool) -> Result<Edit, Stri
                 }
             }
             "Grid" => grids.push((*id, e.typed::<Grid>().map_err(|x| x.to_string())?, e.clone())),
+            "RoomSeparator" => seps.push((*id, e.typed::<RoomSeparator>().map_err(|x| x.to_string())?, e.clone())),
             "Dimension" | "Tag" => edit.notes.push("dimensions and room tags follow what they measure or tag: they were left as they are".into()),
             "Space" => return Err("rooms are not moved here: use the partition and room tools, which keep the plan tiled".into()),
             other => return Err(format!("{other} elements cannot be moved this way")),
         }
     }
-    if walls.is_empty() && columns.is_empty() && grids.is_empty() {
-        return Err("select walls, columns or grid lines first".into());
+    if walls.is_empty() && columns.is_empty() && grids.is_empty() && seps.is_empty() {
+        return Err("select walls, room separators, columns or grid lines first".into());
     }
-    let level = walls.first().map(|w| w.2.level_id).or(columns.first().map(|c| c.2.level_id)).flatten();
+    let level = walls.first().map(|w| w.2.level_id).or(columns.first().map(|c| c.2.level_id)).or(seps.first().map(|s| s.2.level_id)).flatten();
     let rects = room_rects(model, level);
     for (id, w, el) in &walls {
         let nw = moved_wall(w, xf);
@@ -649,6 +660,19 @@ pub fn xform(model: &Model, ids: &[Id], xf: Xf, copy: bool) -> Result<Edit, Stri
             edit.cmds.extend(props_cmds(*id, el, &serde_json::to_value(&n).map_err(|e| e.to_string())?));
         }
     }
+    for (id, s, el) in &seps {
+        let (a, b) = (tp(xf, (s.x1, s.y1)), tp(xf, (s.x2, s.y2)));
+        let (a, b) = if a.0 < b.0 || a.1 < b.1 { (a, b) } else { (b, a) };
+        let n = RoomSeparator { x1: a.0, y1: a.1, x2: b.0, y2: b.1, extra: s.extra.clone() };
+        if copy {
+            let mut ne = element_of(&n, Source::User);
+            ne.level_id = el.level_id;
+            edit.created.push(ne.id);
+            edit.cmds.push(Command::Create(ne));
+        } else {
+            edit.cmds.extend(props_cmds(*id, el, &serde_json::to_value(&n).map_err(|e| e.to_string())?));
+        }
+    }
     for (id, c, el) in &columns {
         let (x, y) = tp(xf, (c.x, c.y));
         let (b, h) = if swaps_axes(xf) { (c.h, c.b) } else { (c.b, c.h) };
@@ -681,6 +705,33 @@ pub fn align(model: &Model, reference: Id, target: Id) -> Result<Edit, String> {
     }
     let xf = if t.horizontal() { Xf::Move { dx: 0, dy: d } } else { Xf::Move { dx: d, dy: 0 } };
     xform(model, &[target], xf, false)
+}
+
+/// A parallel copy of a wall, room separator or grid line, `distance` mm away on the side of the point `toward` (the pointer). A wall's
+/// doors and windows are copied with it; a copied grid line is named like any new one.
+pub fn offset(model: &Model, id: Id, distance: i64, toward: P) -> Result<Edit, String> {
+    if distance <= 0 {
+        return Err("enter an offset distance above zero (mm)".into());
+    }
+    let e = model.get(&id).ok_or("that element no longer exists")?;
+    let (horiz, line) = match e.kind.as_str() {
+        "Wall" => {
+            let a = ax(&e.typed::<Wall>().map_err(|x| x.to_string())?);
+            (a.horiz, a.line)
+        }
+        "RoomSeparator" => {
+            let s = e.typed::<RoomSeparator>().map_err(|x| x.to_string())?;
+            (s.horizontal(), if s.horizontal() { s.y1 } else { s.x1 })
+        }
+        "Grid" => {
+            let g = e.typed::<Grid>().map_err(|x| x.to_string())?;
+            (g.horizontal(), g.coord())
+        }
+        _ => return Err("only walls, room separators and grid lines can be offset".into()),
+    };
+    let side = if horiz { toward[1] - line as f64 } else { toward[0] - line as f64 };
+    let d = if side >= 0.0 { distance } else { -distance };
+    xform(model, &[id], if horiz { Xf::Move { dx: 0, dy: d } } else { Xf::Move { dx: d, dy: 0 } }, true)
 }
 
 // ------------------------------------------------------------------ split and trim
@@ -786,6 +837,28 @@ pub fn trim_corner(model: &Model, a: (Id, P), b: (Id, P)) -> Result<Edit, String
     Ok(edit)
 }
 
+/// After the level's rooms were found or changed: the rooms either side and the exterior flag of the walls the user drew, derived again
+/// from the rooms' rectangles. A wall drawn before its room existed (the walls of a blank project) learns that it is an exterior wall here.
+/// Walls of a generated layout are left as they are.
+pub fn refresh_walls(model: &Model, level: Option<Id>) -> Vec<Command> {
+    let rects = room_rects(model, level);
+    let mut cmds = Vec::new();
+    for e in model.elements.values().filter(|e| e.kind == Wall::KIND && on_level(e, level) && e.provenance.source == Source::User) {
+        let Ok(w) = e.typed::<Wall>() else { continue };
+        let (ra, rb, ext) = wall_rooms(&rects, ax(&w), w.thickness);
+        if ra != w.room_a {
+            cmds.push(Command::SetProp { id: e.id, key: "roomA".into(), value: Some(json!(ra)) });
+        }
+        if rb != w.room_b {
+            cmds.push(Command::SetProp { id: e.id, key: "roomB".into(), value: rb.map(|r| json!(r)) });
+        }
+        if ext != w.is_exterior {
+            cmds.push(Command::SetProp { id: e.id, key: "isExterior".into(), value: Some(json!(ext)) });
+        }
+    }
+    cmds
+}
+
 // ------------------------------------------------------------------ delete
 
 /// Deletes walls (with their doors and windows), doors, windows and user columns.
@@ -803,17 +876,35 @@ pub fn delete(model: &Model, ids: &[Id]) -> Result<Edit, String> {
                     }
                 }
             }
-            "Door" | "Window" | "Grid" | "Dimension" | "Tag" => {}
+            "Door" | "Window" | "Grid" | "Dimension" | "Tag" | "RoomSeparator" => {}
             "Column" if e.provenance.source != Source::Generated => {}
             "Column" => return Err("this column belongs to the generated structure and would be put back: lock it, or edit the plan it comes from".into()),
             "Space" => return Err("rooms are deleted with the room tool (it hands the area to a neighbour)".into()),
             other => return Err(format!("{other} elements are not deleted this way")),
         }
     }
-    // Openings first: a wall that hosts one cannot be deleted.
-    let all: Vec<Id> = ids.iter().copied().chain(gone).collect();
-    let (open, rest): (Vec<Id>, Vec<Id>) = all.into_iter().partition(|i| model.get(i).is_some_and(|e| e.host_id.is_some()));
-    edit.cmds.extend(open.into_iter().chain(rest).map(Command::Delete));
+    // What hangs on a deleted element (the tag of a door, window, column or footing) goes with it, and goes first: an element that hosts
+    // another cannot be deleted before it.
+    let mut all: Vec<Id> = ids.iter().copied().chain(gone).collect();
+    let mut i = 0;
+    while i < all.len() {
+        for d in model.dependents(&all[i]) {
+            if !all.contains(&d) {
+                all.push(d);
+            }
+        }
+        i += 1;
+    }
+    let depth = |id: &Id| {
+        let (mut n, mut cur) = (0, *id);
+        while let Some(h) = model.get(&cur).and_then(|e| e.host_id) {
+            n += 1;
+            cur = h;
+        }
+        n
+    };
+    all.sort_by_key(|id| std::cmp::Reverse(depth(id)));
+    edit.cmds.extend(all.into_iter().map(Command::Delete));
     Ok(edit)
 }
 
@@ -846,8 +937,12 @@ pub fn properties(model: &Model, id: Id) -> Result<Value, String> {
             f.push(field("thickness", "Thickness", "السماكة", json!(w.thickness), "mm", true));
             f.push(field("height", "Height", "الارتفاع", json!(w.height), "mm", true));
             f.push(field("roomA", "Room (side 1)", "الغرفة (الجهة 1)", json!(w.room_a), "text", false));
-            f.push(field("roomB", "Room (side 2)", "الغرفة (الجهة 2)", json!(w.room_b.unwrap_or_default()), "text", false));
+            f.push(field("roomB", "Room (side 2)", "الغرفة (الجهة 2)", json!(w.room_b.clone().unwrap_or_default()), "text", false));
             f.push(field("isExterior", "Exterior", "خارجي", json!(w.is_exterior), "bool", false));
+            let r = crate::assembly::Resolver::of(model);
+            let explicit = e.props.get("assembly").and_then(Value::as_str).is_some();
+            let name = r.of_wall(e, &w).map(|a| format!("{}{}", a.name, if explicit { "" } else { " (project default)" })).unwrap_or_default();
+            f.push(field("assembly", "Wall assembly", "تركيب الجدار", json!(name), "text", false));
         }
         "Door" => {
             let d = e.typed::<Door>().map_err(|x| x.to_string())?;
@@ -886,6 +981,12 @@ pub fn properties(model: &Model, id: Id) -> Result<Value, String> {
             f.push(field("area", "Area (m²)", "المساحة (م²)", json!(s.area), "text", false));
             f.push(field("w", "Width", "العرض", json!(s.w), "mm", false));
             f.push(field("h", "Length", "الطول", json!(s.h), "mm", false));
+        }
+        "RoomSeparator" => {
+            let s = e.typed::<RoomSeparator>().map_err(|x| x.to_string())?;
+            f.push(field("length", "Length", "الطول", json!((s.x2 - s.x1).abs() + (s.y2 - s.y1).abs()), "mm", false));
+            f.push(field("direction", "Direction", "الاتجاه", json!(if s.horizontal() { "horizontal" } else { "vertical" }), "text", false));
+            f.push(field("position", if s.horizontal() { "At y" } else { "At x" }, if s.horizontal() { "عند ص" } else { "عند س" }, json!(if s.horizontal() { s.y1 } else { s.x1 }), "mm", false));
         }
         "Grid" => {
             let g = e.typed::<Grid>().map_err(|x| x.to_string())?;
@@ -937,6 +1038,9 @@ pub fn set_property(model: &Model, id: Id, key: &str, value: &Value) -> Result<E
                 }
             }
             edit.cmds = rebuilt(id, e, &with_ends(&w, a.lo, a.lo + len))?;
+        }
+        ("Wall", "thickness") if e.props.get("assembly").and_then(Value::as_str).is_some() => {
+            return Err("the thickness comes from the wall's assembly: change the assembly's layers, or clear the assembly from the wall first".into());
         }
         ("Wall", "thickness" | "height") | ("Door" | "Window", "width" | "height") | ("Window", "sillHeight") | ("Column", "x" | "y" | "b" | "h") => {
             let v = int(key)?;

@@ -71,6 +71,9 @@ pub struct ProjectMeta {
     pub vertical: Option<crate::vertical::VerticalInput>,
     /// Inputs of the compliance pack: thermal layers, accessibility limits, ventilation, projections, the Malath checklist.
     pub compliance: crate::compliance::ComplianceInputs,
+    /// Wall assemblies (named wall types with explicit layers) and which of them walls fall back to.
+    pub assemblies: Vec<crate::assembly::WallAssembly>,
+    pub assembly_defaults: crate::assembly::AssemblyDefaults,
     /// The change log's baseline snapshot and the closed revisions.
     pub baseline: Option<crate::compliance::Baseline>,
     pub revision_history: Vec<crate::compliance::RevisionEntry>,
@@ -217,6 +220,7 @@ impl NanoArchProject {
             v.check()?;
         }
         self.meta.compliance.check()?;
+        crate::assembly::check_all(&self.meta.assemblies, &self.meta.assembly_defaults)?;
         self.meta.structural.check()?;
         self.meta.mep_ext.check()?;
         self.meta.finishes.check()?;
@@ -343,14 +347,7 @@ pub struct Update {
 /// the project's own checks, the typed schema and (when the project enforces the code) the code checks must pass,
 /// or nothing changes.
 pub fn update(doc: &mut Document, label: &str, edit: impl FnOnce(&mut NanoArchProject) -> Result<(), String>) -> Result<Update, String> {
-    let el = find(&doc.model).ok_or("this model has no project")?;
-    let id = el.id;
-    let before: NanoArchProject = el.typed().map_err(|e| format!("project: {e}"))?;
-    let mut after = before.clone();
-    edit(&mut after)?;
-    after.check()?;
-    let (old, new) = (props_of(&before), props_of(&after));
-    let cmds: Vec<Command> = changed_props(id, &old, &new);
+    let cmds = update_commands(&doc.model, edit)?;
     if cmds.is_empty() {
         return Ok(Update { changed: false, new_violations: Vec::new() });
     }
@@ -362,6 +359,17 @@ pub fn update(doc: &mut Document, label: &str, edit: impl FnOnce(&mut NanoArchPr
     }
     doc.commit(label, Origin::User, cmds).map_err(|e| e.to_string())?;
     Ok(Update { changed: true, new_violations: added })
+}
+
+/// The commands an edit of the project amounts to (one `SetProp` per top-level property that differs), checked but not committed, so a
+/// caller can commit them together with edits of other elements as one undoable step.
+pub fn update_commands(model: &Model, edit: impl FnOnce(&mut NanoArchProject) -> Result<(), String>) -> Result<Vec<Command>, String> {
+    let el = find(model).ok_or("this model has no project")?;
+    let before: NanoArchProject = el.typed().map_err(|e| format!("project: {e}"))?;
+    let mut after = before.clone();
+    edit(&mut after)?;
+    after.check()?;
+    Ok(changed_props(el.id, &props_of(&before), &props_of(&after)))
 }
 
 fn props_of(p: &NanoArchProject) -> Map<String, Value> {

@@ -123,7 +123,8 @@ pub fn build(model: &Model, project: Option<&NanoArchProject>, labels: &BTreeMap
             "MepRun" => (3, format!("{} run", e.props.get("system").and_then(|v| v.as_str()).unwrap_or("MEP"))),
             "Grid" => (4, format!("Grid {}", e.props.get("name").and_then(|v| v.as_str()).unwrap_or(""))),
             "Dimension" => (4, format!("Dimension {} mm", (e.props.get("b").and_then(|v| v.as_i64()).unwrap_or(0) - e.props.get("a").and_then(|v| v.as_i64()).unwrap_or(0)).abs())),
-            "Tag" => (4, "Room tag".to_string()),
+            "Tag" => (4, "Tag".to_string()),
+            "RoomSeparator" => (4, "Room separator".to_string()),
             other => (4, other.to_string()),
         };
         per[li][slot].push(leaf(e.id, &e.kind, label.trim().to_string()));

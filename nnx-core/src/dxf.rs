@@ -17,6 +17,7 @@
 //! | `M-DUCT`, `P-PIPE`, `P-DRAN`, `E-TRAY` | generated or entered runs at their plan width: ducts, supply pipes, drains, cable trays |
 //! | `S-TIEB` | tie beams between footings (hidden line) |
 //! | `V-WALL`, `V-CUT`, `V-FAR`, `V-OPEN`, `V-SLAB`, `V-STRUC`, `V-MEP`, `V-LEVEL`, `V-TEXT` | elevations and sections, drawn to the right of the plans: walls, what a section cuts, what lies beyond it, openings, slab edges, structure, MEP runs, ground and level lines, titles |
+//! | `A-ROOM-SEP` | room separators (virtual lines that divide an open space; no wall) |
 //! | `A-DIMS` | overall dimensions, title and the preliminary note |
 //!
 //! Several levels are laid side by side on one file, left to right, each under its own title. Text outside ASCII
@@ -44,7 +45,7 @@ pub struct DxfOut {
 }
 
 /// Layer name, AutoCAD colour index, line type.
-const LAYERS: [(&str, i32, &str); 31] = [
+const LAYERS: [(&str, i32, &str); 32] = [
     ("A-WALL-EXT", 7, "CONTINUOUS"),
     ("A-WALL-INT", 8, "CONTINUOUS"),
     ("A-DOOR", 3, "CONTINUOUS"),
@@ -76,6 +77,7 @@ const LAYERS: [(&str, i32, &str); 31] = [
     ("V-TEXT", 7, "CONTINUOUS"),
     ("V-FACADE", 6, "CONTINUOUS"),
     ("A-GRID", 1, "DASHED"),
+    ("A-ROOM-SEP", 8, "DASHED"),
 ];
 const DIMS_LAYER: (&str, i32, &str) = ("A-DIMS", 2, "CONTINUOUS");
 
@@ -476,6 +478,10 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
                 d.text("A-GRID", (c.0 - 100.0, c.1 - 90.0), 200.0, &g.name);
             }
         }
+        for e in model.elements.values().filter(|e| e.kind == crate::typed::RoomSeparator::KIND && on_level(e, sh.level)) {
+            let Ok(s) = e.typed::<crate::typed::RoomSeparator>() else { continue };
+            d.line("A-ROOM-SEP", (px(s.x1), py(s.y1)), (px(s.x2), py(s.y2)));
+        }
         for e in model.elements.values().filter(|e| e.kind == crate::typed::Dimension::KIND && on_level(e, sh.level)) {
             let Ok(dm) = e.typed::<crate::typed::Dimension>() else { continue };
             let (a, b) = crate::annot::dim_positions(model, &dm);
@@ -494,9 +500,9 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
         }
         for e in model.elements.values().filter(|e| e.kind == crate::typed::Tag::KIND && on_level(e, sh.level)) {
             let (Ok(t), Some(host)) = (e.typed::<crate::typed::Tag>(), e.host_id.and_then(|h| model.get(&h))) else { continue };
-            let Ok(sp) = host.typed::<Space>() else { continue };
+            let Some(centre) = crate::annot::host_centre(model, host) else { continue };
             for (i, line) in crate::annot::tag_lines(model, host, &t, &opts.labels).iter().enumerate() {
-                d.text("A-TEXT", (px(sp.x + sp.w / 2 + t.dx), py(sp.y + sp.h / 2 + t.dy) - i as f64 * 200.0 + 200.0), 140.0, line);
+                d.text("A-TEXT", (px(centre.0 + t.dx), py(centre.1 + t.dy) - i as f64 * 200.0 + 200.0), 140.0, line);
             }
         }
 

@@ -82,6 +82,9 @@ pub struct Scene {
     pub min: [f64; 3],
     pub max: [f64; 3],
     pub storey_height: f64,
+    /// Wall id -> (assembly kind, assembly name) for the walls that use a wall assembly, so the view can colour and name them.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub assemblies: BTreeMap<String, (String, String)>,
 }
 
 impl Scene {
@@ -100,7 +103,7 @@ impl Scene {
             min = [0.0; 3];
             max = [0.0; 3];
         }
-        Scene { levels: self.levels.clone(), boxes, min, max, storey_height: self.storey_height }
+        Scene { levels: self.levels.clone(), boxes, min, max, storey_height: self.storey_height, assemblies: self.assemblies.clone() }
     }
 }
 
@@ -227,9 +230,14 @@ pub fn build(model: &Model) -> Scene {
         }
     }
 
+    let resolver = crate::assembly::Resolver::of(model);
+    let mut assemblies: BTreeMap<String, (String, String)> = BTreeMap::new();
     for (id, w) in &walls {
         let (z0, _, lvl) = info(model.get(id).and_then(|e| e.level_id));
         let start = boxes.len();
+        if let Some(a) = model.get(id).and_then(|e| resolver.of_wall(e, w)) {
+            assemblies.insert(id.to_string(), (a.kind.id().to_string(), a.name.clone()));
+        }
         let class = if w.is_exterior { "ext" } else { "int" };
         let (s0, s1, h) = (w.start() as f64 / M, (w.start() + w.length) as f64 / M, w.height as f64 / M);
         let mut ops = open.remove(id).unwrap_or_default();
@@ -368,5 +376,5 @@ pub fn build(model: &Model) -> Scene {
         min = [0.0; 3];
         max = [0.0; 3];
     }
-    Scene { levels, boxes, min, max, storey_height: global_storey }
+    Scene { levels, boxes, min, max, storey_height: global_storey, assemblies }
 }

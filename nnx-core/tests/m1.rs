@@ -104,7 +104,7 @@ fn space(x0: f64, y0: f64, x1: f64, y1: f64, func: &str) -> Box3 {
 }
 
 fn scene(boxes: Vec<Box3>) -> Scene {
-    Scene { levels: vec![LevelInfo { id: "l".into(), name: "G".into(), index: 0, z0: 0.0, storey: 3.0 }], boxes, min: [0.0; 3], max: [12.0, 4.0, 3.15], storey_height: 3.0 }
+    Scene { levels: vec![LevelInfo { id: "l".into(), name: "G".into(), index: 0, z0: 0.0, storey: 3.0 }], boxes, min: [0.0; 3], max: [12.0, 4.0, 3.15], storey_height: 3.0, assemblies: Default::default() }
 }
 
 fn slab(top: f64) -> Box3 {

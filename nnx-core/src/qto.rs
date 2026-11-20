@@ -182,6 +182,7 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     }
     let (mut ext_a, mut int_a, mut ext_v, mut int_v, mut deducted) = (0.0, 0.0, 0.0, 0.0, 0.0);
     let (mut ext_ids, mut int_ids, mut open_ids) = (Vec::new(), Vec::new(), Vec::new());
+    let mut net_by_wall: Vec<(Id, f64)> = Vec::new();
     for (e, w) in &walls {
         let open = open_by_wall.get(&e.id).copied().unwrap_or(0.0);
         let gross = w.length as f64 * w.height as f64;
@@ -190,6 +191,7 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
         }
         let net = (gross - open).max(0.0);
         deducted += open.min(gross);
+        net_by_wall.push((e.id, net / MM2_PER_M2));
         if open > 0.0 {
             open_ids.push(e.id);
         }
@@ -208,6 +210,21 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     acc.add("WALL.EXT.VOL", "Exterior walls, volume net of openings", Unit::M3, ext_v, ext_ids.clone());
     acc.add("WALL.INT.VOL", "Interior walls, volume net of openings", Unit::M3, int_v, int_ids.clone());
     acc.add("WALL.OPENINGS.AREA", "Door and window openings deducted from walls", Unit::M2, deducted / MM2_PER_M2, open_ids);
+    // One item per layer of every wall assembly in use: the layer's area is the net area of the walls that use the assembly.
+    let resolver = crate::assembly::Resolver::of(model);
+    for asm in &resolver.list {
+        let users: Vec<(Id, f64)> = walls.iter().filter(|(e, w)| resolver.of_wall(e, w).is_some_and(|a| a.id == asm.id)).filter_map(|(e, _)| net_by_wall.iter().find(|(id, _)| *id == e.id).copied()).collect();
+        if users.is_empty() {
+            continue;
+        }
+        let area: f64 = users.iter().map(|(_, a)| a).sum();
+        let ids: Vec<Id> = users.iter().map(|(id, _)| *id).collect();
+        for (i, l) in asm.layers.iter().enumerate() {
+            let mat: String = l.material.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+            let t = l.thickness_mm.unwrap_or(0.0);
+            acc.add(&format!("WALL.LAYER.{}.{}.{}", asm.id, i + 1, mat), &format!("Wall layer {}: {} {} mm ({})", i + 1, l.label.clone().unwrap_or_else(|| l.material.clone()), t, asm.name), Unit::M2, area, ids.clone());
+        }
+    }
     let faces: Vec<Id> = ext_ids.iter().chain(&int_ids).copied().collect();
     acc.add("WALL.FACES.AREA", "Wall faces to finish (both sides, openings deducted)", Unit::M2, 2.0 * (ext_a + int_a), faces);
 

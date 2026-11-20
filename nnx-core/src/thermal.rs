@@ -85,6 +85,48 @@ fn opening_area(model: &Model, kind: &str) -> f64 {
         .sum()
 }
 
+/// The U-value of the exterior walls. With no wall assembly in use this is the project's single wall build-up. Otherwise the exterior
+/// walls are grouped by the assembly they use (walls with none keep the single build-up) and the groups are weighted by net area.
+fn wall_envelope_u(model: &Model, t: &ThermalInputs, missing: &mut Vec<String>, notes: &mut Vec<String>) -> Option<f64> {
+    let resolver = crate::assembly::Resolver::of(model);
+    let walls = crate::insulation::exterior_wall_areas(model);
+    // (assembly id or none) -> area
+    let mut groups: Vec<(Option<&crate::assembly::WallAssembly>, f64)> = Vec::new();
+    for (id, area) in &walls {
+        let a = model.get(id).and_then(|e| Some(resolver.of_wall(e, &e.typed::<Wall>().ok()?))).flatten();
+        match groups.iter_mut().find(|(g, _)| g.map(|x| &x.id) == a.map(|x| &x.id)) {
+            Some(g) => g.1 += area,
+            None => groups.push((a, *area)),
+        }
+    }
+    if groups.iter().all(|(a, _)| a.is_none()) {
+        return assembly_u(&t.wall_layers, t.rsi, t.rse, "wall").map_err(|m| missing.extend(m)).ok();
+    }
+    let (mut num, mut den, mut ok) = (0.0, 0.0, true);
+    for (a, area) in &groups {
+        let u = match a {
+            Some(a) => a.u_value(t),
+            None => assembly_u(&t.wall_layers, t.rsi, t.rse, "wall (no assembly)"),
+        };
+        match u {
+            Ok(u) => {
+                num += u * area;
+                den += area;
+                notes.push(format!("wall {}: U {:.3} W/(m2 K) over {:.2} m2", a.map_or("without an assembly".to_string(), |a| format!("assembly '{}'", a.name)), u, area));
+            }
+            Err(m) => {
+                for x in m {
+                    if !missing.contains(&x) {
+                        missing.push(x);
+                    }
+                }
+                ok = false;
+            }
+        }
+    }
+    (ok && den > 0.0).then(|| num / den)
+}
+
 pub fn report(model: &Model, p: &NanoArchProject) -> ThermalReport {
     let t: &ThermalInputs = &p.meta.compliance.thermal;
     let mut missing: Vec<String> = Vec::new();
@@ -101,7 +143,7 @@ pub fn report(model: &Model, p: &NanoArchProject) -> ThermalReport {
     let gross_wall = wall_net + windows + doors;
     let share = if gross_wall > 0.0 { windows / gross_wall * 100.0 } else { 0.0 };
 
-    let wall_u = assembly_u(&t.wall_layers, t.rsi, t.rse, "wall").map_err(|m| missing.extend(m)).ok();
+    let wall_u = wall_envelope_u(model, t, &mut missing, &mut notes);
     let roof_u = assembly_u(&t.roof_layers, t.rsi, t.rse, "roof").map_err(|m| missing.extend(m)).ok();
     let win_u = t.window_u;
     if win_u.is_none() && windows > 0.0 {

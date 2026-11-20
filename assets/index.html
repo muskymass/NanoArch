@@ -49,7 +49,24 @@ td.num{font-variant-numeric:tabular-nums}
 #viewer.draft{padding:0;align-items:stretch;justify-content:stretch;overflow:hidden}
 #viewer.draft svg{max-width:none;flex:1 1 100%;width:100%;height:100%;cursor:crosshair}
 #viewer.draft svg [data-id]{cursor:crosshair}
-#vp{flex:1;display:flex;flex-direction:row;min-height:0;min-width:0}
+/* invisible hit lines over thin plan elements: their width is in SCREEN pixels, whatever the zoom */
+#viewer svg .gridhit,#viewer svg .dimhit,#viewer svg .sephit{stroke:transparent;stroke-width:12px;vector-effect:non-scaling-stroke;pointer-events:stroke}
+#viewer svg .sepline{stroke:#7a5ca8;stroke-width:1.4;stroke-dasharray:7 4;fill:none}
+#viewer svg .separator.sel .sepline,#viewer svg .sel .sepline{stroke:var(--accent);stroke-width:2.4}
+#draftbar{flex:0 0 auto;flex-wrap:nowrap!important;overflow-x:auto;overflow-y:hidden;white-space:nowrap;scrollbar-width:thin}
+#draftbar input[type=number]{width:54px}
+#draftbar .grp{display:flex;gap:2px;align-items:center;padding:0 6px;border-inline-end:1px solid var(--line);flex:0 0 auto}
+#draftbar .grp:last-of-type{border-inline-end:0}
+#draftbar .grp button{min-width:30px;height:30px;padding:0 5px;font-size:15px;line-height:1}
+#draftbar .opts{display:flex;gap:6px;align-items:center;flex:0 0 auto}
+#draftbar .opts label{font-size:12px}
+#dr-hint{position:absolute;inset-inline-start:10px;bottom:8px;max-width:70%;background:rgba(255,255,255,.88);border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:12px;pointer-events:none;z-index:3;display:none}
+#asm-ov{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:50;display:flex;align-items:center;justify-content:center}
+#asm-box{background:#fff;color:var(--ink);width:min(980px,96vw);max-height:92vh;overflow:auto;border-radius:10px;padding:14px;box-shadow:0 10px 40px rgba(0,0,0,.35)}
+#asm-box table{width:100%;border-collapse:collapse}#asm-box td,#asm-box th{padding:3px 5px;border-bottom:1px solid var(--line);font-size:12.5px;text-align:start}
+#asm-box .card{border:1px solid var(--line);border-radius:8px;padding:8px;margin:8px 0}
+#asm-box input,#asm-box select{width:auto}
+#vp{flex:1;display:flex;flex-direction:row;min-height:0;min-width:0;position:relative}
 #vp>#viewer,#vp>#v3{min-width:0}
 #vp.split>#v3 .tools{max-height:72px;overflow-y:auto;gap:6px}
 #vp.split>#v3 #gl{min-height:240px}
@@ -178,10 +195,11 @@ ul.clean li{margin:3px 0}
     </div>
     <div class="alts" id="alts"><div class="empty" data-i="alts_empty"></div></div>
     <div id="levelbar" class="bar" style="display:none;gap:6px;padding:6px 8px"></div>
-    <div id="draftbar" class="bar" style="display:none;gap:6px;padding:6px 8px;flex-wrap:wrap;align-items:center"></div>
+    <div id="draftbar" class="bar" style="display:none;gap:4px;padding:4px 6px;align-items:center"></div>
     <div id="dr-props" class="bar" style="display:none;gap:10px;padding:6px 8px;flex-wrap:wrap;align-items:center"></div>
     <div id="inspector" class="bar" style="display:none"></div>
     <div id="vp">
+    <div id="dr-hint"></div>
     <div id="viewer"><div class="empty" data-i="viewer_empty"></div></div>
     <div id="v3">
       <div class="tools">
@@ -918,7 +936,7 @@ const RUN_COL = { duct: [0.5, 0.77, 0.83], pipe: [0.56, 0.82, 0.62], drain: [0.7
 const MEP_COL = { light: [0.95, 0.72, 0.02], socket: [0.1, 0.42, 0.66], panel: [0.42, 0.1, 0.6], fixture: [0.16, 0.62, 0.56], ac_indoor: [0.04, 0.45, 0.52] };
 function colorOf(b) {
   switch (b.kind) {
-    case "Wall": return b.class === "ext" ? [0.85, 0.82, 0.77, 1] : [0.93, 0.91, 0.87, 1];
+    case "Wall": { const a = V3.scene && V3.scene.assemblies && V3.scene.assemblies[b.id]; if (a) return ({ exterior_insulated: [0.8, 0.86, 0.74, 1], interior_partition: [0.95, 0.93, 0.85, 1], structural: [0.62, 0.64, 0.68, 1], retaining: [0.55, 0.45, 0.36, 1] })[a[0]] || [0.85, 0.82, 0.77, 1]; return b.class === "ext" ? [0.85, 0.82, 0.77, 1] : [0.93, 0.91, 0.87, 1]; }
     case "Slab": return [0.6, 0.63, 0.65, 1];
     case "Column": return [0.71, 0.27, 0.1, 1];
     case "Beam": return [0.79, 0.45, 0.24, 1];
@@ -1035,7 +1053,8 @@ window.addEventListener("mouseup", async e => {
   const d = V3.drag; V3.drag = null; if (!d || !V3.on || V3.walk || d.moved > 4 || e.target !== gl3) return;
   const b = pick3(e); V3.sel = b ? b.id : null; build3(); draw3(); selectIds(b ? [b.id] : [], { src: "3d", level: b ? b.level : null });
   if (!b) { $("v3-pick").textContent = ""; return; }
-  $("v3-pick").textContent = `${b.kind}${b.class ? " / " + b.class : ""}${b.visual ? " (" + t("v_visual") + ")" : ""} · ${b.id}`;
+  const asmName = V3.scene && V3.scene.assemblies && V3.scene.assemblies[b.id];
+  $("v3-pick").textContent = `${b.kind}${b.class ? " / " + b.class : ""}${asmName ? " / " + asmName[1] : ""}${b.visual ? " (" + t("v_visual") + ")" : ""} · ${b.id}`;
 });
 window.addEventListener("mousemove", e => {
   const d = V3.drag; if (!d) return; const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY; d.moved += Math.abs(dx) + Math.abs(dy);
@@ -2544,10 +2563,14 @@ document.querySelector('[data-tab="ov"]').addEventListener("click", () => busy(o
 // the project (.nnx). The page keeps only the selection and the view (zoom and pan).
 const DR = {
   on: false, tool: "select", frame: null, defaults: null, start: null, cur: null, snap: null, typed: "", base: null, ref: null,
-  placement: null, box: null, pan: null, vw: null, vb0: null, flight: false, queued: null, space: false, props: null,
-  opt: { thick: "", height: "", dw: "", dh: "", ww: "", wh: "", ws: "", chain: true, copy: false, axis: "x" },
+  placement: null, box: null, pan: null, vw: null, vb0: null, flight: false, queued: null, space: false, props: null, epoch: 0, asm: null,
+  opt: { thick: "", height: "", dw: "", dh: "", ww: "", wh: "", ws: "", off: "", chain: true, copy: false, axis: "x" },
 };
-const DR_TOOLS = [["select", "V", "تحديد", "Select"], ["wall", "W", "جدار", "Wall"], ["door", "D", "باب", "Door"], ["window", "N", "نافذة", "Window"], ["move", "M", "نقل", "Move"], ["copy", "C", "نسخ", "Copy"], ["rotate", "R", "تدوير", "Rotate"], ["mirror", "X", "انعكاس", "Mirror"], ["align", "A", "محاذاة", "Align"], ["split", "S", "تقسيم", "Split"], ["trim", "T", "قص للزاوية", "Trim"], ["grid", "G", "محور", "Grid"], ["dimension", "I", "بُعد", "Dimension"], ["tag", "Q", "وسم غرفة", "Room tag"]];
+// [id, key, Arabic, English, icon, group]. The toolbar shows icons only (name and key in the tooltip) in four groups.
+const DR_TOOLS = [["select", "V", "تحديد", "Select", "↖", "sel"],
+  ["wall", "W", "جدار", "Wall", "▬", "draw"], ["door", "D", "باب", "Door", "🚪", "draw"], ["window", "N", "نافذة", "Window", "◫", "draw"], ["separator", "P", "فاصل غرف", "Room separator", "┅", "draw"], ["grid", "G", "محور", "Grid line", "#", "draw"], ["dimension", "I", "بُعد", "Dimension", "↔", "draw"],
+  ["move", "M", "نقل", "Move", "✥", "mod"], ["copy", "C", "نسخ", "Copy", "⧉", "mod"], ["rotate", "R", "تدوير", "Rotate", "⟳", "mod"], ["mirror", "X", "انعكاس", "Mirror", "⇋", "mod"], ["offset", "O", "إزاحة", "Offset", "⇉", "mod"], ["align", "A", "محاذاة", "Align", "⫤", "mod"], ["split", "S", "تقسيم", "Split", "✂", "mod"], ["trim", "T", "قص للزاوية", "Trim to corner", "⌐", "mod"],
+  ["tag", "Q", "وسم", "Tag", "🏷", "ann"]];
 const drSvg = () => document.querySelector("#viewer svg");
 const drToWorld = p => [DR.frame.minx + (p.x - DR.frame.m) / DR.frame.s, DR.frame.maxy - (p.y - DR.frame.m) / DR.frame.s];
 const drToSvg = w => [DR.frame.m + (w[0] - DR.frame.minx) * DR.frame.s, DR.frame.m + (DR.frame.maxy - w[1]) * DR.frame.s];
@@ -2582,7 +2605,8 @@ function drAfterPlan() {
   const svg = drSvg(); if (!svg) return;
   svg.classList.add("dr"); DR.vb0 = null;
   if (DR.frame) { drViewBox(); drDraw(); }
-  call("draft_frame").then(r => { const moved = JSON.stringify(r.frame) !== JSON.stringify(DR.frame); DR.frame = r.frame; DR.defaults = r.defaults; if (moved) { drViewBox(); } drDraw(); drFillDefaults(); }).catch(() => {});
+  const ep = DR.epoch;
+  call("draft_frame").then(r => { if (ep !== DR.epoch) return; const moved = JSON.stringify(r.frame) !== JSON.stringify(DR.frame); DR.frame = r.frame; DR.defaults = r.defaults; if (moved) { drViewBox(); } drDraw(); drFillDefaults(); }).catch(() => {});
   // elements that no longer exist drop out of the selection
   if (SEL.ids.size) { const have = new Set([...document.querySelectorAll("#viewer [data-id]")].map(e => e.dataset.id)); const keep = drIds().filter(i => have.has(i)); if (keep.length !== SEL.ids.size) selectIds(keep, { src: "draft" }); }
 }
@@ -2609,8 +2633,8 @@ function drDraw() {
       else drEl(g, "circle", { cx: s[0], cy: s[1], r: 3 * k, fill: acc });
       if (kind !== "grid") drLabel(g, s[0], s[1] - 9 * k, ({ endpoint: L("نقطة طرف", "endpoint"), midpoint: L("منتصف", "midpoint"), intersection: L("تقاطع", "crossing"), perpendicular: L("عمودي", "perpendicular"), online: L("على المحور", "on grid line"), aligned: L("محاذاة", "aligned") })[kind] || kind);
     }
-    if ((DR.tool === "wall" || DR.tool === "grid") && DR.start && s) {
-      const a = drToSvg(DR.start), t = Number(DR.opt.thick) || 150, col = DR.tool === "grid" ? "#c0392b" : acc;
+    if ((DR.tool === "wall" || DR.tool === "grid" || DR.tool === "separator") && DR.start && s) {
+      const a = drToSvg(DR.start), t = Number(DR.opt.thick) || 150, col = DR.tool === "grid" ? "#c0392b" : DR.tool === "separator" ? "#7a5ca8" : acc;
       if (DR.tool === "wall") drEl(g, "line", { x1: a[0], y1: a[1], x2: s[0], y2: s[1], stroke: acc, "stroke-opacity": 0.45, "stroke-width": Math.max(2 * k, t * DR.frame.s) });
       drEl(g, "line", { x1: a[0], y1: a[1], x2: s[0], y2: s[1], stroke: col, "stroke-width": sw, "stroke-dasharray": `${4 * k} ${3 * k}` });
       const len = Math.round(Math.hypot(DR.snap.p[0] - DR.start[0], DR.snap.p[1] - DR.start[1]));
@@ -2647,7 +2671,7 @@ function drDraw() {
 // ---- the pointer: snapping and previews go to the backend, one request at a time
 // What the snap needs: the start of what is being drawn (walls and grid lines hold an axis; a move or the first dimension point do not).
 function drSnapArgs(w, scale) {
-  const t = DR.tool, line = (t === "wall" || t === "grid") && DR.start;
+  const t = DR.tool, line = (t === "wall" || t === "grid" || t === "separator") && DR.start;
   const from = line ? DR.start : (DR.base && ["move", "copy"].includes(t) ? DR.base : (t === "dimension" && DR.dim && !DR.dim.b ? DR.dim.a : null));
   return { p: w, scale, from, ortho: !!line };
 }
@@ -2669,25 +2693,31 @@ function drQuery(e) {
   })();
 }
 async function drEdit(cmd, args) {
-  try { const r = await call(cmd, args); if (r.frame) DR.frame = r.frame; if (r.defaults) DR.defaults = r.defaults; await afterEdit(r); if (r.notes && r.notes.length) drSay(r.notes.join(" · ")); return r; }
+  try { const ep = DR.epoch; const r = await call(cmd, args); if (ep !== DR.epoch) return null; if (r.frame) DR.frame = r.frame; if (r.defaults) DR.defaults = r.defaults; if (r.assemblies) DR.asm = r.assemblies; await afterEdit(r); if (r.notes && r.notes.length) drSay(r.notes.join(" · ")); return r; }
   catch (x) { drSay(x.message || String(x)); return null; }
 }
 // The element under the pointer. Walls, openings, grid lines and dimensions are only a few pixels wide on screen, so when the pointer is
 // over a room (or nothing) they are looked for within 5 px; `want` limits the kinds taken.
+const DR_HIT_PX = 8; // least half-width, in screen pixels, of the target around a thin element
 function drPickAt(e, want) {
   const ok = t => t && !t.closest("#dr-ov") && !/\bmep\b|\brun\b/.test(t.getAttribute("class") || "") && (!want || want.includes(drKindOf(t)));
   let top = null;
   for (const el of document.elementsFromPoint(e.clientX, e.clientY)) { const t = el.closest && el.closest("#viewer [data-id]"); if (ok(t)) { top = t; break; } }
   if (top && drKindOf(top) !== "Space") return top;
   let best = null, ba = Infinity;
-  for (const t of document.querySelectorAll("#viewer rect.wall[data-id], #viewer g.door[data-id], #viewer g.window[data-id], #viewer g.gridline[data-id], #viewer rect.column[data-id]")) {
+  // A grid line, a dimension, a separator or a tag is judged by its own lines and boxes, not by the box around the whole group (a
+  // dimension's group is a U shape whose bounding box covers half the plan).
+  const parts = t => { const c = t.getAttribute("class") || "", q = c.startsWith("gridline") ? "line.grid, circle.gbub" : c.startsWith("dimension") ? "line.dimline, line.dimext" : c.startsWith("separator") ? "line.sepline" : c.startsWith("tag") ? "rect.tagbox" : null; return q ? [...t.querySelectorAll(q)] : [t]; };
+  for (const t of document.querySelectorAll("#viewer rect.wall[data-id], #viewer g.door[data-id], #viewer g.window[data-id], #viewer g.gridline[data-id], #viewer rect.column[data-id], #viewer g.dimension[data-id], #viewer g.separator[data-id], #viewer g.tag[data-id]")) {
     if (!ok(t)) continue;
-    const b = t.getBoundingClientRect();
-    if (e.clientX >= b.left - 5 && e.clientX <= b.right + 5 && e.clientY >= b.top - 5 && e.clientY <= b.bottom + 5) { const area = Math.max(b.width, 1) * Math.max(b.height, 1); if (area < ba) { ba = area; best = t; } }
+    for (const part of parts(t)) {
+      const b = part.getBoundingClientRect(), pad = DR_HIT_PX;
+      if (e.clientX >= b.left - pad && e.clientX <= b.right + pad && e.clientY >= b.top - pad && e.clientY <= b.bottom + pad) { const area = Math.max(b.width, 1) * Math.max(b.height, 1); if (area < ba) { ba = area; best = t; } }
+    }
   }
   return best || top;
 }
-const drKindOf = el => { const c = (el.getAttribute("class") || "").split(" ")[0]; return ({ room: "Space", wall: "Wall", door: "Door", window: "Window", column: "Column", gridline: "Grid", dimension: "Dimension", tag: "Tag" })[c] || c; };
+const drKindOf = el => { const c = (el.getAttribute("class") || "").split(" ")[0]; return ({ room: "Space", wall: "Wall", door: "Door", window: "Window", column: "Column", gridline: "Grid", dimension: "Dimension", tag: "Tag", separator: "RoomSeparator" })[c] || c; };
 function drNeed(n, msg) { if (drIds().length < n) { drSay(msg || L("حدّد عناصر أولاً (انقر أو اسحب مربعاً)", "Select elements first (click, or drag a box)")); return false; } return true; }
 
 function drClick(e) {
@@ -2702,6 +2732,21 @@ function drClick(e) {
     if (p[0] === DR.start[0] && p[1] === DR.start[1]) return;
     const a = DR.start;
     drEdit("draft_grid", { a, b: p }).then(r => { if (r) { DR.start = null; selectIds([r.grid], { src: "draft" }); } drDraw(); });
+  } else if (t === "separator") {
+    if (!DR.start) { DR.start = p; drDraw(); return; }
+    if (p[0] === DR.start[0] && p[1] === DR.start[1]) return;
+    const a = DR.start;
+    drEdit("draft_separator", { a, b: p }).then(r => { if (r) { DR.start = null; selectIds([r.separator], { src: "draft" }); } drDraw(); });
+  } else if (t === "offset") {
+    const dist = drNum(DR.opt.off);
+    if (!(dist > 0)) { drSay(L("اكتب مسافة الإزاحة (مم) في الشريط أولاً", "Enter the offset distance (mm) in the bar first")); return; }
+    if (!DR.ref) {
+      const el = drPickAt(e, ["Wall", "RoomSeparator", "Grid"]);
+      if (!el) { drSay(L("انقر جداراً أو فاصل غرف أو محوراً", "Click a wall, a room separator or a grid line")); return; }
+      DR.ref = { id: el.dataset.id }; selectIds([DR.ref.id], { src: "draft" }); drSay(L("انقر الجهة المطلوبة للنسخة", "Click the side the copy goes to")); return;
+    }
+    const a = DR.ref; DR.ref = null;
+    drEdit("draft_offset", { id: a.id, distance: Math.round(dist), toward: DR.cur }).then(r => { if (r && r.created && r.created.length) selectIds(r.created, { src: "draft" }); });
   } else if (t === "dimension") {
     const el = drPickAt(e), kind = el ? drKindOf(el) : null, ref = el && ["Wall", "Door", "Window", "Column", "Grid"].includes(kind) ? el.dataset.id : null;
     if (!DR.dim) { DR.dim = { a: p, refA: ref, b: null, refB: null }; drSay(L("انقر النقطة الثانية", "Click the second point")); }
@@ -2709,9 +2754,9 @@ function drClick(e) {
     else { const d = DR.dim; DR.dim = null; drEdit("draft_dimension", { a: d.a, b: d.b, at: p, refA: d.refA, refB: d.refB }).then(r => { if (r) selectIds([r.dimension], { src: "draft" }); drDraw(); }); }
     drDraw();
   } else if (t === "tag") {
-    const el = drPickAt(e, ["Space"]), room = el ? el.dataset.id : null;
-    if (!room) { drSay(L("انقر داخل غرفة", "Click inside a room")); return; }
-    drEdit("draft_tag", { rooms: [room] }).then(r => { if (r) selectIds(r.created, { src: "draft" }); });
+    const el = drPickAt(e, ["Door", "Window", "Column", "Space"]), host = el ? el.dataset.id : null;
+    if (!host) { drSay(L("انقر غرفة أو باباً أو نافذة أو عموداً", "Click a room, a door, a window or a column")); return; }
+    drEdit("draft_tag", { hosts: [host] }).then(r => { if (r) selectIds(r.created, { src: "draft" }); });
   } else if (t === "door" || t === "window") {
     const pl = DR.placement; if (!pl) { drSay(L("اقترب من جدار", "Move over a wall")); return; }
     if (!pl.fits) { drSay(L("الجدار أقصر من أن يتسع له", "the wall is too short for it")); return; }
@@ -2813,8 +2858,8 @@ function drKey(e) {
 // ---- the toolbar
 function drSetTool(t) { DR.tool = t; DR.start = DR.base = DR.ref = DR.dim = null; DR.typed = ""; DR.placement = null; DR.snap = null; if (t === "rotate") { drRotate(1); DR.tool = "select"; } drBar(); drDraw(); drHint(); }
 function drHint() {
-  const h = { select: L("انقر لتحديد، Shift للإضافة، اسحب مربعاً (يميناً: يحتوي، يساراً: يلامس)", "Click to select, Shift to add, drag a box (right: holds, left: touches)"), wall: L("انقر البداية ثم النهاية؛ اكتب الطول ثم Enter؛ Esc ينهي", "Click the start, then the end; type a length and Enter; Esc ends"), door: L("حرّك فوق جدار وانقر", "Move over a wall and click"), window: L("حرّك فوق جدار وانقر", "Move over a wall and click"), move: L("حدّد أولاً ثم انقر نقطة الأساس ثم الوصول", "Select first, then click a base point and a target"), copy: L("حدّد أولاً ثم انقر نقطة الأساس ثم الوصول", "Select first, then click a base point and a target"), mirror: L("حدّد أولاً ثم انقر نقطة على محور الانعكاس", "Select first, then click a point on the mirror line"), align: L("انقر الجدار المرجع ثم الجدار المراد نقله", "Click the reference wall, then the wall to move"), split: L("انقر على جدار عند نقطة القطع", "Click a wall where it is to be cut"), trim: L("انقر الجدار الأول (الجزء المراد إبقاؤه) ثم الثاني", "Click the first wall (on the part to keep), then the second"), grid: L("انقر بداية خط المحور ثم نهايته؛ الأسماء A B C للرأسي و1 2 3 للأفقي", "Click the start of the grid line, then its end; A B C for vertical, 1 2 3 for horizontal"), dimension: L("انقر نقطتين (يلتصق بالجدران والمحاور والفتحات) ثم موضع الخط", "Click two points (it attaches to walls, grid lines and openings), then where the line goes"), tag: L("انقر داخل غرفة لوسمها", "Click inside a room to tag it") }[DR.tool];
-  const e = $("dr-hint"); if (e) e.textContent = h || "";
+  const h = { select: L("انقر لتحديد، Shift للإضافة، اسحب مربعاً (يميناً: يحتوي، يساراً: يلامس)", "Click to select, Shift to add, drag a box (right: holds, left: touches)"), wall: L("انقر البداية ثم النهاية؛ اكتب الطول ثم Enter؛ Esc ينهي", "Click the start, then the end; type a length and Enter; Esc ends"), door: L("حرّك فوق جدار وانقر", "Move over a wall and click"), window: L("حرّك فوق جدار وانقر", "Move over a wall and click"), move: L("حدّد أولاً ثم انقر نقطة الأساس ثم الوصول", "Select first, then click a base point and a target"), copy: L("حدّد أولاً ثم انقر نقطة الأساس ثم الوصول", "Select first, then click a base point and a target"), mirror: L("حدّد أولاً ثم انقر نقطة على محور الانعكاس", "Select first, then click a point on the mirror line"), align: L("انقر الجدار المرجع ثم الجدار المراد نقله", "Click the reference wall, then the wall to move"), split: L("انقر على جدار عند نقطة القطع", "Click a wall where it is to be cut"), trim: L("انقر الجدار الأول (الجزء المراد إبقاؤه) ثم الثاني", "Click the first wall (on the part to keep), then the second"), grid: L("انقر بداية خط المحور ثم نهايته؛ الأسماء A B C للرأسي و1 2 3 للأفقي", "Click the start of the grid line, then its end; A B C for vertical, 1 2 3 for horizontal"), dimension: L("انقر نقطتين (يلتصق بالجدران والمحاور والفتحات) ثم موضع الخط", "Click two points (it attaches to walls, grid lines and openings), then where the line goes"), tag: L("انقر غرفة أو باباً أو نافذة أو عموداً لوسمه (أو حدّد عنصراً واضغط «وسم المحدد»)", "Click a room, door, window or column to tag it (or select elements and press Tag selected)"), separator: L("انقر بداية الفاصل ثم نهايته: خط وهمي يقسم الفراغ إلى غرف بلا جدار", "Click the start, then the end: a virtual line that divides an open space into rooms, no wall"), offset: L("اكتب المسافة، انقر العنصر ثم الجهة المطلوبة", "Type the distance, click the element, then the side for the copy") }[DR.tool];
+  const e = $("dr-hint"); if (e) { e.textContent = h || ""; e.style.display = DR.on && h ? "block" : "none"; }
 }
 function drFillDefaults() {
   const d = DR.defaults || {}, o = DR.opt, set = (k, v) => { if (o[k] === "" && v != null) o[k] = String(v); };
@@ -2824,19 +2869,23 @@ function drFillDefaults() {
 function drBar(keepFocus) {
   const bar = $("draftbar"); if (!bar || !DR.on) return;
   if (keepFocus && bar.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;
-  const num = (k, label, w = 62) => `<label style="display:flex;gap:3px;align-items:center;margin:0">${label}<input data-dopt="${k}" type="number" step="any" dir="ltr" value="${esc(DR.opt[k])}" style="width:${w}px"></label>`;
-  const tools = DR_TOOLS.map(([id, key, ar, en]) => `<button data-dtool="${id}" class="${DR.tool === id ? "primary" : ""}" title="${key}">${L(ar, en)} <small>${key}</small></button>`).join("");
-  const opts = { wall: num("thick", L("السماكة", "Thickness")) + num("height", L("الارتفاع", "Height")) + `<label style="display:flex;gap:3px;align-items:center;margin:0"><input type="checkbox" data-dopt="chain" ${DR.opt.chain ? "checked" : ""}>${L("متابعة", "Chain")}</label>`,
-    door: num("dw", L("العرض", "Width")) + num("dh", L("الارتفاع", "Height")), window: num("ww", L("العرض", "Width")) + num("wh", L("الارتفاع", "Height")) + num("ws", L("الحافة", "Sill")),
-    copy: "", mirror: `<select data-dopt="axis" style="width:auto"><option value="x" ${DR.opt.axis === "x" ? "selected" : ""}>${L("محور رأسي", "vertical axis")}</option><option value="y" ${DR.opt.axis === "y" ? "selected" : ""}>${L("محور أفقي", "horizontal axis")}</option></select><label style="display:flex;gap:3px;align-items:center;margin:0"><input type="checkbox" data-dopt="copy" ${DR.opt.copy ? "checked" : ""}>${L("نسخة", "Copy")}</label>`,
+  const num = (k, label, w) => `<label style="display:flex;gap:3px;align-items:center;margin:0">${label}<input data-dopt="${k}" type="number" step="any" dir="ltr" value="${esc(DR.opt[k])}"${w ? ` style="width:${w}px"` : ""}></label>`;
+  const grp = g => `<div class="grp">${DR_TOOLS.filter(t => t[5] === g).map(([id, key, ar, en, ic]) => `<button data-dtool="${id}" class="${DR.tool === id ? "primary" : ""}" title="${esc(L(ar, en))} (${key})" aria-label="${esc(L(ar, en))}">${ic}</button>`).join("")}</div>`;
+  const chk = (k, label) => `<label style="display:flex;gap:3px;align-items:center;margin:0"><input type="checkbox" data-dopt="${k}" ${DR.opt[k] ? "checked" : ""}>${label}</label>`;
+  const opts = { wall: num("thick", L("السماكة", "Thk")) + num("height", L("الارتفاع", "Ht")) + chk("chain", L("متابعة", "Chain")),
+    door: num("dw", L("العرض", "W")) + num("dh", L("الارتفاع", "H")), window: num("ww", L("العرض", "W")) + num("wh", L("الارتفاع", "H")) + num("ws", L("الحافة", "Sill")),
+    offset: num("off", L("المسافة مم", "Dist mm"), 64), copy: "",
+    mirror: `<select data-dopt="axis" style="width:auto"><option value="x" ${DR.opt.axis === "x" ? "selected" : ""}>${L("محور رأسي", "vertical axis")}</option><option value="y" ${DR.opt.axis === "y" ? "selected" : ""}>${L("محور أفقي", "horizontal axis")}</option></select>${chk("copy", L("نسخة", "Copy"))}`,
     select: "" }[DR.tool] || "";
-  bar.innerHTML = `<div style="display:flex;gap:4px;flex-wrap:wrap">${tools}</div><span style="width:8px"></span>${opts}<span style="flex:1"></span>
-    <button data-dact="rot-l" title="${L("تدوير 90° عكس عقارب الساعة", "Rotate 90° counter-clockwise")}">⟲</button><button data-dact="rot-r" title="${L("تدوير 90° مع عقارب الساعة", "Rotate 90° clockwise")}">⟳</button>
-    <button data-dact="rooms" title="${L("ابحث عن الغرف من الجدران المغلقة", "Find the rooms the walls enclose")}">${L("الغرف", "Rooms")}</button><button data-dact="tagall" title="${L("وسم كل الغرف", "Tag every room")}">${L("وسم الكل", "Tag all")}</button><button data-dact="del" title="Delete">🗑</button><button data-dact="zin">＋</button><button data-dact="zout">－</button><button data-dact="fit">${L("ملاءمة", "Fit")}</button>
-    <div id="dr-hint" class="note" style="flex-basis:100%;margin:0"></div>`;
+  const act = (a, ic, tip) => `<button data-dact="${a}" title="${esc(tip)}" aria-label="${esc(tip)}">${ic}</button>`;
+  bar.innerHTML = grp("sel") + grp("draw") + grp("mod") + grp("ann") + `<div class="opts">${opts}</div><span style="flex:1;min-width:6px"></span><div class="grp">`
+    + act("rot-l", "⟲", L("تدوير 90° عكس عقارب الساعة", "Rotate 90° counter-clockwise")) + act("rot-r", "⟳", L("تدوير 90° مع عقارب الساعة", "Rotate 90° clockwise"))
+    + act("rooms", "▦", L("ابحث عن الغرف من الجدران والفواصل المغلقة", "Find the rooms the walls and separators enclose")) + act("tagall", "🏷", L("وسم كل الغرف", "Tag every room")) + act("tagsel", "🔖", L("وسم المحدد (غرف وأبواب ونوافذ وأعمدة وقواعد)", "Tag selected (rooms, doors, windows, columns, footings)"))
+    + act("asm", "▤", L("تركيبات الجدران (الطبقات)", "Wall assemblies (layers)")) + act("del", "🗑", L("حذف (Delete)", "Delete"))
+    + act("zin", "＋", L("تكبير", "Zoom in")) + act("zout", "－", L("تصغير", "Zoom out")) + act("fit", "⤢", L("ملاءمة (Home)", "Fit (Home)")) + `</div>`;
   bar.querySelectorAll("[data-dtool]").forEach(b => b.onclick = () => drSetTool(b.dataset.dtool));
   bar.querySelectorAll("[data-dopt]").forEach(i => i.onchange = () => { DR.opt[i.dataset.dopt] = i.type === "checkbox" ? i.checked : i.value; });
-  bar.querySelectorAll("[data-dact]").forEach(b => b.onclick = () => { const a = b.dataset.dact; if (a === "rot-l") drRotate(1); else if (a === "rot-r") drRotate(-1); else if (a === "del") { if (drNeed(1)) drEdit("draft_delete", { ids: drIds() }); } else if (a === "rooms") drEdit("draft_rooms", {}); else if (a === "tagall") drEdit("draft_tag", {}); else if (a === "zin") drZoom(0.8); else if (a === "zout") drZoom(1.25); else drFit(); });
+  bar.querySelectorAll("[data-dact]").forEach(b => b.onclick = () => { const a = b.dataset.dact; if (a === "rot-l") drRotate(1); else if (a === "rot-r") drRotate(-1); else if (a === "del") { if (drNeed(1)) drEdit("draft_delete", { ids: drIds() }); } else if (a === "rooms") drEdit("draft_rooms", {}); else if (a === "tagall") drEdit("draft_tag", {}); else if (a === "tagsel") { if (drNeed(1)) drEdit("draft_tag", { hosts: drIds() }); } else if (a === "asm") asmOpen(); else if (a === "zin") drZoom(0.8); else if (a === "zout") drZoom(1.25); else drFit(); });
   drHint();
 }
 // A quarter turn about the middle of the selection (rounded to 50 mm, so the result stays on the grid).
@@ -2862,7 +2911,14 @@ async function drProps() {
     const p = await call("draft_props", { id: ids[0] }); if (drIds()[0] !== ids[0]) return; DR.props = p;
     const src = p.source === "user" ? L("رسمه المستخدم", "drawn by you") : L("ولّده التخطيط (يُعاد بناؤه عند تحريك الجدران الفاصلة)", "generated by the layout (rebuilt when a partition moves)");
     const ctl = f => f.editable ? (f.unit === "bool" ? `<input type="checkbox" data-pf="${f.key}" ${f.value ? "checked" : ""}>` : f.unit === "text" ? `<input data-pf="${f.key}" data-text="1" type="text" value="${esc(f.value ?? "")}" style="width:110px">` : `<input data-pf="${f.key}" type="number" step="1" dir="ltr" value="${f.value ?? ""}" style="width:80px">`) : `<span dir="ltr">${esc(f.value ?? "—")}</span>`;
-    box.innerHTML = `<b>${esc(p.kind)}</b><span class="hint">${src}${p.locked || p.wallLocked ? " · 🔒" : ""}</span>` + p.fields.map(f => `<label style="display:flex;gap:4px;align-items:center;margin:0">${esc(L(f.ar, f.en))}${ctl(f)}</label>`).join("");
+    let asmSel = "";
+    if (p.kind === "Wall") {
+      if (!DR.asm) { try { DR.asm = await call("assemblies_get"); } catch (x) { DR.asm = null; } }
+      const list = (DR.asm && DR.asm.assemblies) || [];
+      if (list.length) asmSel = `<label style="display:flex;gap:4px;align-items:center;margin:0">${L("تركيب الجدار", "Assembly")}<select data-asm="1" style="width:auto"><option value="">${L("— بلا (الافتراضي) —", "— none (project default) —")}</option>${list.map(r => `<option value="${esc(r.assembly.id)}" ${p.assemblyId === r.assembly.id ? "selected" : ""}>${esc(r.assembly.name)} · ${r.thickness_mm ?? "?"} mm</option>`).join("")}</select></label>`;
+    }
+    box.innerHTML = `<b>${esc(p.kind)}</b><span class="hint">${src}${p.locked || p.wallLocked ? " · 🔒" : ""}</span>` + p.fields.map(f => `<label style="display:flex;gap:4px;align-items:center;margin:0">${esc(L(f.ar, f.en))}${ctl(f)}</label>`).join("") + asmSel;
+    const asmEl = box.querySelector("[data-asm]"); if (asmEl) asmEl.onchange = async () => { const r = await drEdit("assembly_assign", { walls: [ids[0]], assembly: asmEl.value || null }); if (r && r.assemblies) DR.asm = r.assemblies; drProps(); };
     box.querySelectorAll("[data-pf]").forEach(i => i.onchange = async () => { const v = i.type === "checkbox" ? i.checked : i.dataset.text ? i.value : (i.value === "" ? null : Number(i.value)); const r = await drEdit("draft_set", { id: ids[0], key: i.dataset.pf, value: v }); if (!r) drProps(); });
   } catch (x) { box.innerHTML = `<span class="bad">${esc(x.message || x)}</span>`; }
 }
@@ -2873,7 +2929,7 @@ async function drToggle(on) {
   if (on) {
     if (V3.on && !V3.split) { V3.split = true; applyMode(); }
     if ($("viewsel").value !== "plan") { $("viewsel").value = "plan"; await showView(); }
-    const r = await call("draft_frame"); if (!r.frame) throw new Error(L("ولّد مخططاً أو افتح مشروعاً أولاً", "Generate a plan or open a project first")); DR.frame = r.frame; DR.defaults = r.defaults; DR.on = true;
+    const r = await call("draft_frame"); if (!r.frame) throw new Error(L("ولّد مخططاً أو افتح مشروعاً أولاً", "Generate a plan or open a project first")); DR.frame = r.frame; DR.defaults = r.defaults; DR.on = true; DR.asm = null;
   } else DR.on = false;
   $("draft").classList.toggle("primary", DR.on); $("viewer").classList.toggle("draft", DR.on); $("draftbar").style.display = DR.on ? "flex" : "none";
   DR.start = DR.base = DR.ref = DR.cur = DR.snap = DR.placement = null; DR.vw = null; DR.vb0 = null; DR.tool = "select";
@@ -2881,12 +2937,80 @@ async function drToggle(on) {
   if (DR.on) { drFillDefaults(); drBar(); drViewBox(); drProps(); } else { $("draftbar").innerHTML = ""; drProps(); if (svg) { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); } }
 }
 $("draft").onclick = () => busy(() => drToggle(!DR.on));
+
+// ---------------------------------------------------------------- wall assemblies (layers, thickness, U-value) in one dialog
+const ASM = { data: null, rows: [], defaults: { exterior: "", interior: "" } };
+async function asmOpen() {
+  const r = await call("assemblies_get"); ASM.data = r; DR.asm = r;
+  ASM.rows = r.assemblies.map(x => JSON.parse(JSON.stringify(x.assembly))); ASM.defaults = { exterior: r.defaults.exterior || "", interior: r.defaults.interior || "" };
+  asmRender();
+}
+function asmClose() { const o = $("asm-ov"); if (o) o.remove(); }
+function asmMaterialOptions(sel) { return `<option value="custom" ${sel === "custom" ? "selected" : ""}>${L("مادة أخرى (أدخل λ)", "Other material (enter λ)")}</option>` + ASM.data.catalog.materials.map(m => `<option value="${m.id}" ${sel === m.id ? "selected" : ""}>${esc(L(m.name_ar, m.name_en))}${m.needs_user_values ? " *" : ""}</option>`).join(""); }
+function asmRender() {
+  asmClose();
+  const kinds = ASM.data.kinds, cat = Object.fromEntries(ASM.data.catalog.materials.map(m => [m.id, m]));
+  const cards = ASM.rows.map((a, i) => {
+    const rep = (ASM.data.assemblies.find(x => x.assembly.id === a.id) || {});
+    const total = a.layers.reduce((s2, l) => s2 + (Number(l.thicknessMm) || 0), 0);
+    const layers = a.layers.map((l, j) => {
+      const m = cat[l.material];
+      return `<tr><td>${j + 1}</td><td><select data-f="material" data-i="${i}" data-j="${j}">${asmMaterialOptions(l.material)}</select></td>
+        <td><input type="number" step="any" dir="ltr" style="width:70px" data-f="thicknessMm" data-i="${i}" data-j="${j}" value="${l.thicknessMm ?? ""}">${m && m.example_mm ? ` <button data-ex="${i}:${j}" title="${esc(m.source || "")}">${L("مثال الدليل", "guide")} ${m.example_mm}</button>` : ""}</td>
+        <td><input type="number" step="any" dir="ltr" style="width:70px" data-f="lambda" data-i="${i}" data-j="${j}" value="${l.lambda ?? ""}" placeholder="${m && m.lambda != null ? m.lambda : "λ"}"></td>
+        <td><button data-ld="${i}:${j}" title="${L("حذف الطبقة", "Remove layer")}">✕</button></td></tr>`;
+    }).join("");
+    const u = rep.u != null ? `<b>U = ${rep.u} W/(m²·K)</b>` : `<span class="warn">${L("U غير محسوب:", "U not computed:")} ${esc((rep.missing || []).join("; ") || L("احفظ أولاً", "save first"))}</span>`;
+    return `<div class="card"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <label>ID <input data-f="id" data-i="${i}" value="${esc(a.id)}" style="width:90px"></label>
+      <label>${L("الاسم", "Name")} <input data-f="name" data-i="${i}" value="${esc(a.name)}" style="width:190px"></label>
+      <label>${L("النوع", "Kind")} <select data-f="kind" data-i="${i}">${kinds.map(k => `<option value="${k.id}" ${a.kind === k.id ? "selected" : ""}>${esc(L(k.ar, k.en))}</option>`).join("")}</select></label>
+      <label>${L("المصدر", "Source")} <input data-f="source" data-i="${i}" value="${esc(a.source || "")}" style="width:200px" placeholder="${L("ورقة بيانات / الصفحة", "data sheet / page")}"></label>
+      <span style="flex:1"></span><span dir="ltr">Σ ${total} mm</span> ${u} <button data-ad="${i}">${L("حذف التركيب", "Delete")}</button></div>
+      <table><thead><tr><th>#</th><th>${L("المادة (من الخارج إلى الداخل)", "Material (outside to inside)")}</th><th>${L("السماكة مم", "Thickness mm")}</th><th>λ W/(m·K)</th><th></th></tr></thead><tbody>${layers}</tbody></table>
+      <button data-la="${i}">${L("+ طبقة", "+ Layer")}</button></div>`;
+  }).join("");
+  const opt = (v, kindOk) => `<option value="">${L("— لا شيء —", "— none —")}</option>` + ASM.rows.filter(a => kindOk.includes(a.kind)).map(a => `<option value="${esc(a.id)}" ${v === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
+  const mm = ASM.data.mismatches.length ? `<div class="note warn">${ASM.data.mismatches.length} ${L("جدار سماكته تخالف تركيبه: عيّن التركيب للجدار ليُضبط", "wall(s) have a thickness that differs from their assembly: assign the assembly to the wall to align it")}</div>` : "";
+  const ov = document.createElement("div"); ov.id = "asm-ov";
+  ov.innerHTML = `<div id="asm-box" role="dialog" aria-modal="true"><div style="display:flex;gap:8px;align-items:center"><h3 style="margin:0;flex:1">${L("تركيبات الجدران", "Wall assemblies")}</h3><button id="asm-x">✕</button></div>
+    <div class="note">${L("كل تركيب طبقات بسماكاتها؛ سماكة الجدار = مجموع الطبقات. القيم من مدخلاتك (ورقة البيانات) والمادة التي بلا λ في الكتالوج (*) تتطلب إدخاله. تغذّي U والكميات والعرض ثلاثي الأبعاد.", "Each assembly is layers with thicknesses; a wall's thickness is their sum. Values are your inputs (data sheet); a material without λ in the catalog (*) needs it entered. They feed the U-value, the take-off and the 3D view.")} ${ASM.data.rsi_rse.rsi == null || ASM.data.rsi_rse.rse == null ? `<b class="warn">${L("Rsi وRse غير مدخلين (تبويب الامتثال)", "Rsi and Rse are not entered (Compliance tab)")}</b>` : ""}</div>${mm}
+    ${cards || `<div class="empty">${L("لا تركيبات بعد", "No assemblies yet")}</div>`}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px"><button id="asm-add">${L("+ تركيب جديد", "+ New assembly")}</button>
+      <label>${L("افتراضي للجدران الخارجية", "Default for exterior walls")} <select id="asm-dx">${opt(ASM.defaults.exterior, ["exterior_insulated", "structural"])}</select></label>
+      <label>${L("افتراضي للجدران الداخلية", "Default for interior walls")} <select id="asm-di">${opt(ASM.defaults.interior, ["interior_partition", "structural"])}</select></label>
+      <span style="flex:1"></span><button id="asm-save" class="primary">${L("حفظ", "Save")}</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener("mousedown", e => { if (e.target === ov) asmClose(); });
+  const grab = () => { ov.querySelectorAll("[data-f]").forEach(el => { const a = ASM.rows[Number(el.dataset.i)]; if (!a) return; const f = el.dataset.f, v = el.value; if (el.dataset.j != null) { const l = a.layers[Number(el.dataset.j)]; l[f] = f === "material" ? v : (v === "" ? null : Number(v)); } else a[f] = v; }); ASM.defaults = { exterior: ov.querySelector("#asm-dx").value, interior: ov.querySelector("#asm-di").value }; };
+  ov.querySelector("#asm-x").onclick = asmClose;
+  ov.querySelector("#asm-add").onclick = () => { grab(); let n = ASM.rows.length + 1; while (ASM.rows.some(a => a.id === "WA-" + n)) n++; ASM.rows.push({ id: "WA-" + n, name: L("تركيب جديد", "New assembly") + " " + n, kind: "exterior_insulated", layers: [{ material: "block_hollow_1216", thicknessMm: null, lambda: null }], source: "" }); asmRender(); };
+  ov.querySelectorAll("[data-la]").forEach(b => b.onclick = () => { grab(); ASM.rows[Number(b.dataset.la)].layers.push({ material: "custom", thicknessMm: null, lambda: null }); asmRender(); });
+  ov.querySelectorAll("[data-ld]").forEach(b => b.onclick = () => { grab(); const [i, j] = b.dataset.ld.split(":").map(Number); ASM.rows[i].layers.splice(j, 1); asmRender(); });
+  ov.querySelectorAll("[data-ex]").forEach(b => b.onclick = () => { grab(); const [i, j] = b.dataset.ex.split(":").map(Number); const l = ASM.rows[i].layers[j]; l.thicknessMm = cat[l.material].example_mm; if (!ASM.rows[i].source) ASM.rows[i].source = cat[l.material].source || ""; asmRender(); });
+  ov.querySelectorAll("[data-ad]").forEach(b => b.onclick = () => { grab(); ASM.rows.splice(Number(b.dataset.ad), 1); asmRender(); });
+  ov.querySelectorAll("select[data-f=material]").forEach(el => el.onchange = () => { grab(); asmRender(); });
+  ov.querySelector("#asm-save").onclick = async () => {
+    grab();
+    const rows = ASM.rows.map(a => ({ ...a, source: a.source || null, layers: a.layers.map(l => ({ material: l.material, thicknessMm: l.thicknessMm, lambda: l.lambda })) }));
+    const r = await drEdit("assemblies_set", { assemblies: rows, defaults: { exterior: ASM.defaults.exterior || null, interior: ASM.defaults.interior || null } });
+    if (r) { DR.asm = r.assemblies; ASM.data = r.assemblies; asmClose(); drProps(); }
+  };
+}
 // A new empty project: the project and the level LVL-1, then the draft mode, so walls, doors and windows can be drawn at once.
 $("newblank").textContent = L("مشروع فارغ", "Blank project");
+// Everything the drafting mode learned from one project (starting sizes, the view, the pending tool, the assemblies) is dropped, and any
+// answer still on its way from that project is ignored.
+function drResetSession() {
+  DR.epoch++; DR.defaults = null; DR.frame = null; DR.vw = null; DR.vb0 = null; DR.asm = null; DR.props = null;
+  DR.start = DR.base = DR.ref = DR.dim = DR.cur = DR.snap = DR.placement = DR.box = DR.down = null; DR.typed = ""; DR.tool = "select";
+  Object.assign(DR.opt, { thick: "", height: "", dw: "", dh: "", ww: "", wh: "", ws: "", off: "" }); // sizes belong to the project they were learned from
+  SEL.ids.clear();
+}
 $("newblank").onclick = () => busy(async () => {
   const st = await call("status"); if (st.dirty && !confirm(t("discard_q"))) return;
   if (DR.on) await drToggle(false);
-  Object.assign(DR.opt, { thick: "", height: "", dw: "", dh: "", ww: "", wh: "", ws: "" }); // sizes belong to the project they were learned from
+  drResetSession();
   const r = await call("project_blank", { title: "" });
   applySettings(r.settings || {}); state.alts = []; state.sel = -1; state.qto = null; state.sched = null; $("alts").innerHTML = `<div class="empty">${t("alts_empty")}</div>`;
   showPlan(r.svg); setLevels(r.levels); state.rooms_out = r.rooms; applyProject(r.settings || {}); renderSbc(r.sbc); refreshBim(); renderNotes(); setPlanButtons(true); refreshStatus();

@@ -270,6 +270,13 @@ pub fn compute(items: &[QtoItem], lib: &BoqLib) -> BoqReport {
         }
     }
 
+    // Layer items of a wall assembly measure the same walls as the plain wall area and volume items.
+    let layers_priced = rows.iter().any(|r| r.code.starts_with("WALL.LAYER.") && r.amount.is_some());
+    let plain: Vec<&str> = rows.iter().filter(|r| ["WALL.EXT.AREA", "WALL.EXT.VOL", "WALL.INT.AREA", "WALL.INT.VOL"].contains(&r.code.as_str()) && r.amount.is_some()).map(|r| r.code.as_str()).collect();
+    if layers_priced && !plain.is_empty() {
+        warnings.push(format!("the wall layer items (WALL.LAYER.*) and {} are priced together but measure the same walls: the total counts them twice", plain.join(" and ")));
+    }
+
     let mut sections: Vec<SectionTotal> = Vec::new();
     for r in rows.iter().filter(|r| !r.reference_only) {
         match sections.iter_mut().find(|s| s.section == r.section) {

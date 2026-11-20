@@ -14,9 +14,13 @@
 
 use crate::command::Command;
 use crate::model::{Element, Id, Model, Source};
-use crate::typed::{Column, Dimension, Grid, Level, Space, Tag, Typed, Wall, element_of};
+use crate::typed::{Column, Dimension, Door, Footing, Grid, Level, RoomSeparator, Space, Tag, Typed, Wall, Window, element_of};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
+
+/// Width in pixels of the invisible line laid over each thin plan element (wall, grid line, dimension line, separator) so a click on it hits
+/// the first time. Eight is the least that selects reliably; a grid bubble is a circle of radius 13 and needs no widening.
+pub const HIT_PX: u32 = 12;
 
 /// The area of an empty plan that is shown to draw on `[x0, y0, x1, y1]` in millimetres: a view window, not a design value. Anything
 /// drawn beyond it enlarges the plan.
@@ -178,26 +182,66 @@ pub fn dimension_command(model: &Model, level: Option<Id>, spec: &DimSpec) -> Re
 
 // ------------------------------------------------------------------ tags
 
+// ------------------------------------------------------------------ room separators
+
+/// The shortest separator that can be drawn: a geometric floor, not a code value.
+pub const MIN_SEPARATOR_MM: i64 = 100;
+
+/// A room separator from `a` to `b` on `level`. It must be horizontal or vertical and cannot lie on top of another separator.
+pub fn separator_command(model: &Model, level: Option<Id>, a: (i64, i64), b: (i64, i64)) -> Result<(Command, Id), String> {
+    if a.0 != b.0 && a.1 != b.1 {
+        return Err("a room separator must be horizontal or vertical".into());
+    }
+    if (a.0 - b.0).abs().max((a.1 - b.1).abs()) < MIN_SEPARATOR_MM {
+        return Err(format!("a room separator is at least {MIN_SEPARATOR_MM} mm long"));
+    }
+    let (p, q) = if a.0 < b.0 || a.1 < b.1 { (a, b) } else { (b, a) };
+    let dup = model.elements.values().filter(|e| e.kind == RoomSeparator::KIND && e.level_id == level).filter_map(|e| e.typed::<RoomSeparator>().ok()).any(|s| (s.x1, s.y1, s.x2, s.y2) == (p.0, p.1, q.0, q.1));
+    if dup {
+        return Err("a room separator is already drawn there".into());
+    }
+    let mut el = element_of(&RoomSeparator { x1: p.0, y1: p.1, x2: q.0, y2: q.1, extra: Default::default() }, Source::User);
+    el.level_id = level;
+    let id = el.id;
+    Ok((Command::Create(el), id))
+}
+
+/// The point a tag is anchored at (before its own offset): a room's centre, a column's or footing's centre, an opening's centre in its wall.
+pub fn host_centre(model: &Model, host: &Element) -> Option<(i64, i64)> {
+    match host.kind.as_str() {
+        "Space" => host.typed::<Space>().ok().map(|s| (s.x + s.w / 2, s.y + s.h / 2)),
+        "Column" => host.typed::<Column>().ok().map(|c| (c.x, c.y)),
+        "Footing" => host.typed::<Footing>().ok().map(|f| (f.x, f.y)),
+        "Door" | "Window" => {
+            let off = host.props.get("offsetCenter").and_then(|v| v.as_i64())?;
+            let w = host.host_id.and_then(|h| model.get(&h))?.typed::<Wall>().ok()?;
+            Some(if w.horizontal() { (w.x1.min(w.x2) + off, w.y1) } else { (w.x1, w.y1.min(w.y2) + off) })
+        }
+        _ => None,
+    }
+}
+
 /// The rooms of the level that have no tag yet.
 pub fn untagged_rooms(model: &Model, level: Option<Id>) -> Vec<Id> {
     let tagged: BTreeSet<Id> = model.elements.values().filter(|e| e.kind == Tag::KIND).filter_map(|e| e.host_id).collect();
     model.elements.values().filter(|e| e.kind == Space::KIND && on_level(e, level) && !tagged.contains(&e.id)).map(|e| e.id).collect()
 }
 
-/// Tags for the given rooms (all three fields shown, at the room's centre). A room that has one already is skipped.
-pub fn tag_commands(model: &Model, rooms: &[Id]) -> Result<(Vec<Command>, Vec<Id>), String> {
+/// Tags for the given elements (rooms, doors, windows, columns or footings): every field shown, at the element's centre. An element that
+/// has one already is skipped.
+pub fn tag_commands(model: &Model, hosts: &[Id]) -> Result<(Vec<Command>, Vec<Id>), String> {
     let tagged: BTreeSet<Id> = model.elements.values().filter(|e| e.kind == Tag::KIND).filter_map(|e| e.host_id).collect();
     let (mut cmds, mut ids) = (Vec::new(), Vec::new());
-    for r in rooms {
-        let host = model.get(r).ok_or("a room no longer exists")?;
-        if host.kind != Space::KIND {
-            return Err("only rooms can be tagged".into());
+    for r in hosts {
+        let host = model.get(r).ok_or("an element no longer exists")?;
+        if ![Space::KIND, Door::KIND, Window::KIND, Column::KIND, Footing::KIND].contains(&host.kind.as_str()) {
+            return Err("only rooms, doors, windows, columns and footings can be tagged".into());
         }
         if tagged.contains(r) {
             continue;
         }
         let mut el = element_of(&Tag { dx: 0, dy: 0, show_name: true, show_area: true, show_elevation: true, extra: Default::default() }, Source::User);
-        el.level_id = host.level_id;
+        el.level_id = host.level_id.or_else(|| host.host_id.and_then(|h| model.get(&h)).and_then(|w| w.level_id));
         el.host_id = Some(*r);
         ids.push(el.id);
         cmds.push(Command::Create(el));
@@ -205,18 +249,42 @@ pub fn tag_commands(model: &Model, rooms: &[Id]) -> Result<(Vec<Command>, Vec<Id
     Ok((cmds, ids))
 }
 
-/// The lines a tag shows: the room's display name, its area in m2 and the elevation of its level.
+/// The lines a tag shows. A room: its display name, its area in m2 and the elevation of its level. A door, window, column or footing:
+/// its kind (and the grid reference of a column), its size in mm and the elevation of its level.
 pub fn tag_lines(model: &Model, host: &Element, tag: &Tag, labels: &BTreeMap<String, String>) -> Vec<String> {
-    let Ok(sp) = host.typed::<Space>() else { return Vec::new() };
     let mut v = Vec::new();
+    let level = host.level_id.or_else(|| host.host_id.and_then(|h| model.get(&h)).and_then(|w| w.level_id));
+    let (name, size): (String, String) = match host.kind.as_str() {
+        "Space" => {
+            let Ok(sp) = host.typed::<Space>() else { return Vec::new() };
+            (labels.get(&sp.requirement_key).or_else(|| labels.get(&sp.func)).cloned().unwrap_or_else(|| sp.requirement_key.clone()), format!("{:.2} m²", sp.net_area.unwrap_or(sp.area)))
+        }
+        "Door" => match host.typed::<Door>() {
+            Ok(d) => ("Door".into(), format!("{} × {}", d.width, d.height)),
+            Err(_) => return Vec::new(),
+        },
+        "Window" => match host.typed::<Window>() {
+            Ok(w) => ("Window".into(), format!("{} × {}", w.width, w.height)),
+            Err(_) => return Vec::new(),
+        },
+        "Column" => match host.typed::<Column>() {
+            Ok(c) => (if c.grid_ref.is_empty() { "Column".into() } else { format!("Column {}", c.grid_ref) }, format!("{} × {}", c.b, c.h)),
+            Err(_) => return Vec::new(),
+        },
+        "Footing" => match host.typed::<Footing>() {
+            Ok(f) => ("Footing".into(), format!("{} × {}", f.length, f.width)),
+            Err(_) => return Vec::new(),
+        },
+        _ => return Vec::new(),
+    };
     if tag.show_name {
-        v.push(labels.get(&sp.requirement_key).or_else(|| labels.get(&sp.func)).cloned().unwrap_or_else(|| sp.requirement_key.clone()));
+        v.push(name);
     }
     if tag.show_area {
-        v.push(format!("{:.2} m²", sp.net_area.unwrap_or(sp.area)));
+        v.push(size);
     }
     if tag.show_elevation {
-        let z = crate::model3d::level_elevation_m(model, host.level_id);
+        let z = crate::model3d::level_elevation_m(model, level);
         v.push(if z.abs() < 0.005 { "±0.00 m".to_string() } else { format!("{z:+.2} m") });
     }
     v
@@ -237,20 +305,22 @@ pub struct RoomSync {
 
 /// The rectangles (x, y, w, h) the wall centre lines of the level enclose, and how many enclosed regions are not rectangles.
 pub fn enclosed_rects(model: &Model, level: Option<Id>) -> (Vec<[i64; 4]>, usize) {
-    let walls: Vec<Wall> = model.elements.values().filter(|e| e.kind == Wall::KIND && on_level(e, level)).filter_map(|e| e.typed::<Wall>().ok()).collect();
-    if walls.is_empty() {
+    // Wall centre lines and room separators bound a region alike: (x1, y1, x2, y2).
+    let mut lines: Vec<(i64, i64, i64, i64)> = model.elements.values().filter(|e| e.kind == Wall::KIND && on_level(e, level)).filter_map(|e| e.typed::<Wall>().ok()).map(|w| (w.x1, w.y1, w.x2, w.y2)).collect();
+    if lines.is_empty() {
         return (Vec::new(), 0);
     }
-    let mut xs: Vec<i64> = walls.iter().flat_map(|w| [w.x1, w.x2]).collect();
-    let mut ys: Vec<i64> = walls.iter().flat_map(|w| [w.y1, w.y2]).collect();
+    lines.extend(model.elements.values().filter(|e| e.kind == RoomSeparator::KIND && on_level(e, level)).filter_map(|e| e.typed::<RoomSeparator>().ok()).map(|s| (s.x1, s.y1, s.x2, s.y2)));
+    let mut xs: Vec<i64> = lines.iter().flat_map(|w| [w.0, w.2]).collect();
+    let mut ys: Vec<i64> = lines.iter().flat_map(|w| [w.1, w.3]).collect();
     xs.sort_unstable();
     xs.dedup();
     ys.sort_unstable();
     ys.dedup();
     let (cols, rows) = (xs.len() + 1, ys.len() + 1);
     // Vertical walls as (x, y0, y1) and horizontal ones as (y, x0, x1).
-    let vert: Vec<(i64, i64, i64)> = walls.iter().filter(|w| !w.horizontal()).map(|w| (w.x1, w.y1.min(w.y2), w.y1.max(w.y2))).collect();
-    let horiz: Vec<(i64, i64, i64)> = walls.iter().filter(|w| w.horizontal()).map(|w| (w.y1, w.x1.min(w.x2), w.x1.max(w.x2))).collect();
+    let vert: Vec<(i64, i64, i64)> = lines.iter().filter(|w| w.0 == w.2).map(|w| (w.0, w.1.min(w.3), w.1.max(w.3))).collect();
+    let horiz: Vec<(i64, i64, i64)> = lines.iter().filter(|w| w.1 == w.3).map(|w| (w.1, w.0.min(w.2), w.0.max(w.2))).collect();
     // Moving from cell (c, r) to (c + 1, r) crosses the vertical line xs[c] along the row r; to (c, r + 1) the horizontal line ys[r] along column c.
     let blocked_x = |c: usize, r: usize| r > 0 && r < rows - 1 && vert.iter().any(|(x, a, b)| *x == xs[c] && *a <= ys[r - 1] && *b >= ys[r]);
     let blocked_y = |c: usize, r: usize| c > 0 && c < cols - 1 && horiz.iter().any(|(y, a, b)| *y == ys[r] && *a <= xs[c - 1] && *b >= xs[c]);
@@ -407,13 +477,18 @@ pub fn plan_svg(model: &Model, level: Option<Id>, m: &Map, labels: &BTreeMap<Str
         let (p, q) = ((m.tx(g.x1 as f64), m.ty(g.y1 as f64)), (m.tx(g.x2 as f64), m.ty(g.y2 as f64)));
         let len = ((q.0 - p.0).powi(2) + (q.1 - p.1).powi(2)).sqrt().max(1e-9);
         let u = ((q.0 - p.0) / len, (q.1 - p.1) / len);
-        let _ = writeln!(o, r#"<g class="gridline" data-id="{}"><line class="grid" x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}"/><line class="gridhit" x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="transparent" stroke-width="9"/>"#, e.id, p.0, p.1, q.0, q.1, p.0, p.1, q.0, q.1);
+        let _ = writeln!(o, r#"<g class="gridline" data-id="{}"><line class="grid" x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}"/><line class="gridhit" x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="transparent" stroke-width="{HIT_PX}"/>"#, e.id, p.0, p.1, q.0, q.1, p.0, p.1, q.0, q.1);
         let r = 13.0;
         for (end, out) in [(p, (-u.0, -u.1)), (q, u)] {
             let c = (end.0 + out.0 * r, end.1 + out.1 * r);
             let _ = writeln!(o, r#"<circle class="gbub" cx="{:.1}" cy="{:.1}" r="{r}"/><text class="gtxt" x="{:.1}" y="{:.1}">{}</text>"#, c.0, c.1, c.0, c.1 + 4.0, esc(&g.name));
         }
         let _ = writeln!(o, "</g>");
+    }
+    for e in model.elements.values().filter(|e| e.kind == RoomSeparator::KIND && on_level(e, level)) {
+        let Ok(s) = e.typed::<RoomSeparator>() else { continue };
+        let (p, q) = ((m.tx(s.x1 as f64), m.ty(s.y1 as f64)), (m.tx(s.x2 as f64), m.ty(s.y2 as f64)));
+        let _ = writeln!(o, r#"<g class="separator" data-id="{}"><line class="sepline" x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}"/><line class="sephit" x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="transparent" stroke-width="{HIT_PX}"/></g>"#, e.id, p.0, p.1, q.0, q.1, p.0, p.1, q.0, q.1);
     }
     for e in model.elements.values().filter(|e| e.kind == Dimension::KIND && on_level(e, level)) {
         let Ok(d) = e.typed::<Dimension>() else { continue };
@@ -430,7 +505,7 @@ pub fn plan_svg(model: &Model, level: Option<Id>, m: &Map, labels: &BTreeMap<Str
             let _ = writeln!(o, r#"<line class="dimtick" x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}"/>"#, t.0 - 4.0, t.1 + 4.0, t.0 + 4.0, t.1 - 4.0);
         }
         let (l0, l1) = (px(a, d.at), px(b, d.at));
-        let _ = writeln!(o, r#"<line class="dimline" x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}"/><line class="dimhit" x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="transparent" stroke-width="9"/>"#, l0.0, l0.1, l1.0, l1.1, l0.0, l0.1, l1.0, l1.1);
+        let _ = writeln!(o, r#"<line class="dimline" x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}"/><line class="dimhit" x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="transparent" stroke-width="{HIT_PX}"/>"#, l0.0, l0.1, l1.0, l1.1, l0.0, l0.1, l1.0, l1.1);
         let mid = ((l0.0 + l1.0) / 2.0, (l0.1 + l1.1) / 2.0);
         let text = format!("{}", (b - a).abs());
         if x_axis {
@@ -442,12 +517,12 @@ pub fn plan_svg(model: &Model, level: Option<Id>, m: &Map, labels: &BTreeMap<Str
     }
     for e in model.elements.values().filter(|e| e.kind == Tag::KIND && on_level(e, level)) {
         let (Ok(t), Some(host)) = (e.typed::<Tag>(), e.host_id.and_then(|h| model.get(&h))) else { continue };
-        let Ok(sp) = host.typed::<Space>() else { continue };
+        let Some(centre) = host_centre(model, host) else { continue };
         let lines = tag_lines(model, host, &t, labels);
         if lines.is_empty() {
             continue;
         }
-        let (cx, cy) = (m.tx((sp.x + sp.w / 2 + t.dx) as f64), m.ty((sp.y + sp.h / 2 + t.dy) as f64));
+        let (cx, cy) = (m.tx((centre.0 + t.dx) as f64), m.ty((centre.1 + t.dy) as f64));
         let w = lines.iter().map(|l| l.chars().count()).max().unwrap_or(1) as f64 * 6.4 + 12.0;
         let h = lines.len() as f64 * 13.0 + 6.0;
         let _ = writeln!(o, r#"<g class="tag" data-id="{}" data-for="{}"><rect class="tagbox" x="{:.1}" y="{:.1}" width="{w:.1}" height="{h:.1}" rx="3"/>"#, e.id, host.id, cx - w / 2.0, cy - h / 2.0);

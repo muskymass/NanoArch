@@ -404,6 +404,11 @@ impl App {
             "draft_dimension" => self.draft_dimension(args),
             "draft_tag" => self.draft_tag(args),
             "draft_rooms" => self.draft_rooms(),
+            "draft_separator" => self.draft_separator(args),
+            "draft_offset" => self.draft_offset(args),
+            "assemblies_get" => self.assemblies_get(),
+            "assemblies_set" => self.assemblies_set(args),
+            "assembly_assign" => self.assembly_assign(args),
             "export_ifc" => self.export_ifc(),
             "export_dxf" => self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false)),
             "report_html" => {
@@ -1166,6 +1171,10 @@ impl App {
             scratch.commit(label, nnx_core::Origin::User, cmds.clone()).map_err(|e| e.to_string())?;
             sync = nnx_core::annot::rooms_sync(&scratch.model, level);
             cmds.extend(sync.cmds.clone());
+            if !sync.cmds.is_empty() {
+                scratch.commit(label, nnx_core::Origin::User, sync.cmds.clone()).map_err(|e| e.to_string())?;
+            }
+            cmds.extend(nnx_core::draft::refresh_walls(&scratch.model, level));
         }
         editing::commit_with_sync(self.doc.as_mut().ok_or("choose a layout first")?, &so, label, cmds, level)?;
         let mut notes = edit.notes;
@@ -1227,16 +1236,79 @@ impl App {
         Ok(v)
     }
 
-    /// Tags the given rooms (or, with no list, every room of the level that has none).
+    /// Tags the given elements (rooms, doors, windows, columns or footings: `hosts`, or `rooms` for the old name). With no list, every room of
+    /// the level that has none.
     fn draft_tag(&mut self, args: &Value) -> Result<Value, String> {
         let level = self.current_level();
         let model = &self.doc()?.model;
-        let rooms = if args.get("rooms").is_some() { Self::ids_arg(args, "rooms")? } else { nnx_core::annot::untagged_rooms(model, level) };
+        let key = if args.get("hosts").is_some() { "hosts" } else { "rooms" };
+        let rooms = if args.get(key).is_some() { Self::ids_arg(args, key)? } else { nnx_core::annot::untagged_rooms(model, level) };
         let (cmds, ids) = nnx_core::annot::tag_commands(model, &rooms)?;
         if cmds.is_empty() {
-            return Err("every room already has a tag (or there are no rooms)".into());
+            return Err("every selected element already has a tag (or there is nothing to tag)".into());
         }
         self.draft_commit_with("Tag rooms", nnx_core::draft::Edit { cmds, created: ids, notes: vec![] }, level, false)
+    }
+
+    /// Draws a room separator and finds the rooms it creates, as one undoable step.
+    fn draft_separator(&mut self, args: &Value) -> Result<Value, String> {
+        let (a, b) = (Self::int_point(args.get("a"), "a")?, Self::int_point(args.get("b"), "b")?);
+        let level = self.current_level();
+        let (cmd, id) = nnx_core::annot::separator_command(&self.doc()?.model, level, (a[0], a[1]), (b[0], b[1]))?;
+        let mut v = self.draft_commit("Draw room separator", nnx_core::draft::Edit { cmds: vec![cmd], created: vec![id], notes: vec![] }, level)?;
+        v["separator"] = json!(id.to_string());
+        Ok(v)
+    }
+
+    /// A parallel copy of a wall, room separator or grid line at a typed distance, on the side of the pointer.
+    fn draft_offset(&mut self, args: &Value) -> Result<Value, String> {
+        let id = id_arg(args, "id")?;
+        self.guard_lock(&[id])?;
+        let distance = args.get("distance").and_then(Value::as_i64).ok_or("enter the offset distance (mm)")?;
+        let toward = Self::point_arg(args.get("toward"), "toward")?;
+        let level = self.doc()?.model.get(&id).and_then(|e| e.level_id);
+        let edit = nnx_core::draft::offset(&self.doc()?.model, id, distance, toward)?;
+        self.draft_commit("Offset", edit, level)
+    }
+
+    /// The wall assemblies with their thickness and U-value, the defaults and the walls that disagree with their assembly.
+    fn assemblies_get(&self) -> Result<Value, String> {
+        let mut v = nnx_core::assembly::report(&self.doc()?.model);
+        v["catalog"] = nnx_core::materials::catalog_json();
+        Ok(v)
+    }
+
+    /// Replaces the project's wall assemblies and defaults. The thickness of every wall that names an assembly follows its layers, in the
+    /// same undo step.
+    fn assemblies_set(&mut self, args: &Value) -> Result<Value, String> {
+        let list: Vec<nnx_core::assembly::WallAssembly> = serde_json::from_value(args.get("assemblies").cloned().ok_or("assemblies is required")?).map_err(|e| format!("assemblies: {e}"))?;
+        let defaults: nnx_core::assembly::AssemblyDefaults = match args.get("defaults") {
+            Some(d) if !d.is_null() => serde_json::from_value(d.clone()).map_err(|e| format!("defaults: {e}"))?,
+            _ => Default::default(),
+        };
+        let model = &self.doc()?.model;
+        let mut cmds = nnx_core::project::update_commands(model, |p| {
+            p.meta.assemblies = list.clone();
+            p.meta.assembly_defaults = defaults.clone();
+            Ok(())
+        })?;
+        cmds.extend(nnx_core::assembly::retarget_commands(model, &list)?);
+        let level = self.current_level();
+        let mut v = if cmds.is_empty() { self.draft_frame()? } else { self.draft_commit_with("Wall assemblies", nnx_core::draft::Edit { cmds, ..Default::default() }, level, false)? };
+        v["assemblies"] = self.assemblies_get()?;
+        Ok(v)
+    }
+
+    /// Gives walls an assembly (or clears it with `null`); each wall's thickness becomes the sum of the assembly's layers.
+    fn assembly_assign(&mut self, args: &Value) -> Result<Value, String> {
+        let walls = Self::ids_arg(args, "walls")?;
+        self.guard_lock(&walls)?;
+        let asm = args.get("assembly").and_then(Value::as_str);
+        let level = walls.first().and_then(|i| self.doc().ok()?.model.get(i)?.level_id);
+        let cmds = nnx_core::assembly::assign_commands(&self.doc()?.model, &walls, asm)?;
+        let mut v = self.draft_commit_with(if asm.is_some() { "Assign wall assembly" } else { "Clear wall assembly" }, nnx_core::draft::Edit { cmds, ..Default::default() }, level, false)?;
+        v["assemblies"] = self.assemblies_get()?;
+        Ok(v)
     }
 
     /// Finds the rooms the walls enclose, as one undoable step (the same thing every wall edit does on its own).
@@ -1358,6 +1430,7 @@ impl App {
         let id = id_arg(args, "id")?;
         let mut v = nnx_core::draft::properties(&self.doc()?.model, id)?;
         if v["kind"] == "Wall" {
+            v["assemblyId"] = json!(self.doc()?.model.get(&id).and_then(|e| e.props.get("assembly").cloned()));
             v["wallLocked"] = json!(self.project().is_some_and(|p| p.meta.locked_walls.contains(&id.to_string())));
         }
         Ok(v)
@@ -4746,5 +4819,215 @@ mod tests {
         assert_eq!(model_of(&app).elements.values().filter(|e| e.kind == "Tag").count(), 1);
         // Moving a wall that a layout would have rebuilt is not involved: the partition tools still refuse a blank project politely.
         assert!(app.handle("move_partition", &json!({ "wall": top, "delta_mm": 100 })).is_err());
+    }
+
+    // ------------------------------------------------------------------ v2.0.0: separators, offset, assemblies, element tags
+
+    /// A blank project with the 6 x 4 m box (1000..7000, 1000..5000) drawn and its room found.
+    fn boxed_app() -> App {
+        let mut app = blank_app();
+        for (a, b) in [([1000, 1000], [7000, 1000]), ([7000, 1000], [7000, 5000]), ([1000, 5000], [7000, 5000]), ([1000, 1000], [1000, 5000])] {
+            draw(&mut app, a, b);
+        }
+        app
+    }
+
+    fn area_of(app: &App, key: &str) -> f64 {
+        model_of(app).elements.values().filter(|e| e.kind == "Space").find(|e| e.props["requirementKey"] == key).unwrap().props["area"].as_f64().unwrap()
+    }
+
+    #[test]
+    fn a_room_separator_divides_an_open_space_into_two_rooms_with_their_own_areas_and_names_without_a_wall() {
+        let mut app = boxed_app();
+        assert_eq!(rooms_of(&app), vec!["R1"]);
+        let walls_before = model_of(&app).elements.values().filter(|e| e.kind == "Wall").count();
+        assert!(app.handle("draft_separator", &json!({ "a": [3000, 1000], "b": [3500, 1500] })).unwrap_err().contains("horizontal or vertical"));
+        let r = app.handle("draft_separator", &json!({ "a": [3000, 1000], "b": [3000, 5000] })).unwrap();
+        assert_eq!(r["rooms_removed"], json!(["R1"]));
+        let added: Vec<String> = serde_json::from_value(r["rooms_added"].clone()).unwrap();
+        assert_eq!(added.len(), 2);
+        let mut areas: Vec<f64> = added.iter().map(|k| area_of(&app, k)).collect();
+        areas.sort_by(f64::total_cmp);
+        assert_eq!(areas, vec![8.0, 16.0], "2 x 4 m and 4 x 4 m");
+        assert_eq!(model_of(&app).elements.values().filter(|e| e.kind == "Wall").count(), walls_before, "no wall was added");
+        assert!(r["svg"].as_str().unwrap().contains("class=\"separator\""));
+        // The same line twice is refused; the DXF has its own layer; tags name and measure each space.
+        assert!(app.handle("draft_separator", &json!({ "a": [3000, 5000], "b": [3000, 1000] })).unwrap_err().contains("already"));
+        assert!(app.handle("export_dxf", &json!({})).unwrap()["counts"]["A-ROOM-SEP"].as_u64().unwrap() >= 1);
+        let small = model_of(&app).elements.values().find(|e| e.kind == "Space" && e.props["area"] == 8.0).unwrap().id.to_string();
+        app.handle("draft_set", &json!({ "id": small, "key": "name", "value": "Majlis" })).unwrap();
+        let t = app.handle("draft_tag", &json!({})).unwrap();
+        let svg = t["svg"].as_str().unwrap();
+        assert!(svg.contains(">Majlis</text>") && svg.contains(">8.00 m²</text>") && svg.contains(">16.00 m²</text>"));
+        // Moving the separator re-divides the space in the same step; deleting it joins the two again.
+        let sep = r["separator"].as_str().unwrap().to_string();
+        let moved = app.handle("draft_xform", &json!({ "ids": [sep], "xf": { "op": "move", "dx": 1000, "dy": 0 } })).unwrap();
+        assert_eq!(moved["rooms_added"].as_array().unwrap().len(), 2);
+        let mut areas: Vec<f64> = rooms_of(&app).iter().map(|k| area_of(&app, k)).collect();
+        areas.sort_by(f64::total_cmp);
+        assert_eq!(areas, vec![12.0, 12.0]);
+        let del = app.handle("draft_delete", &json!({ "ids": [sep] })).unwrap();
+        assert_eq!(del["rooms_added"].as_array().unwrap().len(), 1);
+        assert_eq!(rooms_of(&app).len(), 1);
+        assert_eq!(area_of(&app, &rooms_of(&app)[0]), 24.0);
+        // One undo per edit.
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(rooms_of(&app).len(), 2);
+    }
+
+    #[test]
+    fn a_separator_inside_a_room_of_a_generated_layout_is_reported_and_leaves_the_layout_alone() {
+        let mut app = started();
+        let room = model_of(&app).elements.values().find(|e| e.kind == "Space").unwrap().clone();
+        let (x, y, w, h) = (room.props["x"].as_i64().unwrap(), room.props["y"].as_i64().unwrap(), room.props["w"].as_i64().unwrap(), room.props["h"].as_i64().unwrap());
+        let n = rooms_of(&app).len();
+        let r = app.handle("draft_separator", &json!({ "a": [x + w / 2, y], "b": [x + w / 2, y + h] })).unwrap();
+        assert!(r["notes"].as_array().unwrap().iter().any(|s| s.as_str().unwrap().contains("overlaps the room")), "{}", r["notes"]);
+        assert_eq!(rooms_of(&app).len(), n, "a room of the layout is never split silently");
+    }
+
+    #[test]
+    fn offset_copies_a_wall_a_typed_distance_to_the_pointers_side_in_one_undoable_step() {
+        let mut app = boxed_app();
+        let wall = model_of(&app).elements.values().find(|e| e.kind == "Wall" && e.props["y1"] == 1000 && e.props["y2"] == 1000).unwrap().id.to_string();
+        assert!(app.handle("draft_offset", &json!({ "id": wall, "distance": 0, "toward": [3000, 2000] })).unwrap_err().contains("above zero"));
+        let before = model_of(&app).elements.values().filter(|e| e.kind == "Wall").count();
+        app.handle("draft_offset", &json!({ "id": wall, "distance": 1500, "toward": [3000, 2000] })).unwrap();
+        let walls: Vec<i64> = model_of(&app).elements.values().filter(|e| e.kind == "Wall").map(|e| e.props["y1"].as_i64().unwrap()).collect();
+        assert_eq!(walls.len(), before + 1);
+        assert!(walls.contains(&2500), "1000 + 1500, on the side of the pointer");
+        let sep = app.handle("draft_separator", &json!({ "a": [3000, 2500], "b": [3000, 5000] })).unwrap()["separator"].as_str().unwrap().to_string();
+        app.handle("draft_offset", &json!({ "id": sep, "distance": 500, "toward": [0, 0] })).unwrap();
+        assert_eq!(model_of(&app).elements.values().filter(|e| e.kind == "RoomSeparator" && e.props["x1"] == 2500).count(), 1);
+        let grid = app.handle("draft_grid", &json!({ "a": [1000, 0], "b": [1000, 6000] })).unwrap()["grid"].as_str().unwrap().to_string();
+        app.handle("draft_offset", &json!({ "id": grid, "distance": 2000, "toward": [9000, 0] })).unwrap();
+        assert_eq!(model_of(&app).elements.values().filter(|e| e.kind == "Grid").count(), 2);
+        let room = model_of(&app).elements.values().find(|e| e.kind == "Space").unwrap().id.to_string();
+        assert!(app.handle("draft_offset", &json!({ "id": room, "distance": 100, "toward": [0, 0] })).unwrap_err().contains("only walls"));
+    }
+
+    #[test]
+    fn doors_windows_columns_and_footings_take_parametric_tags_that_follow_their_size() {
+        let mut app = boxed_app();
+        let wall = model_of(&app).elements.values().find(|e| e.kind == "Wall" && e.props["y1"] == 1000 && e.props["y2"] == 1000).unwrap().id.to_string();
+        let door = app.handle("draft_opening", &json!({ "kind": "door", "wall": wall, "offset": 2000, "width": 900, "height": 2100 })).unwrap()["opening"].as_str().unwrap().to_string();
+        let win = app.handle("draft_opening", &json!({ "kind": "window", "wall": wall, "offset": 4500, "width": 1200, "height": 1200, "sill": 900 })).unwrap()["opening"].as_str().unwrap().to_string();
+        let t = app.handle("draft_tag", &json!({ "hosts": [door, win] })).unwrap();
+        let svg = t["svg"].as_str().unwrap();
+        assert!(svg.contains(">Door</text>") && svg.contains(">900 × 2100</text>") && svg.contains(">Window</text>") && svg.contains(">1200 × 1200</text>"), "{svg}");
+        assert!(app.handle("draft_tag", &json!({ "hosts": [door] })).unwrap_err().contains("already"));
+        // The tag is computed from the element: resizing the door changes its text.
+        app.handle("draft_set", &json!({ "id": door, "key": "width", "value": 1000 })).unwrap();
+        assert!(app.handle("svg", &json!({})).unwrap()["svg"].as_str().unwrap().contains(">1000 × 2100</text>"));
+        // A wall is not taggable; deleting the door takes its tag with it.
+        assert!(app.handle("draft_tag", &json!({ "hosts": [wall] })).unwrap_err().contains("only rooms"));
+        app.handle("draft_delete", &json!({ "ids": [door] })).unwrap();
+        assert_eq!(model_of(&app).elements.values().filter(|e| e.kind == "Tag").count(), 1);
+    }
+
+    fn insulated() -> Value {
+        json!({ "id": "EXT-1", "name": "Insulated block wall", "kind": "exterior_insulated", "source": "synthetic test values",
+            "layers": [{ "material": "plaster_ext_1856", "thicknessMm": 30 }, { "material": "rockwool_150", "thicknessMm": 70 }, { "material": "block_hollow_1216", "thicknessMm": 200 }, { "material": "plaster_int_1100", "thicknessMm": 20 }] })
+    }
+
+    #[test]
+    fn a_wall_assembly_sets_the_thickness_and_feeds_the_thermal_check_the_take_off_and_the_3d_scene_in_one_undoable_step() {
+        let mut app = boxed_app();
+        let ext: Vec<String> = model_of(&app).elements.values().filter(|e| e.kind == "Wall" && e.props["isExterior"] == true).map(|e| e.id.to_string()).collect();
+        assert_eq!(ext.len(), 4, "the box's four walls are exterior walls");
+        // Bad data is refused by name.
+        let mut bad = insulated();
+        bad["layers"][1]["thicknessMm"] = json!(null);
+        assert!(app.handle("assemblies_set", &json!({ "assemblies": [bad] })).unwrap_err().contains("needs a thickness"));
+        let mut dup = insulated();
+        dup["id"] = json!("a b");
+        assert!(app.handle("assemblies_set", &json!({ "assemblies": [dup] })).unwrap_err().contains("letters, digits"));
+        let hash0 = hash(&app);
+        let r = app.handle("assemblies_set", &json!({ "assemblies": [insulated()], "defaults": { "exterior": "EXT-1" } })).unwrap();
+        assert_eq!(r["assemblies"]["assemblies"][0]["thickness_mm"], 320);
+        assert!(r["assemblies"]["assemblies"][0]["u"].is_null(), "no surface resistances entered yet: the U-value names what is missing");
+        assert!(r["assemblies"]["assemblies"][0]["missing"].as_array().unwrap().iter().any(|m| m.as_str().unwrap().contains("Rsi")));
+        // The project default leaves the walls' own thickness alone and reports the disagreement; assigning aligns them.
+        assert_eq!(r["assemblies"]["mismatches"].as_array().unwrap().len(), 4);
+        let a = app.handle("assembly_assign", &json!({ "walls": ext, "assembly": "EXT-1" })).unwrap();
+        assert!(a["assemblies"]["mismatches"].as_array().unwrap().is_empty());
+        let w = model_of(&app).get(&ext[0].parse().unwrap()).unwrap().clone();
+        assert_eq!((w.props["thickness"].as_i64(), w.props["assembly"].as_str()), (Some(320), Some("EXT-1")));
+        // The thickness is no longer typed on such a wall.
+        assert!(app.handle("draft_set", &json!({ "id": ext[0], "key": "thickness", "value": 250 })).unwrap_err().contains("assembly"));
+        // Thermal: U = 1 / (Rsi + sum(t/lambda) + Rse), from the layers.
+        app.handle("compliance_set", &json!({ "compliance": { "thermal": { "rsi": 0.12, "rse": 0.03 } } })).unwrap();
+        let rep = app.handle("compliance", &json!({})).unwrap();
+        let wall_row = &rep["thermal"]["rows"][0];
+        let r_total: f64 = 0.12 + 0.03 + 0.030 / 0.75 + 0.070 / 0.047 + 0.200 / 1.353 + 0.020 / 0.7;
+        let u = wall_row["u"].as_f64().unwrap();
+        assert!((u - (1.0 / r_total * 1000.0).round() / 1000.0).abs() < 1e-9, "U {u} from the layers");
+        assert!(rep["thermal"]["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("Insulated block wall")));
+        // Take-off: one area item per layer, from the walls that use it.
+        let q = app.handle("qto", &json!({})).unwrap();
+        let layers: Vec<&Value> = q["items"].as_array().unwrap().iter().filter(|i| i["code"].as_str().unwrap().starts_with("WALL.LAYER.EXT-1.")).collect();
+        assert_eq!(layers.len(), 4);
+        assert_eq!(layers[0]["code"], "WALL.LAYER.EXT-1.1.plaster_ext_1856");
+        // 3D: the walls that use it are named in the scene.
+        let scene = app.handle("model3d", &json!({})).unwrap();
+        assert_eq!(scene["assemblies"][&ext[0]][1], "Insulated block wall");
+        assert_eq!(scene["assemblies"][&ext[0]][0], "exterior_insulated");
+        // Editing a layer moves every wall that names the assembly, in the same step.
+        let mut thicker = insulated();
+        thicker["layers"][1]["thicknessMm"] = json!(100);
+        app.handle("assemblies_set", &json!({ "assemblies": [thicker], "defaults": { "exterior": "EXT-1" } })).unwrap();
+        assert_eq!(model_of(&app).get(&ext[1].parse().unwrap()).unwrap().props["thickness"], 350);
+        // An assembly that walls name cannot be dropped, and the kind must fit the wall.
+        assert!(app.handle("assemblies_set", &json!({ "assemblies": [] })).unwrap_err().contains("clear it from the wall"));
+        let part = json!({ "id": "INT-1", "name": "Block partition", "kind": "interior_partition", "layers": [{ "material": "block_hollow_1216", "thicknessMm": 150 }] });
+        app.handle("assemblies_set", &json!({ "assemblies": [insulated(), part], "defaults": { "exterior": "EXT-1" } })).unwrap();
+        assert!(app.handle("assembly_assign", &json!({ "walls": [ext[0]], "assembly": "INT-1" })).unwrap_err().contains("interior partition"));
+        // Each successful edit was one undo step (assemblies, assignment, thermal inputs, two assembly edits): five undos restore the model.
+        for _ in 0..5 {
+            app.handle("undo", &json!({})).unwrap();
+        }
+        assert_eq!(hash(&app), hash0, "the model is as it was before the first assemblies edit");
+    }
+
+    #[test]
+    fn a_project_drafted_from_scratch_feeds_the_checks_schedules_and_every_export() {
+        let mut app = boxed_app();
+        let wall = model_of(&app).elements.values().find(|e| e.kind == "Wall" && e.props["y1"] == 1000 && e.props["y2"] == 1000).unwrap().id.to_string();
+        app.handle("draft_opening", &json!({ "kind": "door", "wall": wall, "offset": 2000, "width": 900, "height": 2100 })).unwrap();
+        app.handle("draft_opening", &json!({ "kind": "window", "wall": wall, "offset": 4500, "width": 1200, "height": 1200, "sill": 900 })).unwrap();
+        app.handle("draft_separator", &json!({ "a": [3000, 1000], "b": [3000, 5000] })).unwrap();
+        for cmd in ["sbc_check", "qto", "model3d", "outline", "compliance", "svg"] {
+            assert!(app.handle(cmd, &json!({})).is_ok(), "{cmd} works on a drafted project");
+        }
+        let ifc = app.handle("export_ifc", &json!({})).unwrap();
+        assert!(ifc["ifc"].as_str().unwrap().to_uppercase().contains("IFCWALL"), "the drafted walls are in the IFC");
+        let dxf = app.handle("export_dxf", &json!({})).unwrap();
+        assert!(dxf["dxf"].as_str().unwrap().contains("A-ROOM-SEP"));
+    }
+
+    #[test]
+    fn an_auto_designed_plan_takes_the_assembly_default_tags_and_every_pro_tool_without_losing_its_layout() {
+        let mut app = started();
+        let rooms = rooms_of(&app);
+        let ext_area: f64 = app.handle("qto", &json!({})).unwrap()["items"].as_array().unwrap().iter().find(|i| i["code"] == "WALL.EXT.AREA").unwrap()["quantity"].as_f64().unwrap();
+        // The project default reaches every exterior wall of the generated plan: thermal notes and one take-off item per layer.
+        app.handle("assemblies_set", &json!({ "assemblies": [insulated()], "defaults": { "exterior": "EXT-1" } })).unwrap();
+        app.handle("compliance_set", &json!({ "compliance": { "thermal": { "rsi": 0.12, "rse": 0.03 } } })).unwrap();
+        let rep = app.handle("compliance", &json!({})).unwrap();
+        assert!(rep["thermal"]["rows"][0]["u"].as_f64().unwrap() > 0.0);
+        let q = app.handle("qto", &json!({})).unwrap();
+        let layer = q["items"].as_array().unwrap().iter().find(|i| i["code"].as_str().unwrap().starts_with("WALL.LAYER.EXT-1.2.")).unwrap();
+        assert!((layer["quantity"].as_f64().unwrap() - ext_area).abs() < 1e-6, "a layer covers the exterior walls' net area");
+        let r = app.handle("assemblies_get", &json!({})).unwrap();
+        assert!(!r["mismatches"].as_array().unwrap().is_empty(), "generated walls keep their own thickness and are reported, not changed");
+        // A door and a window of the generated plan take tags; a wall is drafted on top; a separator may not split a layout room.
+        let door = model_of(&app).elements.values().find(|e| e.kind == "Door").unwrap().id.to_string();
+        assert!(app.handle("draft_tag", &json!({ "hosts": [door] })).unwrap()["svg"].as_str().unwrap().contains("class=\"tag\""));
+        let frame = app.handle("draft_frame", &json!({})).unwrap();
+        assert!(frame["frame"].is_object());
+        assert_eq!(rooms_of(&app), rooms, "the layout's rooms are untouched by all of it");
+        let hash1 = hash(&app);
+        app.handle("undo", &json!({})).unwrap();
+        assert_ne!(hash(&app), hash1);
     }
 }

@@ -69,3 +69,50 @@ Read-only audit of `C:\Projects\floorplan-bim` at commit `215df4a` (Next.js / Re
   them when they move; drawn on the plan and on the DXF layer `A-DIMS`.
 - **Room tags (`Q`)**: name, area in m2 and the level's elevation, computed when drawn; a tagged room has no second default label; the DXF carries the same text.
 - **Properties**: a room's name (a project label) and function, a grid line's name, a dimension's line position and a tag's fields are edited in the same panel.
+
+## 5. Gap audit and completed in v2.0.0 (Unified Auto-Design + Pro BIM Studio)
+
+Second read-only pass over `C:\Projects\floorplan-bim` at the same commit `215df4a` (`src/engine`, `src/components/workspace`); nothing there was changed.
+Result: every tool of `workspace/types.ts` is now in NanoArch except the three below, which stay out on purpose.
+
+| floorplan-bim | v1.1.0 | v2.0.0 |
+|---|---|---|
+| Wall types with compound layers | not ported (second source of truth) | **ported as wall assemblies** (below); the single build-up stays only for walls with no assembly |
+| Room separator | missing | **ported** (`P`) |
+| Room (manual creation) | rooms from walls only | **the same, plus the Rooms button / `draft_rooms`**: rooms are found from walls AND separators on every edit; there is no second manual path, because a room is computed from its boundary |
+| Offset / copy at a distance | copy by two points | **Offset** (`O`): typed distance, side chosen with the pointer; walls (with their openings), separators and grid lines |
+| Tags on doors, windows, columns, footings | room tags only | **ported** (`Q`, or "Tag selected" for anything selected, footings included): kind and size, computed from the element |
+| Trim to corner, align, split, mirror | ported | unchanged, now checked with the real mouse in `scripts/e2e-draft.js` |
+| Arc wall, wall at any angle | not ported | **still not ported**: `Wall` is horizontal or vertical and the rules, take-off, 3D and structure read it that way |
+| Phases, sheets, underlay tracing, section box, keyboard cursor | not ported | **still not ported**: large, and not needed for drafting |
+
+### Wall assemblies (`nnx-core/src/assembly.rs`, `meta.assemblies` in the project, so they are in undo and in the `.nnx` file)
+- An assembly is a name, a kind (exterior insulated, interior partition, structural shear wall, retaining wall) and layers from outside to inside: a catalog material
+  (or `custom`) and a thickness. The user enters the thicknesses and, for a material the catalog holds no conductivity for, the lambda; the catalog's guide-page example thickness
+  is offered as a button with its source. Nothing is defaulted.
+- A wall's thickness is the sum of its layers: giving a wall an assembly sets it, editing a layer moves every wall that names the assembly, in the same undo step, and typing another
+  thickness on such a wall is refused with that reason. Walls that use the project default (`meta.assemblyDefaults`) are reported when their thickness differs, never changed silently.
+- **Thermal**: exterior walls are grouped by assembly and weighted by net area; walls with no assembly keep `compliance.thermal.wallLayers`. A missing thickness, lambda, Rsi or Rse is named.
+- **Take-off and BOQ**: one `WALL.LAYER.<assembly>.<n>.<material>` item (m2) per layer, from the net area of the walls that use it. They are priced like any item; pricing them together
+  with `WALL.EXT.*` / `WALL.INT.*` raises the existing double-counting warning.
+- **3D**: the scene lists each assembly wall's kind and name; the walls take the kind's colour and the pick text names the assembly.
+- Exterior and interior kinds are checked against the wall they are given to.
+
+### Room separators
+- `RoomSeparator` is a typed element on a level: horizontal or vertical, no thickness, no quantities. `enclosed_rects` treats it as a boundary exactly like a wall's centre line, so a drafted open
+  space divides into rooms with their own areas, keys, names (project labels) and tags, in the same undo step as the edit. DXF layer `A-ROOM-SEP`; snapping, box selection, move, copy, mirror, rotate,
+  offset and delete all handle it.
+- **Limit, stated**: a separator that falls inside a room of a generated layout does not split that room (the layout owns it, and the brief's rules key on it): the edit says which room it overlaps.
+  Rooms the user drafted, and every room of a blank project, divide freely.
+
+### Interoperability
+- Walls drawn before their room existed (every wall of a blank project) learn their rooms and whether they are exterior as soon as the rooms are found (`draft::refresh_walls`, same undo step).
+  Before this the thermal check, the insulation scopes and the SBC exterior rules saw no exterior wall in a project drafted from nothing.
+- A generated plan accepts every Pro BIM tool and the assemblies (test `an_auto_designed_plan_takes_the_assembly_default_tags_and_every_pro_tool_without_losing_its_layout`); a drafted project reaches
+  the SBC check, quantities, the 3D scene, the outline, compliance, DXF and IFC (test `a_project_drafted_from_scratch_feeds_the_checks_schedules_and_every_export`).
+
+### Workbench polish
+- Thin elements are hit on the first click: the invisible lines over grid lines, dimensions and separators are 12 screen pixels wide at any zoom (`vector-effect: non-scaling-stroke`), and the pick looks for
+  a wall, opening, column, grid line (and its bubble), dimension, separator or tag within 8 px of the pointer, judging a dimension or grid line by its own lines rather than the box around the group.
+- A Blank project drops everything the page learned from the previous one (starting sizes, view, pending tool, assemblies) and ignores answers still in flight from it.
+- The drafting toolbar is four icon groups (select, draw, modify, annotate) plus actions in one row that scrolls sideways instead of wrapping; the hint is a small overlay on the plan.

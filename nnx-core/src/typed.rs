@@ -655,6 +655,40 @@ impl Typed for Grid {
     }
 }
 
+/// A room separator: a virtual line (no wall, no thickness, no quantities) that divides an open space into rooms. It is horizontal or
+/// vertical, belongs to a level, and the rooms found from walls treat it as a boundary exactly like a wall's centre line.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomSeparator {
+    #[serde(deserialize_with = "mm")]
+    pub x1: i64,
+    #[serde(deserialize_with = "mm")]
+    pub y1: i64,
+    #[serde(deserialize_with = "mm")]
+    pub x2: i64,
+    #[serde(deserialize_with = "mm")]
+    pub y2: i64,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl RoomSeparator {
+    pub fn horizontal(&self) -> bool {
+        self.y1 == self.y2
+    }
+}
+
+impl Typed for RoomSeparator {
+    const KIND: &'static str = "RoomSeparator";
+    const DISCIPLINE: Discipline = Discipline::Arc;
+    fn validate(&self, _m: &Model, _e: &Element) -> Result<(), String> {
+        if (self.x1 == self.x2) == (self.y1 == self.y2) {
+            return Err("a room separator must be horizontal or vertical and not zero-length".into());
+        }
+        Ok(())
+    }
+}
+
 /// A permanent linear dimension in plan: the distance along `axis` (`x` or `y`) between the positions `a` and `b`, drawn on the line at
 /// `at` across it, with extension lines from the measured points (`oa`, `ob` across). When it was taken from walls, grid lines, openings
 /// or columns it names them (`ref_a`, `ref_b`) and follows them when they move.
@@ -697,8 +731,9 @@ impl Typed for Dimension {
     }
 }
 
-/// A room tag: what it shows of its room (the host Space): the name, the area in m2 and the level elevation. The text is computed from
-/// the room and the level when drawn, so it cannot go out of date. `dx`, `dy` move it from the room's centre.
+/// A tag: on a room (the host Space) it shows the name, the area in m2 and the level elevation; on a door, window, column or footing it
+/// shows the element's mark and size (`show_name` = the mark, `show_area` = the size, `show_elevation` = the level elevation). The text is
+/// computed from the host and the level when drawn, so it cannot go out of date. `dx`, `dy` move it from the room's centre.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tag {
@@ -717,9 +752,9 @@ impl Typed for Tag {
     const KIND: &'static str = "Tag";
     const DISCIPLINE: Discipline = Discipline::Arc;
     fn validate(&self, model: &Model, e: &Element) -> Result<(), String> {
-        let host = e.host_id.and_then(|h| model.get(&h)).ok_or("a room tag belongs to a room")?;
-        if host.kind != Space::KIND {
-            return Err("a room tag belongs to a room".into());
+        let host = e.host_id.and_then(|h| model.get(&h)).ok_or("a tag belongs to a room, door, window, column or footing")?;
+        if ![Space::KIND, Door::KIND, Window::KIND, Column::KIND, Footing::KIND].contains(&host.kind.as_str()) {
+            return Err("a tag belongs to a room, door, window, column or footing".into());
         }
         if !(self.show_name || self.show_area || self.show_elevation) {
             return Err("a tag must show at least one of the name, the area and the elevation".into());
@@ -749,6 +784,7 @@ pub fn validate_element(model: &Model, el: &Element) -> Result<(), String> {
         MepRun::KIND => run::<MepRun>(model, el),
         TieBeam::KIND => run::<TieBeam>(model, el),
         Grid::KIND => run::<Grid>(model, el),
+        RoomSeparator::KIND => run::<RoomSeparator>(model, el),
         Dimension::KIND => run::<Dimension>(model, el),
         Tag::KIND => run::<Tag>(model, el),
         crate::project::NanoArchProject::KIND => run::<crate::project::NanoArchProject>(model, el),

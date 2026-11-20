@@ -102,26 +102,27 @@ pub struct InsulationReport {
 const SCOPES: [&str; 3] = ["wall", "roof", "wet_floor"];
 
 /// Area (m2) and source elements of one scope, measured from the model.
+/// The exterior walls with their area net of the doors and windows they host, m2.
+pub(crate) fn exterior_wall_areas(model: &Model) -> Vec<(Id, f64)> {
+    let mut open: BTreeMap<Id, f64> = BTreeMap::new();
+    for e in model.elements.values().filter(|e| e.kind == "Door" || e.kind == "Window") {
+        if let (Some(h), Some(w), Some(hh)) = (e.host_id, e.props.get("width").and_then(|v| v.as_f64()), e.props.get("height").and_then(|v| v.as_f64())) {
+            *open.entry(h).or_default() += w * hh;
+        }
+    }
+    model
+        .elements
+        .values()
+        .filter(|e| e.kind == Wall::KIND)
+        .filter_map(|e| e.typed::<Wall>().ok().filter(|w| w.is_exterior).map(|w| (e.id, ((w.length * w.height) as f64 - open.get(&e.id).copied().unwrap_or(0.0)).max(0.0) / 1e6)))
+        .collect()
+}
+
 pub(crate) fn scope_area(model: &Model, scope: &str, upturn_mm: Option<f64>) -> (f64, Vec<Id>) {
     match scope {
         "wall" => {
-            let mut open: BTreeMap<Id, f64> = BTreeMap::new();
-            for e in model.elements.values().filter(|e| e.kind == "Door" || e.kind == "Window") {
-                if let (Some(h), Some(w), Some(hh)) = (e.host_id, e.props.get("width").and_then(|v| v.as_f64()), e.props.get("height").and_then(|v| v.as_f64())) {
-                    *open.entry(h).or_default() += w * hh;
-                }
-            }
-            let mut area = 0.0;
-            let mut ids = Vec::new();
-            for e in model.elements.values().filter(|e| e.kind == Wall::KIND) {
-                if let Ok(w) = e.typed::<Wall>()
-                    && w.is_exterior
-                {
-                    area += ((w.length * w.height) as f64 - open.get(&e.id).copied().unwrap_or(0.0)).max(0.0) / 1e6;
-                    ids.push(e.id);
-                }
-            }
-            (area, ids)
+            let walls = exterior_wall_areas(model);
+            (walls.iter().map(|(_, a)| a).sum(), walls.iter().map(|(id, _)| *id).collect())
         }
         "roof" => {
             // With several levels only the top level's slabs are the roof; the others are floors between storeys.

@@ -6,7 +6,9 @@
 // It starts target\debug\nanoarch-app.exe with WebView2's remote-debugging port, generates a plan, and exercises: the draft mode toggle,
 // snapping and the rubber band, drawing a wall, placing a door, selecting, editing a property, box select, Move, zoom / pan / fit, the
 // split view following the edit, undo and redo; then a BLANK project drafted from nothing: walls and the room they enclose, a door, a window,
-// grid lines, a permanent dimension attached to the walls, a room tag, renaming in the property panel, DXF and elevation output. Needs Node 22 or later (built-in WebSocket). Exits 1 if any check fails.
+// grid lines, a permanent dimension attached to the walls, a room tag, renaming in the property panel, DXF and elevation output;
+// then v2.0.0: a click on every thin element (first click, at a small zoom too), a room separator that makes two rooms, Offset, door tags, Split, Align and Trim to corner,
+// a wall assembly made in the dialog and given to a wall, the real DXF export button, the toolbar on one row at 900 px, and a Blank project that inherits no sizes. Needs Node 22 or later (built-in WebSocket). Exits 1 if any check fails.
 // Drives the REAL NanoArch window over the WebView2 debugging port with real mouse / keyboard events.
 const { spawn } = require("child_process");
 const fs = require("fs");
@@ -246,6 +248,134 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     await key("y", { modifiers: 2 }); await sleep(600); await key("y", { modifiers: 2 }); await sleep(800);
     check("redo brings it back", (await nTags()) === 1);
     await shot("e2e_7_blank_done");
+
+
+    // ================================================================ v2.0.0: first-click selection, separators, offset, assemblies, modify tools
+    await key("Home"); await sleep(900); await key("v");
+    const sel1 = async (label, q, expectKind) => {
+      await ev(`selectIds([],{src:"draft"})`); await sleep(250);
+      await click(q[0], q[1]); await sleep(300);
+      const got = await ev(`DR.props ? DR.props.kind : null`);
+      check(`one click selects ${label}`, got === expectKind, `got ${got}`);
+    };
+    const wallScreen = await B(2000, 3000);
+    await sel1("a thin wall (pointer on it)", wallScreen, "Wall");
+    await sel1("a thin wall (pointer 6 px beside it)", [wallScreen[0] - 6, wallScreen[1]], "Wall");
+    const gridScreen = await B(1000, 3000);
+    await sel1("a grid line (pointer 6 px beside it)", [gridScreen[0] + 6, gridScreen[1]], "Grid");
+    const bubble = await ev(`(()=>{const c=document.querySelector("#viewer g.gridline circle.gbub"); const b=c.getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
+    await sel1("a grid bubble", bubble, "Grid");
+    const dimScreen = await B(3000, 7000);
+    await sel1("a dimension line (pointer 6 px beside it)", [dimScreen[0], dimScreen[1] - 6], "Dimension");
+    // zoomed far out the walls are about one pixel wide: the target around them stays at least 8 px
+    for (let i = 0; i < 3; i++) { await send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 600, y: 400, deltaX: 0, deltaY: 240 }); await sleep(250); }
+    const small = await B(2000, 3000);
+    await sel1("a wall at a small zoom (pointer 7 px beside it)", [small[0] - 7, small[1]], "Wall");
+    await key("Home"); await sleep(900);
+
+    // ---- room separator: two rooms from one open room, no wall added
+    await key("p");
+    check("P selects the room separator tool", (await ev(`DR.tool`)) === "separator");
+    const wallsBefore = await count("#viewer rect.wall");
+    const s0 = await B(5000, 2000), s1 = await B(5000, 6000);
+    await click(s0[0], s0[1]); await click(s1[0], s1[1]);
+    check("a separator was drawn and the open room became two rooms", (await count("#viewer g.separator")) === 1 && (await count("#viewer rect.room")) === 2, `${await count("#viewer g.separator")} separators, ${await count("#viewer rect.room")} rooms`);
+    check("the separator is not a wall", (await count("#viewer rect.wall")) === wallsBefore);
+    await key("Escape");
+    await ev(`document.querySelector('[data-dact="tagall"]').click()`); await sleep(1000);
+    const tagTxt = await ev(`[...document.querySelectorAll("#viewer g.tag")].map(g=>g.textContent).join(" | ")`);
+    check("each of the two spaces has its own area tag (12.00 m² each)", (tagTxt.match(/12\.00 m²/g) || []).length === 2, tagTxt);
+    await shot("e2e_8_separator");
+
+    // ---- offset: a parallel copy of the separator, 500 mm to the right
+    await key("o");
+    await setOpt("off", 500);
+    const o0 = await B(5000, 3000); await click(o0[0], o0[1]);
+    check("Offset: the element is taken", await ev(`!!DR.ref`));
+    const o1 = await B(6500, 3000); await click(o1[0], o1[1]);
+    check("Offset makes a second separator and a third room", (await count("#viewer g.separator")) === 2 && (await count("#viewer rect.room")) === 3, `${await count("#viewer g.separator")} separators, ${await count("#viewer rect.room")} rooms`);
+    await key("Escape");
+
+    // ---- tags on doors and windows
+    await key("q");
+    const dq = await B(4000, 2000); await click(dq[0], dq[1]);
+    check("a door tag shows its kind and size", /Door/.test(await ev(`[...document.querySelectorAll("#viewer g.tag")].map(g=>g.textContent).join(" ")`)) && /900 × 2100/.test(await ev(`[...document.querySelectorAll("#viewer g.tag")].map(g=>g.textContent).join(" ")`)));
+    await key("v");
+
+    // ---- Split, Align and Trim to corner with the real mouse
+    const wallsA = await count("#viewer rect.wall");
+    await key("s");
+    const sp = await B(8000, 3000); await click(sp[0], sp[1]);
+    check("Split cuts the right wall in two", (await count("#viewer rect.wall")) === wallsA + 1, `${wallsA} -> ${await count("#viewer rect.wall")}`);
+    await key("Escape");
+    const drawWall = async (a, b) => { await key("w"); const q0 = await B(a[0], a[1]), q1 = await B(b[0], b[1]); await click(q0[0], q0[1]); await click(q1[0], q1[1]); await key("Escape"); await key("Escape"); };
+    await drawWall([2000, 7500], [3500, 7500]);
+    await drawWall([4000, 8000], [5500, 8000]);
+    await key("a");
+    const ra = await B(2500, 7500); await click(ra[0], ra[1]);
+    const rb = await B(4500, 8000); await click(rb[0], rb[1]);
+    const aligned = await ev(`(async()=>{ const o=await call("draft_box",{box:[3900,7400,5600,7600],mode:"window"}); return o.ids.length; })()`);
+    check("Align brings the second wall onto the first one's line", aligned === 1, `${aligned} wall(s) now at y 7500 beyond x 3900`);
+    await key("Escape");
+    await drawWall([2000, 9000], [3000, 9000]);
+    await drawWall([3500, 8700], [3500, 9500]);
+    await key("t");
+    const tr0 = await B(2300, 9000); await click(tr0[0], tr0[1]);
+    const tr1 = await B(3500, 9300); await click(tr1[0], tr1[1]);
+    const trimmed = await ev(`(async()=>{ const o=await call("draft_box",{box:[1900,8900,3700,9100],mode:"window"}); const out=[]; for (const id of o.ids) { const p=await call("draft_props",{id}); const l=p.fields.find(f=>f.key==="length"); if (l) out.push(l.value); } return out; })()`);
+    check("Trim to corner extends the first wall to the second (length 1500)", trimmed.includes(1500), JSON.stringify(trimmed));
+    await key("Escape"); await key("v");
+    await shot("e2e_9_modify");
+
+    // ---- wall assemblies: define one in the dialog, give it to the left wall
+    await ev(`document.querySelector('[data-dact="asm"]').click()`); await sleep(1200);
+    check("the assemblies dialog opens", (await count("#asm-box")) === 1);
+    await ev(`document.getElementById("asm-add").click()`); await sleep(400);
+    await ev(`(()=>{ const set=(sel,v)=>{ const i=document.querySelector(sel); i.value=v; i.dispatchEvent(new Event("change",{bubbles:true})); }; set('#asm-box input[data-f=name]', 'Block 200'); set('#asm-box input[data-f=thicknessMm]', '200'); })()`); await sleep(300);
+    await ev(`document.getElementById("asm-save").click()`); await sleep(1500);
+    const asm = await ev(`(async()=>{ const r=await call("assemblies_get"); return JSON.stringify(r.assemblies.map(a=>({name:a.assembly.name, t:a.thickness_mm}))); })()`);
+    check("the assembly was saved with a thickness equal to the sum of its layers", asm === JSON.stringify([{ name: "Block 200", t: 200 }]), asm);
+    check("the dialog closed", (await count("#asm-box")) === 0);
+    await key("v");
+    const lw = await B(2000, 4500); await click(lw[0], lw[1]);
+    await ev(`(()=>{ const s=document.querySelector("[data-asm]"); s.value=s.options[1].value; s.dispatchEvent(new Event("change",{bubbles:true})); })()`); await sleep(1200);
+    const lwId = await ev(`[...SEL.ids][0]`);
+    const lwProps = await ev(`(async()=>JSON.stringify((await call("draft_props",{id:[...SEL.ids][0]})).fields.filter(f=>["thickness","assembly"].includes(f.key)).map(f=>[f.key,f.value])))()`);
+    check("the wall now uses the assembly and its thickness is the layers' sum", lwProps === JSON.stringify([["thickness", 200], ["assembly", "Block 200"]]), lwProps);
+    const refused = await ev(`(async()=>{ try { await call("draft_set",{id:"${lwId}",key:"thickness",value:300}); return "accepted"; } catch (e) { return e.message || String(e); } })()`);
+    check("typing another thickness on that wall is refused (the assembly owns it)", /assembly/.test(refused), refused);
+    const sc = await ev(`(async()=>Object.keys((await call("model3d")).assemblies||{}).length)()`);
+    check("the 3D scene names the wall's assembly", sc === 1, String(sc));
+
+    // ---- the real DXF export carries the separators
+    const eb = await ev(`(()=>{const b=$("exportdxf").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
+    for (const f of fs.readdirSync(D)) if (/\.dxf$/i.test(f)) fs.unlinkSync(`${D}\\${f}`);
+    const before = new Set(fs.readdirSync(D));
+    await click(eb[0], eb[1]); await sleep(2500);
+    const newDxf = fs.readdirSync(D).filter(f => !before.has(f) && /\.dxf$/i.test(f));
+    const dxfText = newDxf.length ? fs.readFileSync(`${D}\\${newDxf[0]}`, "utf8") : "";
+    check("the exported DXF file has the room separators", newDxf.length === 1 && dxfText.includes("A-ROOM-SEP") && dxfText.includes("A-GRID"), newDxf.join(","));
+
+    // ---- the toolbar stays on one row at a narrow window
+    for (const w of [1100, 900]) {
+      await send("Emulation.setDeviceMetricsOverride", { width: w, height: 700, deviceScaleFactor: 1, mobile: false }); await sleep(700);
+      const rows = await ev(`(()=>{ const bar=$("draftbar"); const tops=new Set([...bar.querySelectorAll(".grp")].map(g=>Math.round(g.getBoundingClientRect().top))); return { tops: tops.size, h: Math.round(bar.getBoundingClientRect().height) }; })()`);
+      check(`the drafting toolbar is one compact row at ${w} px`, rows.tops === 1 && rows.h >= 30 && rows.h < 60, JSON.stringify(rows));
+      await shot(`e2e_10_narrow_${w}`);
+    }
+    await send("Emulation.clearDeviceMetricsOverride"); await sleep(500);
+
+    // ---- a Blank project never inherits the sizes of the previous one
+    await ev(`window.confirm = () => true`);
+    await ev(`(async()=>{ if (DR.on) { const wb = document.querySelector('[data-dtool=wall]'); wb.click(); } })()`); await sleep(300);
+    await setOpt("thick", 333); await setOpt("height", 2777);
+    check("sizes are set before the reset", (await ev(`DR.opt.thick + "/" + DR.opt.height`)) === "333/2777");
+    const nb2 = await ev(`(()=>{const b=$("newblank").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
+    await click(nb2[0], nb2[1]); await sleep(2000);
+    await key("w");
+    const leak = await ev(`JSON.stringify({ opt: [DR.opt.thick, DR.opt.height, DR.opt.dw, DR.opt.ww, DR.opt.off], inputs: [...document.querySelectorAll('#draftbar [data-dopt=thick], #draftbar [data-dopt=height]')].map(i=>i.value) })`);
+    check("after Blank project the thickness and height inputs are empty", leak === JSON.stringify({ opt: ["", "", "", "", ""], inputs: ["", ""] }), leak);
+    check("the new blank project has no assemblies and no walls", (await ev(`(async()=>(await call("assemblies_get")).assemblies.length)()`)) === 0 && (await count("#viewer rect.wall")) === 0);
 
     check("no uncaught script errors during the session", errors.length === 0, errors.join(" | ").slice(0, 300));
   } catch (e) {

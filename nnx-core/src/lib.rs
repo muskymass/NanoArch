@@ -5,6 +5,7 @@
 
 pub mod analysis;
 pub mod annot;
+pub mod assembly;
 pub mod asbuilt;
 pub mod analytical;
 pub mod audits;
