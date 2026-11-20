@@ -305,7 +305,7 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
         for s in &spaces {
             d.rect("A-ROOM", px(s.x), py(s.y), px(s.x + s.w), py(s.y + s.h));
             let (cx, cy) = (px(s.x) + s.w as f64 / 2.0, py(s.y) + s.h as f64 / 2.0);
-            let name = opts.labels.get(&s.requirement_key).cloned().unwrap_or_else(|| s.requirement_key.clone());
+            let name = crate::annot::room_name(s, &opts.labels).unwrap_or_else(|| s.requirement_key.clone());
             if !tagged_keys.contains(&s.requirement_key) {
                 d.text("A-TEXT", (cx, cy + 120.0), 200.0, &name);
                 d.text("A-TEXT", (cx, cy - 200.0), 140.0, &format!("{:.1} m2", s.area));

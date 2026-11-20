@@ -64,7 +64,7 @@ pub fn print_html(model: &Model, opts: &PrintOpts) -> Result<String, String> {
         for e in model.elements.values().filter(|e| e.kind == Space::KIND && (lv.is_none() || e.level_id == *lv)) {
             let Ok(s) = e.typed::<Space>() else { continue };
             total += s.area;
-            let label = opts.labels.get(&s.requirement_key).cloned().unwrap_or_else(|| s.requirement_key.clone());
+            let label = crate::annot::room_name(&s, &opts.labels).unwrap_or_else(|| s.requirement_key.clone());
             let func = if opts.arabic { func_ar(&s.func).to_string() } else { s.func.clone() };
             rows.push_str(&format!("<tr><td>{}</td><td>{}</td><td class=\"n\">{:.1}</td></tr>", esc(&label), esc(&func), s.area));
         }

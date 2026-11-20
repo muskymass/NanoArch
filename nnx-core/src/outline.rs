@@ -111,7 +111,7 @@ pub fn build(model: &Model, project: Option<&NanoArchProject>, labels: &BTreeMap
         let (slot, label) = match e.kind.as_str() {
             "Space" => {
                 let key = e.props.get("requirementKey").and_then(|v| v.as_str()).unwrap_or("room").to_string();
-                let name = project.and_then(|p| p.labels.get(&key)).cloned().unwrap_or_else(|| key.clone());
+                let name = e.typed::<Space>().ok().zip(project).and_then(|(s, p)| crate::annot::room_name(&s, &p.labels)).unwrap_or_else(|| key.clone());
                 let a = e.typed::<Space>().map(|s| s.area).unwrap_or(0.0);
                 spaces.push((li, key.clone(), leaf(e.id, "Space", format!("{name} · {a:.1} m²"))));
                 continue;

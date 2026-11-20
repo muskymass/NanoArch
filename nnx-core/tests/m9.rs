@@ -741,9 +741,76 @@ fn the_tag_of_a_divided_part_names_it_by_its_whole_key_and_its_own_area_with_no_
     names.sort();
     // The part is named by its key exactly (every letter present, no space), and shows its own area, not the original's.
     assert_eq!(names, vec![("reserve".to_string(), "24.00 m²".to_string()), ("reserve-2".to_string(), "12.00 m²".to_string())]);
-    // A display name given for the original room never turns into a split word either.
-    let named: std::collections::BTreeMap<String, String> = [("reserve".to_string(), "Reserve room".to_string())].into();
-    let part = doc.model.elements.values().find(|e| e.kind == "Space" && e.props["requirementKey"] == "reserve-2").unwrap();
-    let tag = doc.model.elements.values().find(|e| e.kind == "Tag" && e.host_id == Some(part.id)).unwrap();
-    assert_eq!(annot::tag_lines(&doc.model, part, &tag.typed().unwrap(), &named)[0], "reserve-2");
+}
+
+fn names_of_tags(doc: &Document, labels: &std::collections::BTreeMap<String, String>) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = doc
+        .model
+        .elements
+        .values()
+        .filter(|e| e.kind == "Tag")
+        .map(|t| {
+            let host = doc.model.get(&t.host_id.unwrap()).unwrap();
+            let lines = annot::tag_lines(&doc.model, host, &t.typed().unwrap(), labels);
+            (lines[0].clone(), lines[1].clone())
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn a_divided_part_is_shown_by_the_display_name_of_its_room_plus_its_number_everywhere_and_keeps_its_key() {
+    let named: std::collections::BTreeMap<String, String> = [("living".to_string(), "Hall".to_string())].into();
+    let mut doc = blank();
+    layout_room(&mut doc, "living", "living", [0, 0, 9000, 4000]);
+    let (sep_v, _) = separator(&mut doc, [3000, 0], [3000, 4000]);
+    let part = |d: &Document, k: &str| d.model.elements.values().find(|e| e.kind == "Space" && e.props["requirementKey"] == k).unwrap().typed::<Space>().unwrap();
+    // The name is derived, never stored: the part keeps its own key and the link to the room it came from.
+    let p2 = part(&doc, "living-2");
+    assert_eq!(p2.extra["splitFrom"]["requirementKey"], "living");
+    assert_eq!((annot::room_name(&p2, &named).as_deref(), annot::room_name(&part(&doc, "living"), &named).as_deref()), (Some("Hall-2"), Some("Hall")));
+    assert_eq!(annot::room_name(&p2, &Default::default()), None, "no display name anywhere: callers show the key");
+    // Dividing a part again numbers the new part from the room the layout made (living-3), which it remembers as its origin: Hall-3.
+    separator(&mut doc, [0, 2000], [3000, 2000]);
+    let mut keys: Vec<String> = doc.model.elements.values().filter(|e| e.kind == "Space").map(|e| e.props["requirementKey"].as_str().unwrap().to_string()).collect();
+    keys.sort();
+    assert_eq!(keys, ["living", "living-2", "living-3"]);
+    assert_eq!(part(&doc, "living-3").extra["splitFrom"]["requirementKey"], "living");
+    assert_eq!(annot::room_name(&part(&doc, "living-3"), &named), Some("Hall-3".to_string()));
+    // A display name the user gives a part wins over the derived one.
+    let mut own = named.clone();
+    own.insert("living-2".into(), "Study".into());
+    assert_eq!(annot::room_name(&part(&doc, "living-2"), &own).as_deref(), Some("Study"));
+    // Tags show the derived name and each part's own area.
+    let all: Vec<Id> = doc.model.elements.values().filter(|e| e.kind == "Space").map(|e| e.id).collect();
+    let (tc, _) = annot::tag_commands(&doc.model, &all).unwrap();
+    doc.commit("tag", Origin::User, tc).unwrap_or_else(|e| panic!("{e}"));
+    let tags = names_of_tags(&doc, &named);
+    assert!(tags.iter().any(|t| t.0 == "Hall" && t.1 == "24.00 m²") && tags.iter().any(|t| t.0 == "Hall-3") && tags.iter().any(|t| t.0 == "Hall-2"), "{tags:?}");
+    // DXF: tags carry the derived names; undo takes the parts and their names away, redo brings them back.
+    let mut o = dxf_opts();
+    o.labels = named.clone();
+    let out = dxf::export_dxf(&doc.model, &[level(&doc)], &o).unwrap();
+    assert!(out.text.contains("Hall-3") && out.text.contains("Hall-2") && !out.text.contains("living-2"), "the drawing uses the name, not the key");
+    // The file keeps the parts; reopened, the same names appear and the DXF is the same drawing.
+    let path = std::env::temp_dir().join(format!("nanoarch-names-{}.nnx", std::process::id()));
+    persist::save(&doc.model, &path).unwrap();
+    let back = Document::new(persist::load(&path).unwrap());
+    std::fs::remove_file(&path).ok();
+    assert_eq!(names_of_tags(&back, &named), tags);
+    assert_eq!(dxf::export_dxf(&back.model, &[level(&back)], &o).unwrap().text, out.text);
+    // Without a display name the key is shown, as before.
+    assert!(names_of_tags(&back, &Default::default()).iter().any(|t| t.0 == "living-2"));
+    // Undo and redo walk the division and its names: the room is whole and named `Hall` again, then divided again.
+    for _ in 0..3 {
+        assert!(doc.undo());
+    }
+    assert_eq!(doc.model.elements.values().filter(|e| e.kind == "Space").count(), 1);
+    assert!(names_of_tags(&doc, &named).is_empty() || names_of_tags(&doc, &named).iter().all(|t| t.0 == "Hall"));
+    for _ in 0..3 {
+        assert!(doc.redo());
+    }
+    assert_eq!(names_of_tags(&doc, &named), tags);
+    assert!(doc.model.get(&sep_v).is_some());
 }

@@ -225,12 +225,15 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     await shot("e2e_4b_generated_room_divided");
     await key("z", { modifiers: 2 }); await sleep(900);
     check("one Ctrl+Z takes the division back: the room and the separator are gone", (await count("#viewer rect.room")) === roomsGen0 && (await count("#viewer g.separator")) === 0 && (await count("#viewer g.tag")) === tagsGen0, `${await count("#viewer rect.room")} rooms`);
+    check("after the undo no part name is left in the spaces list", !(await ev(`JSON.stringify((state.rooms_out || []).map(r => [r.key, r.name]))`)).match(/-2"/));
     await key("y", { modifiers: 2 }); await sleep(900);
     check("Ctrl+Y divides it again", (await count("#viewer rect.room")) === roomsGen0 + 1 && (await count("#viewer g.separator")) === 1);
+    const roomNames = async () => JSON.parse(await ev(`JSON.stringify(Object.fromEntries((state.rooms_out || []).map(r => [r.key, r.name])))`));
     // ---- the divided plan: openings still name rooms that exist, the saved file keeps the division, the DXF carries the separator
     const refs1 = JSON.parse(await ev(refsExpr));
     const newKeys = refs1.rooms.filter(k => !refs0.rooms.includes(k));
     check("the division made one new room, named after the room it came from", newKeys.length === 1 && /-2$/.test(newKeys[0]) && refs0.rooms.includes(newKeys[0].replace(/-2$/, "")), JSON.stringify(newKeys));
+    const rn = await roomNames(), parentKey = newKeys[0].replace(/-2$/, ""), partName = rn[newKeys[0]];
     const bad = Object.entries(refs1.refs).filter(([id, now]) => now.some((v, i) => { const was = refs0.refs[id][i]; return !(v === was || v === was + "-2") || (v !== was && !refs1.rooms.includes(v)); }));
     check("every opening names what it named, or the new part of that room: none names a room that is gone", bad.length === 0 && Object.keys(refs1.refs).length === Object.keys(refs0.refs).length, JSON.stringify(bad).slice(0, 200));
     try { fs.unlinkSync(`${D}\\project.nnx`); } catch (e) {}
@@ -243,7 +246,7 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     await menuPress("#exportdxf"); await sleep(2500);
     const dxfs = fs.readdirSync(D).filter(f => /\.dxf$/i.test(f));
     const dtxt = dxfs.length ? fs.readFileSync(`${D}\\${dxfs[0]}`, "utf8") : "";
-    check("the DXF of the divided plan has the separator on A-ROOM-SEP and the new part's room", dxfs.length === 1 && dtxt.includes("A-ROOM-SEP") && dtxt.includes(newKeys[0]), `${dxfs.length} files`);
+    check("the DXF of the divided plan has the separator on A-ROOM-SEP and the new part's room", dxfs.length === 1 && dtxt.includes("A-ROOM-SEP") && dtxt.includes(partName), `${dxfs.length} files`);
     await ev(`window.confirm = () => true`);
     await menuPress("#openproj"); await sleep(2000);
     const refs2 = JSON.parse(await ev(refsExpr));
@@ -251,8 +254,11 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     check("the reopened project is clean", (await ev(`(async()=>(await call("status")).dirty)()`)) === false);
     const tagsBack = await tagsTxt();
     check("the reopened plan keeps every room tag with its name and area (the division's parts included)", tagsBack === tagsSaved && JSON.parse(tagsBack).length === roomsGen0 + 1 && JSON.parse(tagsBack).every(t => /m²/.test(t)), tagsBack.slice(0, 200));
-    // A part is named by its key, whole: no letter of a name is lost or turned into a space (a regression the page's own text helper once caused).
-    check("the divided part's tag shows its name exactly (the key, whole, with no stray space)", JSON.parse(tagsBack).some(t => t.split("\n")[0] === newKeys[0]) && JSON.parse(tagsBack).every(t => !/^\w{1,3} \w{3,}-\d$/.test(t.split("\n")[0])), JSON.stringify(newKeys) + " " + tagsBack.slice(0, 160));
+    // A divided part is shown by its room's display name plus its number (Hall -> Hall-2): in the spaces list, its tag, the outliner and the DXF.
+    check("the spaces list names the part from its room's display name plus its number (and the room keeps its own name)", !!rn[parentKey] && partName === rn[parentKey] + "-2" && rn[parentKey] !== parentKey, JSON.stringify([newKeys[0], partName, parentKey, rn[parentKey]]));
+    check("the part's tag shows that name whole, with its own area, and the part keeps its key", JSON.parse(tagsBack).some(t => t.split("\n")[0] === partName) && JSON.parse(tagsBack).some(t => t.split("\n")[0] === rn[parentKey]) && newKeys[0] === parentKey + "-2", partName + " " + tagsBack.slice(0, 160));
+    const outl = await ev(`(async()=>{const o=await call("outline"); const names=[]; const walk=n=>{ if(n.kind==="Space") names.push(n.en||""); n.children.forEach(walk)}; walk(o.tree); return JSON.stringify(names);})()`);
+    check("the outliner lists the part by the same name", outl.includes(partName + " ·"), partName + " " + outl.slice(0, 600));
     {
       const st0 = await ev(`(async()=>JSON.stringify(await call("status")))()`), r0 = await count("#viewer rect.room");
       await key("z", { modifiers: 2 }); await sleep(900);
@@ -264,7 +270,7 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     const dxfs2 = fs.readdirSync(D).filter(f => /\.dxf$/i.test(f));
     const dtxt2 = dxfs2.length ? fs.readFileSync(`${D}\\${dxfs2[0]}`, "utf8") : "";
     const nSep = t => (t.match(/A-ROOM-SEP/g) || []).length;
-    check("the DXF of the reopened divided plan has the separator on A-ROOM-SEP, the new part's room and the area labels", dxfs2.length === 1 && nSep(dtxt2) >= 1 && dtxt2.includes(newKeys[0]) && (dtxt2.match(/\d+\.\d\d m\\U\+00B2/g) || []).length >= roomsGen0 + 1, `${dxfs2.length} files, sep ${nSep(dtxt2)}, key ${dtxt2.includes(newKeys[0])} ${newKeys[0]}, area labels ${(dtxt2.match(/\d+\.\d\d m\\U\+00B2/g) || []).length}`);
+    check("the DXF of the reopened divided plan has the separator on A-ROOM-SEP, the new part's room and the area labels", dxfs2.length === 1 && nSep(dtxt2) >= 1 && dtxt2.includes(partName) && (dtxt2.match(/\d+\.\d\d m\\U\+00B2/g) || []).length >= roomsGen0 + 1, `${dxfs2.length} files, sep ${nSep(dtxt2)}, key ${dtxt2.includes(newKeys[0])} ${newKeys[0]}, area labels ${(dtxt2.match(/\d+\.\d\d m\\U\+00B2/g) || []).length}`);
     check("reopening changes nothing in the drawing: the DXF text equals the one made before saving", nSep(dtxt2) === nSep(dtxt) && dtxt2.length === dtxt.length && dtxt2 === dtxt, `${dtxt.length} / ${dtxt2.length} chars`);
     await shot("e2e_4c_divided_plan_reopened");
     // In the reopened project the separator can still be deleted (the room comes back as the layout made it) and the edit undone.

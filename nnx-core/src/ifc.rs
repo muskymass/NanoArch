@@ -378,7 +378,7 @@ pub fn export_ifc(model: &Model, opts: &IfcOpts) -> Result<IfcOut, String> {
         let (st_pl, height) = (storeys[&lvl].placement, storeys[&lvl].height);
         let pl = w.place(Some(st_pl), sp.x as f64, sp.y as f64, 0.0);
         let shape = w.body(sp.w as f64, sp.h as f64, height * 1000.0);
-        let long = opts.labels.get(&sp.requirement_key).cloned().unwrap_or_default();
+        let long = crate::annot::room_name(&sp, &opts.labels).unwrap_or_default();
         let id = w.add(format!("IFCSPACE('{}',$,{},$,$,#{pl},#{shape},{},.ELEMENT.,.INTERNAL.,$)", guid_of_id(&e.id), step_str(&sp.requirement_key), if long.is_empty() { "$".to_string() } else { step_str(&long) }));
         *counts.entry("IfcSpace".into()).or_default() += 1;
         trace(&mut w, e, id, vec![("Function", Pv::Label(sp.func.clone()))]);

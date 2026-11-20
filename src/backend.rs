@@ -1480,7 +1480,7 @@ impl App {
             .flat_map(|d| d.model.elements.values())
             .filter(|e| level.is_none() || e.level_id == level)
             .filter_map(|e| e.typed::<nnx_core::typed::Space>().ok())
-            .map(|s| json!({ "key": s.requirement_key, "locked": locked.contains(&s.requirement_key), "name": labels.get(&s.requirement_key).cloned().unwrap_or(s.requirement_key.clone()), "func": s.func, "area": s.area, "target": s.target_area }))
+            .map(|s| json!({ "key": s.requirement_key, "locked": locked.contains(&s.requirement_key), "name": nnx_core::annot::room_name(&s, &labels).unwrap_or(s.requirement_key.clone()), "func": s.func, "area": s.area, "target": s.target_area }))
             .collect()
     }
 

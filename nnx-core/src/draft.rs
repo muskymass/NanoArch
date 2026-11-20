@@ -974,7 +974,8 @@ pub fn properties(model: &Model, id: Id) -> Result<Value, String> {
         }
         "Space" => {
             let s = e.typed::<Space>().map_err(|x| x.to_string())?;
-            let label = crate::project::find(model).and_then(|p| p.props.get("labels")).and_then(|l| l.get(&s.requirement_key)).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let labels: std::collections::BTreeMap<String, String> = crate::project::find(model).and_then(|p| p.props.get("labels").and_then(|l| l.as_object()).map(|o| o.iter().filter_map(|(k, v)| v.as_str().map(|t| (k.clone(), t.to_string()))).collect())).unwrap_or_default();
+            let label = crate::annot::room_name(&s, &labels).unwrap_or_default();
             f.push(field("requirementKey", "Room key", "رمز الغرفة", json!(s.requirement_key), "text", false));
             f.push(field("name", "Name", "الاسم", json!(label), "text", true));
             f.push(field("func", "Function", "الوظيفة", json!(s.func), "text", true));

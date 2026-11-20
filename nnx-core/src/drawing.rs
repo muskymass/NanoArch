@@ -247,12 +247,7 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
     // Labels (a room with a tag is labelled by its tag).
     let tagged = crate::annot::tagged_rooms(model, level);
     for (e, sp) in spaces.iter().filter(|(e, _)| !tagged.contains(&e.id)) {
-        let name = opts
-            .labels
-            .get(&sp.requirement_key)
-            .or_else(|| opts.labels.get(&sp.func))
-            .cloned()
-            .unwrap_or_else(|| sp.requirement_key.clone());
+        let name = crate::annot::room_name(sp, &opts.labels).or_else(|| opts.labels.get(&sp.func).cloned()).unwrap_or_else(|| sp.requirement_key.clone());
         let area = sp.net_area.unwrap_or(sp.area);
         let cx = tx(sp.x as f64 + sp.w as f64 / 2.0);
         let cy = ty(sp.y as f64 + sp.h as f64 / 2.0);

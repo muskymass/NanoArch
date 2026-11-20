@@ -249,6 +249,22 @@ pub fn tag_commands(model: &Model, hosts: &[Id]) -> Result<(Vec<Command>, Vec<Id
     Ok((cmds, ids))
 }
 
+/// The name a room is shown by, everywhere (tags, plan, DXF, IFC, reports, outliner, property panel): the display name given to its key, or, for a
+/// part made by dividing a room, the display name of the room it came from plus the part's number (`Hall` -> `Hall-2`, and `Hall-2-2` for a part of
+/// a part). A part keeps its own key (`living-2`) and its `splitFrom` link; only the shown name is derived, never stored. `None` when neither the
+/// key nor the room it came from has a display name: callers then show the key itself, as they always did.
+pub fn room_name(sp: &Space, labels: &BTreeMap<String, String>) -> Option<String> {
+    if let Some(n) = labels.get(&sp.requirement_key) {
+        return Some(n.clone());
+    }
+    let from: Space = serde_json::from_value(sp.extra.get("splitFrom")?.clone()).ok()?;
+    let suffix = sp.requirement_key.strip_prefix(&from.requirement_key)?;
+    if !suffix.starts_with('-') {
+        return None;
+    }
+    Some(format!("{}{}", room_name(&from, labels)?, suffix))
+}
+
 /// The lines a tag shows. A room: its display name, its area in m2 and the elevation of its level. A door, window, column or footing:
 /// its kind (and the grid reference of a column), its size in mm and the elevation of its level.
 pub fn tag_lines(model: &Model, host: &Element, tag: &Tag, labels: &BTreeMap<String, String>) -> Vec<String> {
@@ -257,7 +273,7 @@ pub fn tag_lines(model: &Model, host: &Element, tag: &Tag, labels: &BTreeMap<Str
     let (name, size): (String, String) = match host.kind.as_str() {
         "Space" => {
             let Ok(sp) = host.typed::<Space>() else { return Vec::new() };
-            (labels.get(&sp.requirement_key).or_else(|| labels.get(&sp.func)).cloned().unwrap_or_else(|| sp.requirement_key.clone()), format!("{:.2} m²", sp.net_area.unwrap_or(sp.area)))
+            (room_name(&sp, labels).or_else(|| labels.get(&sp.func).cloned()).unwrap_or_else(|| sp.requirement_key.clone()), format!("{:.2} m²", sp.net_area.unwrap_or(sp.area)))
         }
         "Door" => match host.typed::<Door>() {
             Ok(d) => ("Door".into(), format!("{} × {}", d.width, d.height)),
