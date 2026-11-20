@@ -15,7 +15,7 @@
 use crate::building;
 use crate::command::Command;
 use crate::model::{Element, Id, Model, Source};
-use crate::typed::{Column, Door, Space, Typed, Wall, Window, element_of};
+use crate::typed::{Column, Dimension, Door, Grid, Space, Typed, Wall, Window, element_of};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -67,6 +67,8 @@ pub enum SnapKind {
     Intersection,
     Midpoint,
     Perpendicular,
+    /// A point on a grid line.
+    Online,
     Aligned,
     Grid,
 }
@@ -126,6 +128,14 @@ pub fn snap(model: &Model, level: Option<Id>, world: P, ctx: &SnapCtx) -> Snap {
         points.push(b);
         lines.push((a, b));
     }
+    // Grid lines belong to the project, not to a level.
+    let grids: Vec<Grid> = model.elements.values().filter(|e| e.kind == Grid::KIND && !ctx.exclude.contains(&e.id)).filter_map(|e| e.typed::<Grid>().ok()).collect();
+    for g in &grids {
+        let (a, b) = ([g.x1 as f64, g.y1 as f64], [g.x2 as f64, g.y2 as f64]);
+        points.push(a);
+        points.push(b);
+        lines.push((a, b));
+    }
     for e in model.elements.values().filter(|e| e.kind == Column::KIND && on_level(e, level) && !ctx.exclude.contains(&e.id)) {
         if let Ok(c) = e.typed::<Column>() {
             points.push([c.x as f64, c.y as f64]);
@@ -135,14 +145,13 @@ pub fn snap(model: &Model, level: Option<Id>, world: P, ctx: &SnapCtx) -> Snap {
     if let Some(p) = best(&points) {
         return round(p, SnapKind::Endpoint);
     }
-    // Where two wall centre lines cross (a horizontal and a vertical one).
+    // Where two centre lines cross (a horizontal and a vertical one), walls and grid lines alike.
     let mut crossings = Vec::new();
-    for (_, h) in walls.iter().filter(|(_, w)| w.horizontal()) {
-        for (_, v) in walls.iter().filter(|(_, w)| !w.horizontal()) {
-            let (hx0, hx1) = (h.x1.min(h.x2), h.x1.max(h.x2));
-            let (vy0, vy1) = (v.y1.min(v.y2), v.y1.max(v.y2));
-            if (hx0..=hx1).contains(&v.x1) && (vy0..=vy1).contains(&h.y1) {
-                crossings.push([v.x1 as f64, h.y1 as f64]);
+    let segs: Vec<(bool, i64, i64, i64)> = walls.iter().map(|(_, w)| (w.horizontal(), if w.horizontal() { w.y1 } else { w.x1 }, if w.horizontal() { w.x1.min(w.x2) } else { w.y1.min(w.y2) }, if w.horizontal() { w.x1.max(w.x2) } else { w.y1.max(w.y2) })).chain(grids.iter().map(|g| (g.horizontal(), g.coord(), if g.horizontal() { g.x1.min(g.x2) } else { g.y1.min(g.y2) }, if g.horizontal() { g.x1.max(g.x2) } else { g.y1.max(g.y2) }))).collect();
+    for (_, y, hx0, hx1) in segs.iter().filter(|s| s.0) {
+        for (_, x, vy0, vy1) in segs.iter().filter(|s| !s.0) {
+            if (*hx0..=*hx1).contains(x) && (*vy0..=*vy1).contains(y) {
+                crossings.push([*x as f64, *y as f64]);
             }
         }
     }
@@ -162,6 +171,17 @@ pub fn snap(model: &Model, level: Option<Id>, world: P, ctx: &SnapCtx) -> Snap {
         if let Some(p) = best(&feet) {
             return round(p, SnapKind::Perpendicular);
         }
+    }
+    // Along a grid line: the nearest point on it, so a wall can follow a grid.
+    let online: Vec<P> = grids
+        .iter()
+        .filter_map(|g| {
+            let (lo, hi) = if g.horizontal() { (g.x1.min(g.x2) as f64, g.x1.max(g.x2) as f64) } else { (g.y1.min(g.y2) as f64, g.y1.max(g.y2) as f64) };
+            if g.horizontal() { (held[0] >= lo && held[0] <= hi).then_some([held[0], g.y1 as f64]) } else { (held[1] >= lo && held[1] <= hi).then_some([g.x1 as f64, held[1]]) }
+        })
+        .collect();
+    if let Some(p) = best(&online) {
+        return round(p, SnapKind::Online);
     }
     let step = grid_step(ctx.scale) as f64;
     if let (Some(f), Some(h)) = (ctx.from, axis_horiz) {
@@ -426,8 +446,15 @@ fn rect_hit(mode: BoxMode, b: [f64; 4], r: [f64; 4]) -> bool {
 pub fn pick_box(model: &Model, level: Option<Id>, b: [f64; 4], mode: BoxMode) -> Vec<Id> {
     let b = [b[0].min(b[2]), b[1].min(b[3]), b[0].max(b[2]), b[1].max(b[3])];
     let mut out = Vec::new();
-    for e in model.elements.values().filter(|e| on_level(e, level)) {
+    for e in model.elements.values().filter(|e| e.kind == Grid::KIND || on_level(e, level)) {
         let r: Option<[f64; 4]> = match e.kind.as_str() {
+            "Grid" => e.typed::<Grid>().ok().map(|g| [g.x1.min(g.x2) as f64, g.y1.min(g.y2) as f64, g.x1.max(g.x2) as f64, g.y1.max(g.y2) as f64]),
+            "Dimension" => e.typed::<Dimension>().ok().map(|d| {
+                let (a, b) = crate::annot::dim_positions(model, &d);
+                let (lo, hi) = (a.min(b) as f64, a.max(b) as f64);
+                let (c0, c1) = (d.oa.min(d.ob).min(d.at) as f64, d.oa.max(d.ob).max(d.at) as f64);
+                if d.axis == "x" { [lo, c0, hi, c1] } else { [c0, lo, c1, hi] }
+            }),
             "Wall" => e.typed::<Wall>().ok().map(|w| {
                 let t = w.thickness as f64 / 2.0;
                 [w.x1.min(w.x2) as f64 - if w.horizontal() { 0.0 } else { t }, w.y1.min(w.y2) as f64 - if w.horizontal() { t } else { 0.0 }, w.x1.max(w.x2) as f64 + if w.horizontal() { 0.0 } else { t }, w.y1.max(w.y2) as f64 + if w.horizontal() { t } else { 0.0 }]
@@ -533,6 +560,7 @@ pub fn xform(model: &Model, ids: &[Id], xf: Xf, copy: bool) -> Result<Edit, Stri
     let mut edit = Edit::default();
     let mut walls: Vec<(Id, Wall, Element)> = Vec::new();
     let mut columns: Vec<(Id, Column, Element)> = Vec::new();
+    let mut grids: Vec<(Id, Grid, Element)> = Vec::new();
     for id in ids {
         let e = model.get(id).ok_or("an element in the selection no longer exists")?;
         match e.kind.as_str() {
@@ -548,12 +576,14 @@ pub fn xform(model: &Model, ids: &[Id], xf: Xf, copy: bool) -> Result<Edit, Stri
                     return Err("a door or window moves with its wall: select the wall too, or change its distance along the wall in the properties".into());
                 }
             }
+            "Grid" => grids.push((*id, e.typed::<Grid>().map_err(|x| x.to_string())?, e.clone())),
+            "Dimension" | "Tag" => edit.notes.push("dimensions and room tags follow what they measure or tag: they were left as they are".into()),
             "Space" => return Err("rooms are not moved here: use the partition and room tools, which keep the plan tiled".into()),
             other => return Err(format!("{other} elements cannot be moved this way")),
         }
     }
-    if walls.is_empty() && columns.is_empty() {
-        return Err("select walls or columns first".into());
+    if walls.is_empty() && columns.is_empty() && grids.is_empty() {
+        return Err("select walls, columns or grid lines first".into());
     }
     let level = walls.first().map(|w| w.2.level_id).or(columns.first().map(|c| c.2.level_id)).flatten();
     let rects = room_rects(model, level);
@@ -601,6 +631,22 @@ pub fn xform(model: &Model, ids: &[Id], xf: Xf, copy: bool) -> Result<Edit, Stri
                     edit.cmds.push(Command::SetProp { id: h, key: "offsetCenter".into(), value: Some(json!(noff)) });
                 }
             }
+        }
+    }
+    let mut taken: std::collections::BTreeSet<String> = Default::default();
+    for (id, g, el) in &grids {
+        let (a, b) = (tp(xf, (g.x1, g.y1)), tp(xf, (g.x2, g.y2)));
+        let (a, b) = if a.0 < b.0 || a.1 < b.1 { (a, b) } else { (b, a) };
+        let mut n = g.clone();
+        (n.x1, n.y1, n.x2, n.y2) = (a.0, a.1, b.0, b.1);
+        if copy {
+            n.name = crate::annot::next_grid_name_excluding(model, n.horizontal(), &taken);
+            taken.insert(n.name.to_uppercase());
+            let ne = element_of(&n, Source::User);
+            edit.created.push(ne.id);
+            edit.cmds.push(Command::Create(ne));
+        } else {
+            edit.cmds.extend(props_cmds(*id, el, &serde_json::to_value(&n).map_err(|e| e.to_string())?));
         }
     }
     for (id, c, el) in &columns {
@@ -757,7 +803,7 @@ pub fn delete(model: &Model, ids: &[Id]) -> Result<Edit, String> {
                     }
                 }
             }
-            "Door" | "Window" => {}
+            "Door" | "Window" | "Grid" | "Dimension" | "Tag" => {}
             "Column" if e.provenance.source != Source::Generated => {}
             "Column" => return Err("this column belongs to the generated structure and would be put back: lock it, or edit the plan it comes from".into()),
             "Space" => return Err("rooms are deleted with the room tool (it hands the area to a neighbour)".into()),
@@ -833,10 +879,34 @@ pub fn properties(model: &Model, id: Id) -> Result<Value, String> {
         }
         "Space" => {
             let s = e.typed::<Space>().map_err(|x| x.to_string())?;
-            f.push(field("requirementKey", "Room", "الغرفة", json!(s.requirement_key), "text", false));
+            let label = crate::project::find(model).and_then(|p| p.props.get("labels")).and_then(|l| l.get(&s.requirement_key)).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            f.push(field("requirementKey", "Room key", "رمز الغرفة", json!(s.requirement_key), "text", false));
+            f.push(field("name", "Name", "الاسم", json!(label), "text", true));
+            f.push(field("func", "Function", "الوظيفة", json!(s.func), "text", true));
             f.push(field("area", "Area (m²)", "المساحة (م²)", json!(s.area), "text", false));
             f.push(field("w", "Width", "العرض", json!(s.w), "mm", false));
             f.push(field("h", "Length", "الطول", json!(s.h), "mm", false));
+        }
+        "Grid" => {
+            let g = e.typed::<Grid>().map_err(|x| x.to_string())?;
+            f.push(field("name", "Name", "الاسم", json!(g.name), "text", true));
+            f.push(field("direction", "Direction", "الاتجاه", json!(if g.horizontal() { "horizontal" } else { "vertical" }), "text", false));
+            f.push(field("position", if g.horizontal() { "At y" } else { "At x" }, if g.horizontal() { "عند ص" } else { "عند س" }, json!(g.coord()), "mm", false));
+        }
+        "Dimension" => {
+            let d = e.typed::<Dimension>().map_err(|x| x.to_string())?;
+            let (a, b) = crate::annot::dim_positions(model, &d);
+            f.push(field("length", "Length", "الطول", json!((b - a).abs()), "mm", false));
+            f.push(field("at", if d.axis == "x" { "Line at y" } else { "Line at x" }, if d.axis == "x" { "الخط عند ص" } else { "الخط عند س" }, json!(d.at), "mm", true));
+            f.push(field("attached", "Follows", "يتبع", json!(match (d.ref_a.is_some(), d.ref_b.is_some()) { (true, true) => "both ends", (false, false) => "nothing (fixed)", _ => "one end" }), "text", false));
+        }
+        "Tag" => {
+            let t = e.typed::<crate::typed::Tag>().map_err(|x| x.to_string())?;
+            f.push(field("showName", "Show name", "إظهار الاسم", json!(t.show_name), "bool", true));
+            f.push(field("showArea", "Show area", "إظهار المساحة", json!(t.show_area), "bool", true));
+            f.push(field("showElevation", "Show elevation", "إظهار المنسوب", json!(t.show_elevation), "bool", true));
+            f.push(field("dx", "Offset x", "إزاحة س", json!(t.dx), "mm", true));
+            f.push(field("dy", "Offset y", "إزاحة ص", json!(t.dy), "mm", true));
         }
         other => f.push(field("kind", "Kind", "النوع", json!(other), "text", false)),
     }
@@ -910,6 +980,27 @@ pub fn set_property(model: &Model, id: Id, key: &str, value: &Value) -> Result<E
                 }
             }
             edit.cmds.push(Command::SetProp { id, key: "offsetCenter".into(), value: Some(json!(off)) });
+        }
+        ("Grid", "name") | ("Space", "func") => {
+            let t = value.as_str().map(str::trim).filter(|t| !t.is_empty()).ok_or_else(|| format!("{key}: enter a text"))?;
+            edit.cmds.push(Command::SetProp { id, key: key.into(), value: Some(json!(t)) });
+        }
+        ("Space", "name") => {
+            let key_room = e.props.get("requirementKey").and_then(Value::as_str).ok_or("the room has no key")?.to_string();
+            let project = crate::project::find(model).ok_or("this model has no project")?;
+            let mut labels = project.props.get("labels").and_then(Value::as_object).cloned().unwrap_or_default();
+            match value.as_str().map(str::trim).filter(|t| !t.is_empty()) {
+                Some(t) => labels.insert(key_room, json!(t)),
+                None => labels.remove(&key_room),
+            };
+            edit.cmds.push(Command::SetProp { id: project.id, key: "labels".into(), value: Some(Value::Object(labels)) });
+        }
+        ("Dimension", "at") | ("Tag", "dx" | "dy") => {
+            edit.cmds.push(Command::SetProp { id, key: key.into(), value: Some(json!(int(key)?)) });
+        }
+        ("Tag", "showName" | "showArea" | "showElevation") => {
+            let v = value.as_bool().ok_or_else(|| format!("{key} is true or false"))?;
+            edit.cmds.push(Command::SetProp { id, key: key.into(), value: Some(json!(v)) });
         }
         ("Door", "isEgress") => {
             let v = value.as_bool().ok_or("isEgress is true or false")?;

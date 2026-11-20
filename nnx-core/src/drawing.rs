@@ -25,11 +25,13 @@ pub struct DrawOpts {
     pub show_structure: bool,
     /// Draw MEP points (lights, sockets, fixtures, board, air-conditioning units) over the plan.
     pub show_mep: bool,
+    /// Draw a plan with no rooms (a blank project): the empty drawing area, and whatever is drafted on it.
+    pub blank_canvas: bool,
 }
 
 impl Default for DrawOpts {
     fn default() -> Self {
-        Self { title: "Ground floor plan".into(), labels: BTreeMap::new(), px_per_m: 50.0, margin_px: 90.0, show_dims: true, show_structure: false, show_mep: false }
+        Self { title: "Ground floor plan".into(), labels: BTreeMap::new(), px_per_m: 50.0, margin_px: 90.0, show_dims: true, show_structure: false, show_mep: false, blank_canvas: false }
     }
 }
 
@@ -47,22 +49,28 @@ fn esc(s: &str) -> String {
 /// The plan's frame as `plan_svg` computes it: `(min x, max y, pixels per mm, margin)`, so overlays can use the same coordinates.
 pub fn frame(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Option<(f64, f64, f64, f64)> {
     let spaces = collect::<Space>(model, level);
-    if spaces.is_empty() {
+    if spaces.is_empty() && !opts.blank_canvas {
         return None;
     }
     let (minx, _, _, maxy) = extents(model, level, &spaces);
     Some((minx, maxy, opts.px_per_m / 1000.0, opts.margin_px))
 }
 
-/// `(min x, min y, max x, max y)` of the plan: the rooms, and any wall or column drawn beyond them, so nothing the user drafts outside the
-/// building is cut off. For a generated plan every wall lies on a room edge, so this is the rooms' own extent.
+/// `(min x, min y, max x, max y)` of the plan: the rooms (or, with none, the blank drawing area), and any wall, column, grid line or
+/// dimension beyond them, so nothing the user drafts outside the building is cut off. For a generated plan every wall lies on a room
+/// edge, so this is the rooms' own extent.
 fn extents(model: &Model, level: Option<Id>, spaces: &[(&Element, Space)]) -> (f64, f64, f64, f64) {
-    let mut e = (
-        spaces.iter().map(|(_, s)| s.x as f64).fold(f64::INFINITY, f64::min),
-        spaces.iter().map(|(_, s)| s.y as f64).fold(f64::INFINITY, f64::min),
-        spaces.iter().map(|(_, s)| (s.x + s.w) as f64).fold(f64::NEG_INFINITY, f64::max),
-        spaces.iter().map(|(_, s)| (s.y + s.h) as f64).fold(f64::NEG_INFINITY, f64::max),
-    );
+    let mut e = if spaces.is_empty() {
+        let b = crate::annot::BLANK_CANVAS_MM;
+        (b[0] as f64, b[1] as f64, b[2] as f64, b[3] as f64)
+    } else {
+        (
+            spaces.iter().map(|(_, s)| s.x as f64).fold(f64::INFINITY, f64::min),
+            spaces.iter().map(|(_, s)| s.y as f64).fold(f64::INFINITY, f64::min),
+            spaces.iter().map(|(_, s)| (s.x + s.w) as f64).fold(f64::NEG_INFINITY, f64::max),
+            spaces.iter().map(|(_, s)| (s.y + s.h) as f64).fold(f64::NEG_INFINITY, f64::max),
+        )
+    };
     let mut grow = |x: i64, y: i64| {
         e = (e.0.min(x as f64), e.1.min(y as f64), e.2.max(x as f64), e.3.max(y as f64));
     };
@@ -73,6 +81,7 @@ fn extents(model: &Model, level: Option<Id>, spaces: &[(&Element, Space)]) -> (f
     for (_, c) in collect::<crate::typed::Column>(model, level) {
         grow(c.x, c.y);
     }
+    crate::annot::grow_extents(model, level, &mut grow);
     e
 }
 
@@ -98,7 +107,7 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
     let walls = collect::<Wall>(model, level);
     let doors = collect::<Door>(model, level);
     let windows = collect::<Window>(model, level);
-    if spaces.is_empty() {
+    if spaces.is_empty() && !opts.blank_canvas {
         return Err(DrawError::NoSpaces);
     }
 
@@ -127,6 +136,9 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
 .run{{fill:none;stroke-opacity:.45;stroke-linecap:butt}} .run-duct{{stroke:#0b7285}} .run-pipe{{stroke:#2b7a3d}} .run-drain{{stroke:#8a5a1b}} .run-cable{{stroke:#6a1b9a;stroke-dasharray:6 3}} .mep-diffuser{{fill:#fff;stroke:#0b7285;stroke-width:1.3}} .mep-grille{{fill:none;stroke:#0b7285;stroke-width:1.1;stroke-dasharray:3 2}}
 .mep-light{{fill:#f2b705;stroke:#7a5c00;stroke-width:.8}} .mep-socket{{fill:#fff;stroke:#1b6ca8;stroke-width:1.3}} .mep-fixture{{fill:#2a9d8f;stroke:#14524b;stroke-width:.8}} .mep-panel{{fill:#6a1b9a}} .mep-ac{{fill:none;stroke:#0b7285;stroke-width:1.4}} .mep-txt{{font-size:8.5px;fill:#333;text-anchor:middle}}
  .title{{font-size:16px;font-weight:700;fill:#111}} .note{{font-size:10.5px;fill:#a33}}
+ .grid{{stroke:#c0392b;stroke-width:.8;stroke-dasharray:14 3 2 3;fill:none}} .gbub{{fill:#fff;stroke:#c0392b;stroke-width:1}} .gtxt{{font-size:11px;font-weight:600;fill:#c0392b;text-anchor:middle}}
+ .dimline,.dimext,.dimtick{{stroke:#1c5d99;stroke-width:.8;fill:none}} .dimtick{{stroke-width:1.2}} .dimtxt2{{font-size:10.5px;fill:#1c5d99;text-anchor:middle}}
+ .tagbox{{fill:#fff;fill-opacity:.9;stroke:#555;stroke-width:.8}} .tagname{{font-size:11px;font-weight:600;fill:#111;text-anchor:middle}} .tagtxt{{font-size:10px;fill:#444;text-anchor:middle}}
 </style>
 <rect class="bg" width="{w:.1}" height="{h:.1}"/>
 "##,
@@ -232,8 +244,9 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
         let _ = writeln!(o, "</g>");
     }
 
-    // Labels.
-    for (e, sp) in &spaces {
+    // Labels (a room with a tag is labelled by its tag).
+    let tagged = crate::annot::tagged_rooms(model, level);
+    for (e, sp) in spaces.iter().filter(|(e, _)| !tagged.contains(&e.id)) {
         let name = opts
             .labels
             .get(&sp.requirement_key)
@@ -255,6 +268,9 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
             sp.h as f64 / 1000.0
         );
     }
+
+    // Grid lines, permanent dimensions and room tags.
+    crate::annot::plan_svg(model, level, &crate::annot::Map { minx, maxy, s, m }, &opts.labels, &mut o);
 
     // Structure overlay: beams under columns, grid references above.
     if opts.show_structure {
@@ -323,8 +339,14 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
         }
     }
 
-    // Overall dimensions.
-    if opts.show_dims {
+    // Overall dimensions: of the rooms (not of the blank drawing area or the annotations).
+    if opts.show_dims && !spaces.is_empty() {
+        let (minx, miny, maxx, maxy) = (
+            spaces.iter().map(|(_, s)| s.x as f64).fold(f64::INFINITY, f64::min),
+            spaces.iter().map(|(_, s)| s.y as f64).fold(f64::INFINITY, f64::min),
+            spaces.iter().map(|(_, s)| (s.x + s.w) as f64).fold(f64::NEG_INFINITY, f64::max),
+            spaces.iter().map(|(_, s)| (s.y + s.h) as f64).fold(f64::NEG_INFINITY, f64::max),
+        );
         let (bx0, bx1, by) = (tx(minx), tx(maxx), ty(miny) + 34.0);
         let _ = writeln!(o, r#"<path class="dim" d="M {bx0:.1} {by:.1} H {bx1:.1} M {bx0:.1} {:.1} V {:.1} M {bx1:.1} {:.1} V {:.1}"/>"#, by - 5.0, by + 5.0, by - 5.0, by + 5.0);
         let _ = writeln!(o, r#"<text class="dimtxt" x="{:.1}" y="{:.1}">{:.2} m</text>"#, (bx0 + bx1) / 2.0, by - 6.0, (maxx - minx) / 1000.0);

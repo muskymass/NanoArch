@@ -113,6 +113,7 @@ const STYLE: &str = r##"<style>
  .facade-plinth{fill:#b9ad96;stroke:#2b2b2b;stroke-width:.8} .facade-pilaster{fill:#e4dccb;stroke:#2b2b2b;stroke-width:.8} .facade-cornice{fill:#d9cfba;stroke:#2b2b2b;stroke-width:.8} .facade-reveal{fill:#555}
  .lvl{stroke:#1b6ca8;stroke-width:.8;stroke-dasharray:8 4} .lvltxt{font-size:11px;fill:#1b6ca8}
  .dim{stroke:#444;stroke-width:.8;fill:none} .dimtxt{font-size:11px;fill:#222;text-anchor:middle}
+ .grid{stroke:#c0392b;stroke-width:.8;stroke-dasharray:14 3 2 3;fill:none} .gbub{fill:#fff;stroke:#c0392b;stroke-width:1} .gtxt{font-size:11px;font-weight:600;fill:#c0392b;text-anchor:middle}
  .title{font-size:16px;font-weight:700;fill:#111} .note{font-size:10.5px;fill:#a33}
 </style>"##;
 
@@ -156,6 +157,8 @@ pub struct ViewShapes {
     pub bottom: f64,
     /// Level names with their elevation above the ground floor top, metres.
     pub levels: Vec<(String, f64)>,
+    /// Grid lines seen in the view: name and position across the view (metres).
+    pub grids: Vec<(String, f64)>,
 }
 
 /// What an export asks for: an elevation or a section.
@@ -169,6 +172,8 @@ struct Canvas {
     o: String,
     f: Frame,
     shapes: Vec<Shape>,
+    /// Grid lines seen in this view: name and position across the view (metres).
+    grids: Vec<(String, f64)>,
 }
 
 impl Canvas {
@@ -214,7 +219,7 @@ fn begin(opts: &ViewOpts, h_range: (f64, f64), top: f64, bottom: f64) -> Canvas 
     let f = Frame { s, m, h0, zmax: top + headroom };
     let mut o = String::new();
     let _ = write!(o, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {width:.1} {height:.1}\" width=\"{width:.0}\" height=\"{height:.0}\" font-family=\"Segoe UI, Tahoma, Arial, sans-serif\">\n{STYLE}\n<rect class=\"bg\" width=\"{width:.1}\" height=\"{height:.1}\"/>\n");
-    Canvas { o, f, shapes: Vec::new() }
+    Canvas { o, f, shapes: Vec::new(), grids: Vec::new() }
 }
 
 /// Ground line with hatching, level marks, heights, title block. Call last (it needs the final extents).
@@ -224,6 +229,10 @@ fn finish(mut c: Canvas, scene: &Scene, title: &str, subtitle: &str, h_range: (f
     let f = &c.f;
     let (gx0, gx1, gy) = (f.x(h0), f.x(h1), f.y(0.0));
     let mut o = String::new();
+    for (name, h) in &c.grids {
+        let (x, y0, y1) = (f.x(*h), f.y(bottom), f.y(top + 0.3));
+        let _ = writeln!(o, r#"<line class="grid" x1="{x:.1}" y1="{y0:.1}" x2="{x:.1}" y2="{y1:.1}"/><circle class="gbub" cx="{x:.1}" cy="{:.1}" r="12"/><text class="gtxt" x="{x:.1}" y="{:.1}">{}</text>"#, y1 - 12.0, y1 - 8.0, esc(name));
+    }
     let _ = writeln!(o, r#"<line class="ground" x1="{gx0:.1}" y1="{gy:.1}" x2="{gx1:.1}" y2="{gy:.1}"/>"#);
     let mut hx = gx0;
     while hx < gx1 {
@@ -251,8 +260,26 @@ fn finish(mut c: Canvas, scene: &Scene, title: &str, subtitle: &str, h_range: (f
     let _ = writeln!(o, r#"<text class="title" x="{:.1}" y="{ty:.1}">{}</text><text class="note" x="{:.1}" y="{:.1}">{}</text>"#, f.m, esc(title), f.m, ty + 18.0, esc(subtitle));
     let _ = writeln!(o, r#"<text class="note" x="{:.1}" y="{:.1}">Preliminary drawing: heights from the top of the ground floor slab, no site datum assumed. Metres.</text></svg>"#, f.m, ty + 34.0);
     c.o.push_str(&o);
-    let shapes = ViewShapes { title: title.to_string(), subtitle: subtitle.to_string(), shapes: c.shapes, h_range, top, bottom, levels: marks };
+    let shapes = ViewShapes { title: title.to_string(), subtitle: subtitle.to_string(), shapes: c.shapes, h_range, top, bottom, levels: marks, grids: std::mem::take(&mut c.grids) };
     (c.o, shapes)
+}
+
+/// The grid lines a view looking along an axis shows, with their position across the view in metres: a line seen end-on is a vertical
+/// line. `across_x` is true when the view's horizontal axis is x (so the lines that stand at an x are the ones seen); `sign` is -1 when the
+/// view looks the other way (the horizontal axis is reversed).
+fn view_grids(model: &Model, across_x: bool, sign: f64, range: (f64, f64)) -> Vec<(String, f64)> {
+    use crate::typed::{Grid, Typed};
+    let mut v: Vec<(String, f64)> = model
+        .elements
+        .values()
+        .filter(|e| e.kind == Grid::KIND)
+        .filter_map(|e| e.typed::<Grid>().ok())
+        .filter(|g| g.horizontal() != across_x)
+        .map(|g| { let h = sign * g.coord() as f64 / 1000.0; (g.name, h) })
+        .filter(|(_, h)| *h >= range.0 - 1.5 && *h <= range.1 + 1.5)
+        .collect();
+    v.sort_by(|a, b| a.1.total_cmp(&b.1));
+    v
 }
 
 fn top_of(scene: &Scene, parapet: Option<f64>) -> f64 {
@@ -309,6 +336,12 @@ fn elevation_build(model: &Model, side: Side, opts: &ViewOpts) -> Result<(String
     let bottom = -0.3;
     let title = if opts.title.is_empty() { side.name().to_string() } else { format!("{} — {}", opts.title, side.name()) };
     let mut c = begin(opts, hr, top, bottom);
+    c.grids = match side {
+        Side::South => view_grids(model, true, 1.0, hr),
+        Side::North => view_grids(model, true, -1.0, hr),
+        Side::East => view_grids(model, false, 1.0, hr),
+        Side::West => view_grids(model, false, -1.0, hr),
+    };
     let facade: Vec<&Box3> = scene.boxes.iter().filter(|b| matches!(b.kind, "Wall" | "Window" | "Door") && (b.kind != "Wall" || b.class == "ext") && on_side(b, side, &e)).collect();
     for b in facade.iter().filter(|b| b.kind == "Wall") {
         let (h0, h1) = h_range_side(b, side);
@@ -391,6 +424,7 @@ fn section_build(model: &Model, cut: &Cut, opts: &ViewOpts) -> Result<(String, V
     let title = format!("{}{} section {name}", opts.title, if opts.title.is_empty() { "" } else { " — " });
     let sub = format!("Plane {} = {at:.2} m, {looking}", if axis == 1 { "y" } else { "x" });
     let mut c = begin(opts, hr, top, bottom);
+    c.grids = view_grids(model, axis == 1, 1.0, hr);
     // Beyond the plane (what is seen past it), far to near; then what the plane cuts, on top.
     let mut beyond: Vec<&Box3> = scene.boxes.iter().filter(|b| section_class(b).is_some()).filter(|b| if axis == 1 { b.min[1] >= at } else { b.max[0] <= at }).collect();
     beyond.sort_by(|a, b| if axis == 1 { b.min[1].total_cmp(&a.min[1]) } else { a.max[0].total_cmp(&b.max[0]) });

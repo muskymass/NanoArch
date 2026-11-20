@@ -165,7 +165,7 @@ ul.clean li{margin:3px 0}
   <!-- ============ plan ============ -->
   <section class="col">
     <div class="bar">
-      <button id="openproj" data-i="open_proj"></button>
+      <button id="openproj" data-i="open_proj"></button><button id="newblank"></button>
       <button id="undo" disabled data-i="undo"></button><button id="redo" disabled data-i="redo"></button>
       <label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="showstruct"><span data-i="show_struct"></span></label>
       <button id="sync" disabled data-i="sync"></button>
@@ -446,7 +446,7 @@ function applyLang() {
   try { sxBuild(); } catch (e) { /* not loaded yet */ }
   try { $("tab-mx").textContent = L("MEP متقدم", "Advanced MEP"); mxBuild(); } catch (e) { /* not loaded yet */ }
   try { v5Labels(); prBuild(); } catch (e) { /* not loaded yet */ }
-  try { exBuild(); olBuild(); vrBuild(); ovBuild(); applyMode(); $("draft").textContent = L("رسم BIM", "BIM draft"); drBar(); } catch (e) { /* not loaded yet */ }
+  try { exBuild(); olBuild(); vrBuild(); ovBuild(); applyMode(); $("draft").textContent = L("رسم BIM", "BIM draft"); $("newblank").textContent = L("مشروع فارغ", "Blank project"); drBar(); } catch (e) { /* not loaded yet */ }
   if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
 }
 
@@ -2547,7 +2547,7 @@ const DR = {
   placement: null, box: null, pan: null, vw: null, vb0: null, flight: false, queued: null, space: false, props: null,
   opt: { thick: "", height: "", dw: "", dh: "", ww: "", wh: "", ws: "", chain: true, copy: false, axis: "x" },
 };
-const DR_TOOLS = [["select", "V", "تحديد", "Select"], ["wall", "W", "جدار", "Wall"], ["door", "D", "باب", "Door"], ["window", "N", "نافذة", "Window"], ["move", "M", "نقل", "Move"], ["copy", "C", "نسخ", "Copy"], ["rotate", "R", "تدوير", "Rotate"], ["mirror", "X", "انعكاس", "Mirror"], ["align", "A", "محاذاة", "Align"], ["split", "S", "تقسيم", "Split"], ["trim", "T", "قص للزاوية", "Trim"]];
+const DR_TOOLS = [["select", "V", "تحديد", "Select"], ["wall", "W", "جدار", "Wall"], ["door", "D", "باب", "Door"], ["window", "N", "نافذة", "Window"], ["move", "M", "نقل", "Move"], ["copy", "C", "نسخ", "Copy"], ["rotate", "R", "تدوير", "Rotate"], ["mirror", "X", "انعكاس", "Mirror"], ["align", "A", "محاذاة", "Align"], ["split", "S", "تقسيم", "Split"], ["trim", "T", "قص للزاوية", "Trim"], ["grid", "G", "محور", "Grid"], ["dimension", "I", "بُعد", "Dimension"], ["tag", "Q", "وسم غرفة", "Room tag"]];
 const drSvg = () => document.querySelector("#viewer svg");
 const drToWorld = p => [DR.frame.minx + (p.x - DR.frame.m) / DR.frame.s, DR.frame.maxy - (p.y - DR.frame.m) / DR.frame.s];
 const drToSvg = w => [DR.frame.m + (w[0] - DR.frame.minx) * DR.frame.s, DR.frame.m + (DR.frame.maxy - w[1]) * DR.frame.s];
@@ -2607,14 +2607,25 @@ function drDraw() {
       else if (kind === "midpoint") drEl(g, "polygon", { points: `${s[0]},${s[1] - r} ${s[0] - r},${s[1] + r} ${s[0] + r},${s[1] + r}`, fill: "none", stroke: "#a65b00", "stroke-width": sw });
       else if (kind === "intersection") { drEl(g, "line", { x1: s[0] - r, y1: s[1] - r, x2: s[0] + r, y2: s[1] + r, stroke: "#b3261e", "stroke-width": sw }); drEl(g, "line", { x1: s[0] - r, y1: s[1] + r, x2: s[0] + r, y2: s[1] - r, stroke: "#b3261e", "stroke-width": sw }); }
       else drEl(g, "circle", { cx: s[0], cy: s[1], r: 3 * k, fill: acc });
-      if (kind !== "grid") drLabel(g, s[0], s[1] - 9 * k, ({ endpoint: L("نقطة طرف", "endpoint"), midpoint: L("منتصف", "midpoint"), intersection: L("تقاطع", "crossing"), perpendicular: L("عمودي", "perpendicular"), aligned: L("محاذاة", "aligned") })[kind] || kind);
+      if (kind !== "grid") drLabel(g, s[0], s[1] - 9 * k, ({ endpoint: L("نقطة طرف", "endpoint"), midpoint: L("منتصف", "midpoint"), intersection: L("تقاطع", "crossing"), perpendicular: L("عمودي", "perpendicular"), online: L("على المحور", "on grid line"), aligned: L("محاذاة", "aligned") })[kind] || kind);
     }
-    if (DR.tool === "wall" && DR.start && s) {
-      const a = drToSvg(DR.start), t = Number(DR.opt.thick) || 150;
-      drEl(g, "line", { x1: a[0], y1: a[1], x2: s[0], y2: s[1], stroke: acc, "stroke-opacity": 0.45, "stroke-width": Math.max(2 * k, t * DR.frame.s) });
-      drEl(g, "line", { x1: a[0], y1: a[1], x2: s[0], y2: s[1], stroke: acc, "stroke-width": sw, "stroke-dasharray": `${4 * k} ${3 * k}` });
+    if ((DR.tool === "wall" || DR.tool === "grid") && DR.start && s) {
+      const a = drToSvg(DR.start), t = Number(DR.opt.thick) || 150, col = DR.tool === "grid" ? "#c0392b" : acc;
+      if (DR.tool === "wall") drEl(g, "line", { x1: a[0], y1: a[1], x2: s[0], y2: s[1], stroke: acc, "stroke-opacity": 0.45, "stroke-width": Math.max(2 * k, t * DR.frame.s) });
+      drEl(g, "line", { x1: a[0], y1: a[1], x2: s[0], y2: s[1], stroke: col, "stroke-width": sw, "stroke-dasharray": `${4 * k} ${3 * k}` });
       const len = Math.round(Math.hypot(DR.snap.p[0] - DR.start[0], DR.snap.p[1] - DR.start[1]));
       drLabel(g, (a[0] + s[0]) / 2, (a[1] + s[1]) / 2 - 8 * k, DR.typed ? `${DR.typed} mm ⏎` : `${len} mm`);
+    }
+    if (DR.tool === "dimension" && DR.dim && DR.dim.a) {
+      const d = DR.dim, a = d.a, b = d.b || DR.snap.p, xAxis = Math.abs(b[0] - a[0]) >= Math.abs(b[1] - a[1]), blue = "#1c5d99";
+      if (!d.b) { const p = drToSvg(a); drEl(g, "line", { x1: p[0], y1: p[1], x2: s[0], y2: s[1], stroke: blue, "stroke-width": sw, "stroke-dasharray": `${4 * k} ${3 * k}` }); }
+      else {
+        const at = xAxis ? DR.snap.p[1] : DR.snap.p[0], pt = (along, across) => drToSvg(xAxis ? [along, across] : [across, along]);
+        const A = xAxis ? a[0] : a[1], B = xAxis ? b[0] : b[1], l0 = pt(A, at), l1 = pt(B, at);
+        for (const [al, from] of [[A, xAxis ? a[1] : a[0]], [B, xAxis ? b[1] : b[0]]]) { const q0 = pt(al, from), q1 = pt(al, at); drEl(g, "line", { x1: q0[0], y1: q0[1], x2: q1[0], y2: q1[1], stroke: blue, "stroke-width": sw, "stroke-opacity": 0.7 }); }
+        drEl(g, "line", { x1: l0[0], y1: l0[1], x2: l1[0], y2: l1[1], stroke: blue, "stroke-width": 1.4 * k });
+        drLabel(g, (l0[0] + l1[0]) / 2, (l0[1] + l1[1]) / 2 - 6 * k, `${Math.abs(B - A)} mm`);
+      }
     }
     if ((DR.tool === "door" || DR.tool === "window") && DR.placement) {
       const p = DR.placement, c = drToSvg(p.center), w = (Number(DR.tool === "door" ? DR.opt.dw : DR.opt.ww) || 800) * DR.frame.s, d = Math.max(6 * k, 220 * DR.frame.s);
@@ -2634,6 +2645,12 @@ function drDraw() {
 }
 
 // ---- the pointer: snapping and previews go to the backend, one request at a time
+// What the snap needs: the start of what is being drawn (walls and grid lines hold an axis; a move or the first dimension point do not).
+function drSnapArgs(w, scale) {
+  const t = DR.tool, line = (t === "wall" || t === "grid") && DR.start;
+  const from = line ? DR.start : (DR.base && ["move", "copy"].includes(t) ? DR.base : (t === "dimension" && DR.dim && !DR.dim.b ? DR.dim.a : null));
+  return { p: w, scale, from, ortho: !!line };
+}
 function drQuery(e) {
   const p = drEvt(e); if (!p || !DR.frame) return; DR.cur = drToWorld(p); DR.last = e;
   if (DR.flight) { DR.queued = true; return; }
@@ -2644,8 +2661,7 @@ function drQuery(e) {
         DR.queued = false; const w = DR.cur, scale = drScale();
         if (DR.tool === "door" || DR.tool === "window") { const wd = drNum(DR.tool === "door" ? DR.opt.dw : DR.opt.ww); DR.placement = wd > 0 ? (await call("draft_place", { p: w, width: wd, scale })).placement : null; DR.snap = DR.placement ? { p: DR.placement.center, kind: "grid" } : null; }
         else {
-          const from = (DR.tool === "wall" && DR.start) ? DR.start : (DR.base && ["move", "copy"].includes(DR.tool) ? DR.base : null);
-          DR.snap = await call("draft_snap", { p: w, scale, from, ortho: DR.tool === "wall" && !!DR.start });
+          DR.snap = await call("draft_snap", drSnapArgs(w, scale));
         }
         drDraw();
       } while (DR.queued);
@@ -2656,11 +2672,22 @@ async function drEdit(cmd, args) {
   try { const r = await call(cmd, args); if (r.frame) DR.frame = r.frame; if (r.defaults) DR.defaults = r.defaults; await afterEdit(r); if (r.notes && r.notes.length) drSay(r.notes.join(" · ")); return r; }
   catch (x) { drSay(x.message || String(x)); return null; }
 }
-function drPickAt(e) {
-  for (const el of document.elementsFromPoint(e.clientX, e.clientY)) { const t = el.closest && el.closest("#viewer [data-id]"); if (t && !t.closest("#dr-ov") && !/\bmep|run\b/.test(t.getAttribute("class") || "")) return t; }
-  return null;
+// The element under the pointer. Walls, openings, grid lines and dimensions are only a few pixels wide on screen, so when the pointer is
+// over a room (or nothing) they are looked for within 5 px; `want` limits the kinds taken.
+function drPickAt(e, want) {
+  const ok = t => t && !t.closest("#dr-ov") && !/\bmep\b|\brun\b/.test(t.getAttribute("class") || "") && (!want || want.includes(drKindOf(t)));
+  let top = null;
+  for (const el of document.elementsFromPoint(e.clientX, e.clientY)) { const t = el.closest && el.closest("#viewer [data-id]"); if (ok(t)) { top = t; break; } }
+  if (top && drKindOf(top) !== "Space") return top;
+  let best = null, ba = Infinity;
+  for (const t of document.querySelectorAll("#viewer rect.wall[data-id], #viewer g.door[data-id], #viewer g.window[data-id], #viewer g.gridline[data-id], #viewer rect.column[data-id]")) {
+    if (!ok(t)) continue;
+    const b = t.getBoundingClientRect();
+    if (e.clientX >= b.left - 5 && e.clientX <= b.right + 5 && e.clientY >= b.top - 5 && e.clientY <= b.bottom + 5) { const area = Math.max(b.width, 1) * Math.max(b.height, 1); if (area < ba) { ba = area; best = t; } }
+  }
+  return best || top;
 }
-const drKindOf = el => { const c = (el.getAttribute("class") || "").split(" ")[0]; return c === "room" ? "Space" : c === "wall" ? "Wall" : c === "door" ? "Door" : c === "window" ? "Window" : c === "column" ? "Column" : c; };
+const drKindOf = el => { const c = (el.getAttribute("class") || "").split(" ")[0]; return ({ room: "Space", wall: "Wall", door: "Door", window: "Window", column: "Column", gridline: "Grid", dimension: "Dimension", tag: "Tag" })[c] || c; };
 function drNeed(n, msg) { if (drIds().length < n) { drSay(msg || L("حدّد عناصر أولاً (انقر أو اسحب مربعاً)", "Select elements first (click, or drag a box)")); return false; } return true; }
 
 function drClick(e) {
@@ -2670,6 +2697,21 @@ function drClick(e) {
     if (p[0] === DR.start[0] && p[1] === DR.start[1]) return;
     const a = DR.start;
     drEdit("draft_wall", { a, b: p, thickness: drNum(DR.opt.thick), height: drNum(DR.opt.height) }).then(r => { if (r) { DR.start = DR.opt.chain ? p : null; DR.typed = ""; } drDraw(); });
+  } else if (t === "grid") {
+    if (!DR.start) { DR.start = p; drDraw(); return; }
+    if (p[0] === DR.start[0] && p[1] === DR.start[1]) return;
+    const a = DR.start;
+    drEdit("draft_grid", { a, b: p }).then(r => { if (r) { DR.start = null; selectIds([r.grid], { src: "draft" }); } drDraw(); });
+  } else if (t === "dimension") {
+    const el = drPickAt(e), kind = el ? drKindOf(el) : null, ref = el && ["Wall", "Door", "Window", "Column", "Grid"].includes(kind) ? el.dataset.id : null;
+    if (!DR.dim) { DR.dim = { a: p, refA: ref, b: null, refB: null }; drSay(L("انقر النقطة الثانية", "Click the second point")); }
+    else if (!DR.dim.b) { if (p[0] === DR.dim.a[0] && p[1] === DR.dim.a[1]) return; DR.dim.b = p; DR.dim.refB = ref; drSay(L("انقر موضع خط البُعد", "Click where the dimension line goes")); }
+    else { const d = DR.dim; DR.dim = null; drEdit("draft_dimension", { a: d.a, b: d.b, at: p, refA: d.refA, refB: d.refB }).then(r => { if (r) selectIds([r.dimension], { src: "draft" }); drDraw(); }); }
+    drDraw();
+  } else if (t === "tag") {
+    const el = drPickAt(e, ["Space"]), room = el ? el.dataset.id : null;
+    if (!room) { drSay(L("انقر داخل غرفة", "Click inside a room")); return; }
+    drEdit("draft_tag", { rooms: [room] }).then(r => { if (r) selectIds(r.created, { src: "draft" }); });
   } else if (t === "door" || t === "window") {
     const pl = DR.placement; if (!pl) { drSay(L("اقترب من جدار", "Move over a wall")); return; }
     if (!pl.fits) { drSay(L("الجدار أقصر من أن يتسع له", "the wall is too short for it")); return; }
@@ -2744,7 +2786,7 @@ async function drQueryNow(e) {
   try {
     const w = DR.cur, scale = drScale();
     if (DR.tool === "door" || DR.tool === "window") { const wd = drNum(DR.tool === "door" ? DR.opt.dw : DR.opt.ww); DR.placement = wd > 0 ? (await call("draft_place", { p: w, width: wd, scale })).placement : null; DR.snap = DR.placement ? { p: DR.placement.center, kind: "grid" } : null; }
-    else { const from = (DR.tool === "wall" && DR.start) ? DR.start : (DR.base && ["move", "copy"].includes(DR.tool) ? DR.base : null); DR.snap = await call("draft_snap", { p: w, scale, from, ortho: DR.tool === "wall" && !!DR.start }); }
+    else { DR.snap = await call("draft_snap", drSnapArgs(w, scale)); }
   } catch (x) { /* the click is dropped */ } finally { DR.flight = false; }
 }
 const drTyping = e => { const t = e.target && e.target.tagName; return t === "INPUT" || t === "SELECT" || t === "TEXTAREA"; };
@@ -2760,7 +2802,7 @@ function drKey(e) {
     const b = horiz ? [a[0] + Math.sign(dx || 1) * len, a[1]] : [a[0], a[1] + Math.sign(dy || 1) * len]; e.preventDefault();
     drEdit("draft_wall", { a, b, thickness: drNum(DR.opt.thick), height: drNum(DR.opt.height) }).then(r => { if (r) { DR.start = DR.opt.chain ? b : null; DR.typed = ""; } drDraw(); }); return;
   }
-  if (k === "Escape") { if (DR.start || DR.base || DR.ref) { DR.start = DR.base = DR.ref = null; DR.typed = ""; drDraw(); } else if (DR.tool !== "select") drSetTool("select"); else selectIds([], { src: "draft" }); return; }
+  if (k === "Escape") { if (DR.start || DR.base || DR.ref || DR.dim) { DR.start = DR.base = DR.ref = DR.dim = null; DR.typed = ""; drDraw(); } else if (DR.tool !== "select") drSetTool("select"); else selectIds([], { src: "draft" }); return; }
   if (k === "Delete") { if (drNeed(1)) { e.preventDefault(); drEdit("draft_delete", { ids: drIds() }); } return; }
   if (k === "Home") { drFit(); return; }
   if (k === "+" || k === "=") { drZoom(0.8); return; }
@@ -2769,9 +2811,9 @@ function drKey(e) {
 }
 
 // ---- the toolbar
-function drSetTool(t) { DR.tool = t; DR.start = DR.base = DR.ref = null; DR.typed = ""; DR.placement = null; DR.snap = null; if (t === "rotate") { drRotate(1); DR.tool = "select"; } drBar(); drDraw(); drHint(); }
+function drSetTool(t) { DR.tool = t; DR.start = DR.base = DR.ref = DR.dim = null; DR.typed = ""; DR.placement = null; DR.snap = null; if (t === "rotate") { drRotate(1); DR.tool = "select"; } drBar(); drDraw(); drHint(); }
 function drHint() {
-  const h = { select: L("انقر لتحديد، Shift للإضافة، اسحب مربعاً (يميناً: يحتوي، يساراً: يلامس)", "Click to select, Shift to add, drag a box (right: holds, left: touches)"), wall: L("انقر البداية ثم النهاية؛ اكتب الطول ثم Enter؛ Esc ينهي", "Click the start, then the end; type a length and Enter; Esc ends"), door: L("حرّك فوق جدار وانقر", "Move over a wall and click"), window: L("حرّك فوق جدار وانقر", "Move over a wall and click"), move: L("حدّد أولاً ثم انقر نقطة الأساس ثم الوصول", "Select first, then click a base point and a target"), copy: L("حدّد أولاً ثم انقر نقطة الأساس ثم الوصول", "Select first, then click a base point and a target"), mirror: L("حدّد أولاً ثم انقر نقطة على محور الانعكاس", "Select first, then click a point on the mirror line"), align: L("انقر الجدار المرجع ثم الجدار المراد نقله", "Click the reference wall, then the wall to move"), split: L("انقر على جدار عند نقطة القطع", "Click a wall where it is to be cut"), trim: L("انقر الجدار الأول (الجزء المراد إبقاؤه) ثم الثاني", "Click the first wall (on the part to keep), then the second") }[DR.tool];
+  const h = { select: L("انقر لتحديد، Shift للإضافة، اسحب مربعاً (يميناً: يحتوي، يساراً: يلامس)", "Click to select, Shift to add, drag a box (right: holds, left: touches)"), wall: L("انقر البداية ثم النهاية؛ اكتب الطول ثم Enter؛ Esc ينهي", "Click the start, then the end; type a length and Enter; Esc ends"), door: L("حرّك فوق جدار وانقر", "Move over a wall and click"), window: L("حرّك فوق جدار وانقر", "Move over a wall and click"), move: L("حدّد أولاً ثم انقر نقطة الأساس ثم الوصول", "Select first, then click a base point and a target"), copy: L("حدّد أولاً ثم انقر نقطة الأساس ثم الوصول", "Select first, then click a base point and a target"), mirror: L("حدّد أولاً ثم انقر نقطة على محور الانعكاس", "Select first, then click a point on the mirror line"), align: L("انقر الجدار المرجع ثم الجدار المراد نقله", "Click the reference wall, then the wall to move"), split: L("انقر على جدار عند نقطة القطع", "Click a wall where it is to be cut"), trim: L("انقر الجدار الأول (الجزء المراد إبقاؤه) ثم الثاني", "Click the first wall (on the part to keep), then the second"), grid: L("انقر بداية خط المحور ثم نهايته؛ الأسماء A B C للرأسي و1 2 3 للأفقي", "Click the start of the grid line, then its end; A B C for vertical, 1 2 3 for horizontal"), dimension: L("انقر نقطتين (يلتصق بالجدران والمحاور والفتحات) ثم موضع الخط", "Click two points (it attaches to walls, grid lines and openings), then where the line goes"), tag: L("انقر داخل غرفة لوسمها", "Click inside a room to tag it") }[DR.tool];
   const e = $("dr-hint"); if (e) e.textContent = h || "";
 }
 function drFillDefaults() {
@@ -2790,11 +2832,11 @@ function drBar(keepFocus) {
     select: "" }[DR.tool] || "";
   bar.innerHTML = `<div style="display:flex;gap:4px;flex-wrap:wrap">${tools}</div><span style="width:8px"></span>${opts}<span style="flex:1"></span>
     <button data-dact="rot-l" title="${L("تدوير 90° عكس عقارب الساعة", "Rotate 90° counter-clockwise")}">⟲</button><button data-dact="rot-r" title="${L("تدوير 90° مع عقارب الساعة", "Rotate 90° clockwise")}">⟳</button>
-    <button data-dact="del" title="Delete">🗑</button><button data-dact="zin">＋</button><button data-dact="zout">－</button><button data-dact="fit">${L("ملاءمة", "Fit")}</button>
+    <button data-dact="rooms" title="${L("ابحث عن الغرف من الجدران المغلقة", "Find the rooms the walls enclose")}">${L("الغرف", "Rooms")}</button><button data-dact="tagall" title="${L("وسم كل الغرف", "Tag every room")}">${L("وسم الكل", "Tag all")}</button><button data-dact="del" title="Delete">🗑</button><button data-dact="zin">＋</button><button data-dact="zout">－</button><button data-dact="fit">${L("ملاءمة", "Fit")}</button>
     <div id="dr-hint" class="note" style="flex-basis:100%;margin:0"></div>`;
   bar.querySelectorAll("[data-dtool]").forEach(b => b.onclick = () => drSetTool(b.dataset.dtool));
   bar.querySelectorAll("[data-dopt]").forEach(i => i.onchange = () => { DR.opt[i.dataset.dopt] = i.type === "checkbox" ? i.checked : i.value; });
-  bar.querySelectorAll("[data-dact]").forEach(b => b.onclick = () => { const a = b.dataset.dact; if (a === "rot-l") drRotate(1); else if (a === "rot-r") drRotate(-1); else if (a === "del") { if (drNeed(1)) drEdit("draft_delete", { ids: drIds() }); } else if (a === "zin") drZoom(0.8); else if (a === "zout") drZoom(1.25); else drFit(); });
+  bar.querySelectorAll("[data-dact]").forEach(b => b.onclick = () => { const a = b.dataset.dact; if (a === "rot-l") drRotate(1); else if (a === "rot-r") drRotate(-1); else if (a === "del") { if (drNeed(1)) drEdit("draft_delete", { ids: drIds() }); } else if (a === "rooms") drEdit("draft_rooms", {}); else if (a === "tagall") drEdit("draft_tag", {}); else if (a === "zin") drZoom(0.8); else if (a === "zout") drZoom(1.25); else drFit(); });
   drHint();
 }
 // A quarter turn about the middle of the selection (rounded to 50 mm, so the result stays on the grid).
@@ -2819,9 +2861,9 @@ async function drProps() {
   try {
     const p = await call("draft_props", { id: ids[0] }); if (drIds()[0] !== ids[0]) return; DR.props = p;
     const src = p.source === "user" ? L("رسمه المستخدم", "drawn by you") : L("ولّده التخطيط (يُعاد بناؤه عند تحريك الجدران الفاصلة)", "generated by the layout (rebuilt when a partition moves)");
-    const ctl = f => f.editable ? (f.unit === "bool" ? `<input type="checkbox" data-pf="${f.key}" ${f.value ? "checked" : ""}>` : `<input data-pf="${f.key}" type="number" step="1" dir="ltr" value="${f.value ?? ""}" style="width:80px">`) : `<span dir="ltr">${esc(f.value ?? "—")}</span>`;
+    const ctl = f => f.editable ? (f.unit === "bool" ? `<input type="checkbox" data-pf="${f.key}" ${f.value ? "checked" : ""}>` : f.unit === "text" ? `<input data-pf="${f.key}" data-text="1" type="text" value="${esc(f.value ?? "")}" style="width:110px">` : `<input data-pf="${f.key}" type="number" step="1" dir="ltr" value="${f.value ?? ""}" style="width:80px">`) : `<span dir="ltr">${esc(f.value ?? "—")}</span>`;
     box.innerHTML = `<b>${esc(p.kind)}</b><span class="hint">${src}${p.locked || p.wallLocked ? " · 🔒" : ""}</span>` + p.fields.map(f => `<label style="display:flex;gap:4px;align-items:center;margin:0">${esc(L(f.ar, f.en))}${ctl(f)}</label>`).join("");
-    box.querySelectorAll("[data-pf]").forEach(i => i.onchange = async () => { const v = i.type === "checkbox" ? i.checked : (i.value === "" ? null : Number(i.value)); const r = await drEdit("draft_set", { id: ids[0], key: i.dataset.pf, value: v }); if (!r) drProps(); });
+    box.querySelectorAll("[data-pf]").forEach(i => i.onchange = async () => { const v = i.type === "checkbox" ? i.checked : i.dataset.text ? i.value : (i.value === "" ? null : Number(i.value)); const r = await drEdit("draft_set", { id: ids[0], key: i.dataset.pf, value: v }); if (!r) drProps(); });
   } catch (x) { box.innerHTML = `<span class="bad">${esc(x.message || x)}</span>`; }
 }
 
@@ -2839,6 +2881,17 @@ async function drToggle(on) {
   if (DR.on) { drFillDefaults(); drBar(); drViewBox(); drProps(); } else { $("draftbar").innerHTML = ""; drProps(); if (svg) { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); } }
 }
 $("draft").onclick = () => busy(() => drToggle(!DR.on));
+// A new empty project: the project and the level LVL-1, then the draft mode, so walls, doors and windows can be drawn at once.
+$("newblank").textContent = L("مشروع فارغ", "Blank project");
+$("newblank").onclick = () => busy(async () => {
+  const st = await call("status"); if (st.dirty && !confirm(t("discard_q"))) return;
+  if (DR.on) await drToggle(false);
+  Object.assign(DR.opt, { thick: "", height: "", dw: "", dh: "", ww: "", wh: "", ws: "" }); // sizes belong to the project they were learned from
+  const r = await call("project_blank", { title: "" });
+  applySettings(r.settings || {}); state.alts = []; state.sel = -1; state.qto = null; state.sched = null; $("alts").innerHTML = `<div class="empty">${t("alts_empty")}</div>`;
+  showPlan(r.svg); setLevels(r.levels); state.rooms_out = r.rooms; applyProject(r.settings || {}); renderSbc(r.sbc); refreshBim(); renderNotes(); setPlanButtons(true); refreshStatus();
+  await drToggle(true); toast(L("مشروع فارغ بمستوى LVL-1: ارسم الجدران (W) ثم الأبواب (D) والنوافذ (N)؛ تُكتشف الغرف تلقائياً", "Blank project with level LVL-1: draw walls (W), then doors (D) and windows (N); rooms are found automatically"));
+});
 $("draft").textContent = L("رسم BIM", "BIM draft");
 drBind();
 

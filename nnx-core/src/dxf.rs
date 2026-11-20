@@ -44,7 +44,7 @@ pub struct DxfOut {
 }
 
 /// Layer name, AutoCAD colour index, line type.
-const LAYERS: [(&str, i32, &str); 30] = [
+const LAYERS: [(&str, i32, &str); 31] = [
     ("A-WALL-EXT", 7, "CONTINUOUS"),
     ("A-WALL-INT", 8, "CONTINUOUS"),
     ("A-DOOR", 3, "CONTINUOUS"),
@@ -75,6 +75,7 @@ const LAYERS: [(&str, i32, &str); 30] = [
     ("V-LEVEL", 5, "DASHED"),
     ("V-TEXT", 7, "CONTINUOUS"),
     ("V-FACADE", 6, "CONTINUOUS"),
+    ("A-GRID", 1, "DASHED"),
 ];
 const DIMS_LAYER: (&str, i32, &str) = ("A-DIMS", 2, "CONTINUOUS");
 
@@ -223,6 +224,12 @@ fn draw_view(d: &mut D, v: &ViewShapes, ox: f64) {
         d.text("V-TEXT", (ox + m(h1) - 1500.0, m(*z) + 150.0), 150.0, &label);
     }
     let mid = ox + m((h0 + h1) / 2.0);
+    for (name, h) in &v.grids {
+        let x = ox + m(*h);
+        d.line("A-GRID", (x, m(v.bottom)), (x, m(v.top + 0.3)));
+        d.circle("A-GRID", (x, m(v.top + 0.3) + 350.0), 350.0);
+        d.text("A-GRID", (x - 100.0, m(v.top + 0.3) + 270.0), 200.0, name);
+    }
     d.text("V-TEXT", (mid, m(v.bottom) - 900.0), 300.0, &v.title);
     if !v.subtitle.is_empty() {
         d.text("V-TEXT", (mid, m(v.bottom) - 1400.0), 180.0, &v.subtitle);
@@ -236,11 +243,30 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
     let mut sheets: Vec<Sheet> = Vec::new();
     for &lv in levels {
         let spaces: Vec<Space> = model.elements.values().filter(|e| e.kind == Space::KIND && on_level(e, lv)).filter_map(|e| e.typed::<Space>().ok()).collect();
+        // The extent of the rooms; a plan with none (a blank project) takes that of its walls, columns, grid lines and dimensions.
+        let (mut lo, mut hi) = ((i64::MAX, i64::MAX), (i64::MIN, i64::MIN));
+        let mut grow = |x: i64, y: i64| {
+            lo = (lo.0.min(x), lo.1.min(y));
+            hi = (hi.0.max(x), hi.1.max(y));
+        };
         if spaces.is_empty() {
+            for e in model.elements.values().filter(|e| on_level(e, lv)) {
+                if let Ok(w) = e.typed::<Wall>() {
+                    grow(w.x1, w.y1);
+                    grow(w.x2, w.y2);
+                }
+            }
+            crate::annot::grow_extents(model, lv, &mut grow);
+        } else {
+            for s in &spaces {
+                grow(s.x, s.y);
+                grow(s.x + s.w, s.y + s.h);
+            }
+        }
+        if lo.0 == i64::MAX {
             continue;
         }
-        let min = (spaces.iter().map(|s| s.x).min().unwrap_or(0), spaces.iter().map(|s| s.y).min().unwrap_or(0));
-        let max = (spaces.iter().map(|s| s.x + s.w).max().unwrap_or(0), spaces.iter().map(|s| s.y + s.h).max().unwrap_or(0));
+        let (min, max) = (lo, hi);
         let name = lv.and_then(|l| model.get(&l)).and_then(|e| e.typed::<Level>().ok()).map_or(String::new(), |l| l.name);
         sheets.push(Sheet { level: lv, name, min, max });
     }
@@ -271,13 +297,17 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
         gy1 = gy1.max(py(sh.max.1) + 600.0);
 
         // Rooms: outline, name and area; the stair shaft crossed.
+        let tagged = crate::annot::tagged_rooms(model, sh.level);
+        let tagged_keys: std::collections::BTreeSet<String> = tagged.iter().filter_map(|id| model.get(id)?.typed::<Space>().ok().map(|s| s.requirement_key)).collect();
         let spaces: Vec<Space> = model.elements.values().filter(|e| e.kind == Space::KIND && on_level(e, sh.level)).filter_map(|e| e.typed::<Space>().ok()).collect();
         for s in &spaces {
             d.rect("A-ROOM", px(s.x), py(s.y), px(s.x + s.w), py(s.y + s.h));
             let (cx, cy) = (px(s.x) + s.w as f64 / 2.0, py(s.y) + s.h as f64 / 2.0);
             let name = opts.labels.get(&s.requirement_key).cloned().unwrap_or_else(|| s.requirement_key.clone());
-            d.text("A-TEXT", (cx, cy + 120.0), 200.0, &name);
-            d.text("A-TEXT", (cx, cy - 200.0), 140.0, &format!("{:.1} m2", s.area));
+            if !tagged_keys.contains(&s.requirement_key) {
+                d.text("A-TEXT", (cx, cy + 120.0), 200.0, &name);
+                d.text("A-TEXT", (cx, cy - 200.0), 140.0, &format!("{:.1} m2", s.area));
+            }
             if s.func == "stair" {
                 let (x0, y0, x1, y1) = (px(s.x), py(s.y), px(s.x + s.w), py(s.y + s.h));
                 d.line("A-STAIR", (x0, y0), (x1, y1));
@@ -432,6 +462,41 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
                 d.line(layer, (px(r.x1), py(r.y1)), (px(r.x2), py(r.y2)));
                 let (mx, my) = ((px(r.x1) + px(r.x2)) / 2.0, (py(r.y1) + py(r.y2)) / 2.0);
                 d.text(layer, (mx, my + hw + 80.0), 70.0, &format!("{} {}x{}", r.system, r.width, r.height));
+            }
+        }
+
+        // Grid lines (project-wide), permanent dimensions and room tags.
+        for e in model.elements.values().filter(|e| e.kind == crate::typed::Grid::KIND) {
+            let Ok(g) = e.typed::<crate::typed::Grid>() else { continue };
+            d.line("A-GRID", (px(g.x1), py(g.y1)), (px(g.x2), py(g.y2)));
+            let (dx, dy) = ((g.x2 - g.x1).signum() as f64, (g.y2 - g.y1).signum() as f64);
+            for (end, out) in [((g.x1, g.y1), (-dx, -dy)), ((g.x2, g.y2), (dx, dy))] {
+                let c = (px(end.0) + out.0 * 350.0, py(end.1) + out.1 * 350.0);
+                d.circle("A-GRID", c, 350.0);
+                d.text("A-GRID", (c.0 - 100.0, c.1 - 90.0), 200.0, &g.name);
+            }
+        }
+        for e in model.elements.values().filter(|e| e.kind == crate::typed::Dimension::KIND && on_level(e, sh.level)) {
+            let Ok(dm) = e.typed::<crate::typed::Dimension>() else { continue };
+            let (a, b) = crate::annot::dim_positions(model, &dm);
+            let x_axis = dm.axis == "x";
+            let at = |along: i64, across: i64| if x_axis { (px(along), py(across)) } else { (px(across), py(along)) };
+            for (along, from) in [(a, dm.oa), (b, dm.ob)] {
+                let dir = if dm.at >= from { 1 } else { -1 };
+                d.line(DIMS_LAYER.0, at(along, from + dir * 50), at(along, dm.at + dir * 150));
+                let t = at(along, dm.at);
+                d.line(DIMS_LAYER.0, (t.0 - 80.0, t.1 - 80.0), (t.0 + 80.0, t.1 + 80.0));
+            }
+            let (p, q) = (at(a, dm.at), at(b, dm.at));
+            d.line(DIMS_LAYER.0, p, q);
+            let mid = ((p.0 + q.0) / 2.0, (p.1 + q.1) / 2.0);
+            d.text(DIMS_LAYER.0, if x_axis { (mid.0, mid.1 + 120.0) } else { (mid.0 + 120.0, mid.1) }, 140.0, &format!("{}", (b - a).abs()));
+        }
+        for e in model.elements.values().filter(|e| e.kind == crate::typed::Tag::KIND && on_level(e, sh.level)) {
+            let (Ok(t), Some(host)) = (e.typed::<crate::typed::Tag>(), e.host_id.and_then(|h| model.get(&h))) else { continue };
+            let Ok(sp) = host.typed::<Space>() else { continue };
+            for (i, line) in crate::annot::tag_lines(model, host, &t, &opts.labels).iter().enumerate() {
+                d.text("A-TEXT", (px(sp.x + sp.w / 2 + t.dx), py(sp.y + sp.h / 2 + t.dy) - i as f64 * 200.0 + 200.0), 140.0, line);
             }
         }
 

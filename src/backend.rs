@@ -177,7 +177,7 @@ impl App {
         if let Some((_, _, name)) = self.level_list().get(self.cur_level) {
             title = format!("{title} — {name}");
         }
-        DrawOpts { title, labels: self.labels(), show_structure, show_mep: self.show_mep, ..DrawOpts::default() }
+        DrawOpts { title, labels: self.labels(), show_structure, show_mep: self.show_mep, blank_canvas: true, ..DrawOpts::default() }
     }
 
     fn render(&self) -> Result<String, String> {
@@ -399,6 +399,11 @@ impl App {
             "draft_delete" => self.draft_delete(args),
             "draft_props" => self.draft_props(args),
             "draft_set" => self.draft_set(args),
+            "project_blank" => self.project_blank(args),
+            "draft_grid" => self.draft_grid(args),
+            "draft_dimension" => self.draft_dimension(args),
+            "draft_tag" => self.draft_tag(args),
+            "draft_rooms" => self.draft_rooms(),
             "export_ifc" => self.export_ifc(),
             "export_dxf" => self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false)),
             "report_html" => {
@@ -443,7 +448,7 @@ impl App {
         let mut thumbs = Vec::new();
         for (i, alt) in alts.iter().enumerate() {
             let (doc, _) = levels::assemble(alt, &plan, &so, None)?;
-            let opts = DrawOpts { title: String::new(), labels: plan.labels.clone(), px_per_m: 16.0, margin_px: 14.0, show_dims: false, show_structure: false, show_mep: false };
+            let opts = DrawOpts { title: String::new(), labels: plan.labels.clone(), px_per_m: 16.0, margin_px: 14.0, show_dims: false, show_structure: false, show_mep: false, blank_canvas: false };
             let ground = building::levels(&doc.model).first().map(|(_, id)| *id);
             let svg = plan_svg(&doc.model, ground, &opts).map_err(|e| e.to_string())?;
             let ground_layout = &alt.levels[0];
@@ -1144,18 +1149,110 @@ impl App {
     }
 
     /// Commits a draft edit (and the structure sync that follows from it) as ONE undoable step and answers like the other plan edits.
+    /// A wall edit also brings the level's computed rooms in line with the regions its walls enclose, in the same step.
     fn draft_commit(&mut self, label: &str, edit: nnx_core::draft::Edit, level: Option<nnx_core::Id>) -> Result<Value, String> {
+        self.draft_commit_with(label, edit, level, true)
+    }
+
+    fn draft_commit_with(&mut self, label: &str, edit: nnx_core::draft::Edit, level: Option<nnx_core::Id>, find_rooms: bool) -> Result<Value, String> {
         if edit.cmds.is_empty() {
             return Err("nothing to change".into());
         }
         let so = self.sopts()?;
-        editing::commit_with_sync(self.doc.as_mut().ok_or("choose a layout first")?, &so, label, edit.cmds, level)?;
+        let mut cmds = edit.cmds;
+        let mut sync = nnx_core::annot::RoomSync::default();
+        if find_rooms {
+            let mut scratch = Document::new(self.doc()?.model.clone());
+            scratch.commit(label, nnx_core::Origin::User, cmds.clone()).map_err(|e| e.to_string())?;
+            sync = nnx_core::annot::rooms_sync(&scratch.model, level);
+            cmds.extend(sync.cmds.clone());
+        }
+        editing::commit_with_sync(self.doc.as_mut().ok_or("choose a layout first")?, &so, label, cmds, level)?;
+        let mut notes = edit.notes;
+        if sync.not_rect > 0 {
+            notes.push(format!("{} enclosed region(s) are not rectangles and got no room: split them with a wall", sync.not_rect));
+        }
+        if !sync.overlapping.is_empty() {
+            notes.push(format!("a new enclosed region overlaps the room(s) {} and was not made a room", sync.overlapping.join(", ")));
+        }
         let mut v = self.draft_frame()?;
         v["created"] = json!(edit.created.iter().map(|i| i.to_string()).collect::<Vec<_>>());
-        v["notes"] = json!(edit.notes);
+        v["notes"] = json!(notes);
+        v["rooms_added"] = json!(sync.added);
+        v["rooms_removed"] = json!(sync.removed);
         v["svg"] = self.render_or_null()?;
         v["rooms"] = json!(self.rooms_json());
         v["sbc"] = self.sbc_json();
+        Ok(v)
+    }
+
+    /// A new empty project: its project element and the level LVL-1. Drafting (walls, doors, windows, grid lines, dimensions, tags) then
+    /// works on it directly; rooms are found from the walls that enclose them.
+    fn project_blank(&mut self, args: &Value) -> Result<Value, String> {
+        let title = args.get("title").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let mut doc = Document::new(nnx_core::Model::default());
+        doc.commit("new project", nnx_core::Origin::User, nnx_core::annot::blank_project_commands(&title)?).map_err(|e| e.to_string())?;
+        doc.mark_saved();
+        self.alternatives.clear();
+        self.plan = None;
+        self.draft = None;
+        self.cur_level = 0;
+        self.show_structure = false;
+        self.doc = Some(doc);
+        let mut v = self.draft_frame()?;
+        v["svg"] = self.render_or_null()?;
+        v["rooms"] = json!(self.rooms_json());
+        v["levels"] = self.levels_json();
+        v["settings"] = self.form_state();
+        v["sbc"] = self.sbc_json();
+        Ok(v)
+    }
+
+    fn draft_grid(&mut self, args: &Value) -> Result<Value, String> {
+        let spec = nnx_core::annot::GridSpec { a: Self::int_point(args.get("a"), "a")?, b: Self::int_point(args.get("b"), "b")?, name: args.get("name").and_then(Value::as_str).map(str::to_string) };
+        let (cmd, id) = nnx_core::annot::grid_command(&self.doc()?.model, &spec)?;
+        let level = self.current_level();
+        let mut v = self.draft_commit_with("Draw grid line", nnx_core::draft::Edit { cmds: vec![cmd], created: vec![id], notes: vec![] }, level, false)?;
+        v["grid"] = json!(id.to_string());
+        Ok(v)
+    }
+
+    fn draft_dimension(&mut self, args: &Value) -> Result<Value, String> {
+        let opt_id = |k: &str| -> Result<Option<nnx_core::Id>, String> { args.get(k).and_then(Value::as_str).map(|t| t.parse().map_err(|_| format!("{k} is not an element id"))).transpose() };
+        let spec = nnx_core::annot::DimSpec { a: Self::int_point(args.get("a"), "a")?, b: Self::int_point(args.get("b"), "b")?, at: Self::int_point(args.get("at"), "at")?, ref_a: opt_id("refA")?, ref_b: opt_id("refB")? };
+        let level = self.current_level();
+        let (cmd, id, notes) = nnx_core::annot::dimension_command(&self.doc()?.model, level, &spec)?;
+        let mut v = self.draft_commit_with("Add dimension", nnx_core::draft::Edit { cmds: vec![cmd], created: vec![id], notes }, level, false)?;
+        v["dimension"] = json!(id.to_string());
+        Ok(v)
+    }
+
+    /// Tags the given rooms (or, with no list, every room of the level that has none).
+    fn draft_tag(&mut self, args: &Value) -> Result<Value, String> {
+        let level = self.current_level();
+        let model = &self.doc()?.model;
+        let rooms = if args.get("rooms").is_some() { Self::ids_arg(args, "rooms")? } else { nnx_core::annot::untagged_rooms(model, level) };
+        let (cmds, ids) = nnx_core::annot::tag_commands(model, &rooms)?;
+        if cmds.is_empty() {
+            return Err("every room already has a tag (or there are no rooms)".into());
+        }
+        self.draft_commit_with("Tag rooms", nnx_core::draft::Edit { cmds, created: ids, notes: vec![] }, level, false)
+    }
+
+    /// Finds the rooms the walls enclose, as one undoable step (the same thing every wall edit does on its own).
+    fn draft_rooms(&mut self) -> Result<Value, String> {
+        let level = self.current_level();
+        let sync = nnx_core::annot::rooms_sync(&self.doc()?.model, level);
+        if sync.cmds.is_empty() {
+            let mut why = vec!["no new room: every enclosed rectangle already has one".to_string()];
+            if sync.not_rect > 0 {
+                why.push(format!("{} enclosed region(s) are not rectangles", sync.not_rect));
+            }
+            return Err(why.join("; "));
+        }
+        let mut v = self.draft_commit_with("Find rooms", nnx_core::draft::Edit { cmds: sync.cmds.clone(), created: vec![], notes: vec![] }, level, false)?;
+        v["rooms_added"] = json!(sync.added);
+        v["rooms_removed"] = json!(sync.removed);
         Ok(v)
     }
 
@@ -1192,7 +1289,7 @@ impl App {
         let level = self.doc()?.model.get(&spec.wall).and_then(|e| e.level_id);
         let (cmds, id) = nnx_core::draft::opening_command(&self.doc()?.model, &spec)?;
         let label = if spec.kind == nnx_core::draft::OpeningKind::Door { "Place door" } else { "Place window" };
-        let mut v = self.draft_commit(label, nnx_core::draft::Edit { cmds, created: vec![id], notes: vec![] }, level)?;
+        let mut v = self.draft_commit_with(label, nnx_core::draft::Edit { cmds, created: vec![id], notes: vec![] }, level, false)?;
         v["opening"] = json!(id.to_string());
         Ok(v)
     }
@@ -1324,8 +1421,8 @@ impl App {
     /// was stored in the model carries its inputs as settings; they are moved into a project element, and anything that
     /// cannot be read is reported. Generated alternatives are not saved, so they are cleared.
     pub fn open(&mut self, mut model: nnx_core::Model, settings: &Settings) -> Result<Value, String> {
-        if !model.elements.values().any(|e| e.kind == "Space") {
-            return Err("this file has no plan (no spaces)".into());
+        if !model.elements.values().any(|e| matches!(e.kind.as_str(), "Space" | "Wall" | "Level" | "Project")) {
+            return Err("this file has no plan (no rooms, walls or project)".into());
         }
         let mut warnings: Vec<String> = Vec::new();
         if nnx_core::project::find(&model).is_none() {
@@ -2216,8 +2313,9 @@ mod tests {
         assert_eq!((s["created"].as_u64(), s["removed"].as_u64()), (Some(0), Some(0)), "freshly generated structure is already in step");
         let undone = app.handle("undo", &json!({})).unwrap();
         assert_eq!(undone["changed"], true);
-        assert!(undone["svg"].is_null(), "after undoing the only step there is nothing to draw");
-        assert!(app.handle("svg", &json!({ "show_structure": false })).unwrap()["svg"].is_null());
+        let blank = undone["svg"].as_str().expect("an empty model draws the blank drawing area");
+        assert!(!blank.contains("class=\"wall"), "after undoing the only step nothing is drawn but the empty area");
+        assert!(app.handle("svg", &json!({ "show_structure": false })).unwrap()["svg"].is_string());
         let redone = app.handle("redo", &json!({})).unwrap();
         assert_eq!(redone["changed"], true);
         assert!(redone["svg"].as_str().unwrap().starts_with("<svg"));
@@ -4478,7 +4576,7 @@ mod tests {
         let copy = r["created"][0].as_str().unwrap().to_string();
         assert_eq!(r["created"].as_array().unwrap().len(), 2);
         let r = app.handle("draft_delete", &json!({ "ids": [copy] })).unwrap();
-        assert_eq!(r["notes"].as_array().unwrap().len(), 1, "its door goes with it, and it says so");
+        assert!(r["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("deleted with the wall")), "its door goes with it, and it says so: {}", r["notes"]);
         // Split and trim.
         let r = app.handle("draft_split", &json!({ "wall": wall, "at": 2350 })).unwrap();
         assert!(r["svg"].is_string());
@@ -4542,5 +4640,111 @@ mod tests {
             let err = app.handle("move_partition", &json!({ "wall": pid2, "delta_mm": 100 })).unwrap_err();
             assert!(err.contains("you placed") && err.contains("delete it"), "{err}");
         }
+    }
+
+    // ------------------------------------------------------------------ Milestone 9: blank project, grid lines, dimensions, tags
+
+    fn blank_app() -> App {
+        let mut app = App::default();
+        app.handle("project_blank", &json!({ "title": "Synthetic" })).unwrap();
+        app
+    }
+
+    fn draw(app: &mut App, a: [i64; 2], b: [i64; 2]) -> Value {
+        app.handle("draft_wall", &json!({ "a": a, "b": b, "thickness": 200, "height": 3000 })).unwrap()
+    }
+
+    #[test]
+    fn a_blank_project_is_drafted_directly_and_the_fourth_wall_finds_the_room_in_the_same_step() {
+        let mut app = blank_app();
+        let r = app.handle("project_blank", &json!({})).unwrap();
+        assert!(r["svg"].as_str().unwrap().starts_with("<svg") && r["frame"]["s"].as_f64().unwrap() > 0.0);
+        assert_eq!(r["levels"]["list"][0]["name"], "LVL-1");
+        assert!(r["rooms"].as_array().unwrap().is_empty());
+        assert!(r["defaults"]["wall"].is_null(), "nothing to learn from yet: the user enters the sizes");
+        assert!(app.handle("draft_wall", &json!({ "a": [1000, 1000], "b": [7000, 1000], "height": 3000 })).unwrap_err().contains("thickness"));
+        let hash0 = hash(&app);
+        assert!(draw(&mut app, [1000, 1000], [7000, 1000])["rooms_added"].as_array().unwrap().is_empty());
+        draw(&mut app, [7000, 1000], [7000, 5000]);
+        draw(&mut app, [1000, 5000], [7000, 5000]);
+        let last = draw(&mut app, [1000, 1000], [1000, 5000]);
+        assert_eq!(last["rooms_added"], json!(["R1"]));
+        assert_eq!(last["rooms"][0]["key"], "R1");
+        assert_eq!(last["rooms"][0]["area"], 24.0);
+        // The starting values now come from the walls just drawn.
+        assert_eq!(last["defaults"]["wall"]["thickness"], 200);
+        // Everything is one step per edit: the last undo takes the wall AND the room back.
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.handle("outline", &json!({})).unwrap()["tree"]["ids"].as_array().unwrap().len() < 6);
+        assert!(rooms_of(&app).is_empty());
+        app.handle("redo", &json!({})).unwrap();
+        assert_eq!(rooms_of(&app).len(), 1);
+        // Doors, windows, the quantities, the 3D scene, the outline and the exports all work on the drafted plan.
+        let wall = model_of(&app).elements.values().find(|e| e.kind == "Wall" && e.props["y1"] == 1000 && e.props["y2"] == 1000).unwrap().id.to_string();
+        app.handle("draft_opening", &json!({ "kind": "door", "wall": wall, "offset": 2000, "width": 900, "height": 2100 })).unwrap();
+        app.handle("draft_opening", &json!({ "kind": "window", "wall": wall, "offset": 4500, "width": 1200, "height": 1200, "sill": 900 })).unwrap();
+        let q = app.handle("qto", &json!({})).unwrap();
+        assert!(q["items"].as_array().unwrap().iter().any(|i| i["code"] == "SPACE.GROSS.AREA"));
+        assert!(!app.handle("model3d", &json!({})).unwrap()["boxes"].as_array().unwrap().is_empty());
+        assert!(app.handle("export_dxf", &json!({})).unwrap()["dxf"].as_str().unwrap().contains("A-ROOM"));
+        assert_ne!(hash(&app), hash0);
+        // The file keeps all of it: a save and a reopen give the same model.
+        let (model, settings) = (app.model().unwrap().clone(), app.settings());
+        let mut again = App::default();
+        let opened = again.open(model, &settings).unwrap();
+        assert!(opened["svg"].as_str().unwrap().starts_with("<svg"));
+        assert_eq!(hash(&again), hash(&app));
+    }
+
+    fn rooms_of(app: &App) -> Vec<String> {
+        model_of(app).elements.values().filter(|e| e.kind == "Space").map(|e| e.props["requirementKey"].as_str().unwrap().to_string()).collect()
+    }
+
+    #[test]
+    fn grid_lines_dimensions_and_tags_are_drafted_edited_and_drawn_through_the_commands() {
+        let mut app = blank_app();
+        for (a, b) in [([1000, 1000], [7000, 1000]), ([7000, 1000], [7000, 5000]), ([1000, 5000], [7000, 5000]), ([1000, 1000], [1000, 5000])] {
+            draw(&mut app, a, b);
+        }
+        // Grid lines: automatic names, a refusal for a clash, and they show on the plan, an elevation and the DXF.
+        let g1 = app.handle("draft_grid", &json!({ "a": [1000, 0], "b": [1000, 6000] })).unwrap();
+        let g2 = app.handle("draft_grid", &json!({ "a": [7000, 0], "b": [7000, 6000] })).unwrap();
+        let g3 = app.handle("draft_grid", &json!({ "a": [0, 1000], "b": [8000, 1000] })).unwrap();
+        let name = |r: &Value| model_of(&app).get(&r["grid"].as_str().unwrap().parse().unwrap()).unwrap().props["name"].as_str().unwrap().to_string();
+        assert_eq!((name(&g1), name(&g2), name(&g3)), ("A".into(), "B".into(), "1".into()));
+        assert!(g1["svg"].as_str().unwrap().contains("class=\"gridline\""));
+        assert!(app.handle("draft_grid", &json!({ "a": [3000, 0], "b": [3000, 6000], "name": "a" })).unwrap_err().contains("already named"));
+        let el = app.handle("elevation", &json!({ "side": "south" })).unwrap();
+        assert_eq!(el["svg"].as_str().unwrap().matches("class=\"grid\"").count(), 2);
+        assert!(app.handle("export_dxf", &json!({})).unwrap()["counts"]["A-GRID"].as_u64().unwrap() >= 3);
+        // A dimension between the box's left wall and a free wall beyond it, attached to both; it follows when that wall moves.
+        let free = draw(&mut app, [9000, 1000], [9000, 5000])["wall"].as_str().unwrap().to_string();
+        let left = model_of(&app).elements.values().find(|e| e.kind == "Wall" && e.props["x1"] == 1000 && e.props["x2"] == 1000).unwrap().id.to_string();
+        let r = app.handle("draft_dimension", &json!({ "a": [1020, 3000], "b": [8990, 3000], "at": [0, 6000], "refA": left, "refB": free })).unwrap();
+        let dim = r["dimension"].as_str().unwrap().to_string();
+        assert!(r["svg"].as_str().unwrap().contains(">8000</text>"));
+        app.handle("draft_xform", &json!({ "ids": [free], "xf": { "op": "move", "dx": 500, "dy": 0 } })).unwrap();
+        let svg = app.handle("svg", &json!({})).unwrap();
+        assert!(svg["svg"].as_str().unwrap().contains(">8500</text>"), "the dimension followed the wall");
+        let p = app.handle("draft_props", &json!({ "id": dim })).unwrap();
+        assert_eq!(p["kind"], "Dimension");
+        // Tags: all rooms at once, a second request has nothing to do, the name comes from the room's properties.
+        let room = model_of(&app).elements.values().find(|e| e.kind == "Space").unwrap().id.to_string();
+        app.handle("draft_set", &json!({ "id": room, "key": "name", "value": "Majlis" })).unwrap();
+        let t = app.handle("draft_tag", &json!({})).unwrap();
+        let svg = t["svg"].as_str().unwrap();
+        assert!(svg.contains("class=\"tag\"") && svg.contains(">Majlis</text>") && svg.contains("m²</text>") && svg.contains(">±0.00 m</text>"));
+        assert!(app.handle("draft_tag", &json!({})).unwrap_err().contains("already"));
+        assert!(app.handle("draft_rooms", &json!({})).unwrap_err().contains("no new room"));
+        // Deleting a wall removes the room and its tag in one step; one undo restores them.
+        let top = model_of(&app).elements.values().find(|e| e.kind == "Wall" && e.props["y1"] == 5000 && e.props["y2"] == 5000).unwrap().id.to_string();
+        let r = app.handle("draft_delete", &json!({ "ids": [top] })).unwrap();
+        assert_eq!(r["rooms_removed"], json!(["R1"]));
+        assert!(rooms_of(&app).is_empty() && model_of(&app).elements.values().all(|e| e.kind != "Tag"));
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(rooms_of(&app).len(), 1);
+        assert_eq!(model_of(&app).elements.values().filter(|e| e.kind == "Tag").count(), 1);
+        // Moving a wall that a layout would have rebuilt is not involved: the partition tools still refuse a blank project politely.
+        assert!(app.handle("move_partition", &json!({ "wall": top, "delta_mm": 100 })).is_err());
     }
 }

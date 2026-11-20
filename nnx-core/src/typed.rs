@@ -609,6 +609,125 @@ pub fn run_element(run: &MepRun, level: Option<Id>, source: Source) -> Result<El
     Ok(el)
 }
 
+// ---------------------------------------------------------------- Annotations: grid lines, dimensions, room tags
+
+/// A structural grid line: a horizontal or vertical line with a name (`A`, `B` ... / `1`, `2` ...). Grid lines belong to the project,
+/// not to a level: they are drawn on every plan, elevation and section. Names are unique.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Grid {
+    #[serde(deserialize_with = "mm")]
+    pub x1: i64,
+    #[serde(deserialize_with = "mm")]
+    pub y1: i64,
+    #[serde(deserialize_with = "mm")]
+    pub x2: i64,
+    #[serde(deserialize_with = "mm")]
+    pub y2: i64,
+    pub name: String,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Grid {
+    pub fn horizontal(&self) -> bool {
+        self.y1 == self.y2
+    }
+    /// The coordinate the line stands at: `y` for a horizontal line, `x` for a vertical one.
+    pub fn coord(&self) -> i64 {
+        if self.horizontal() { self.y1 } else { self.x1 }
+    }
+}
+
+impl Typed for Grid {
+    const KIND: &'static str = "Grid";
+    const DISCIPLINE: Discipline = Discipline::Arc;
+    fn validate(&self, model: &Model, e: &Element) -> Result<(), String> {
+        if (self.x1 == self.x2) == (self.y1 == self.y2) {
+            return Err("a grid line must be horizontal or vertical and not zero-length".into());
+        }
+        let name = self.name.trim();
+        if name.is_empty() || name.chars().count() > 6 {
+            return Err("a grid name is 1 to 6 characters (A, B, 1, 2 ...)".into());
+        }
+        let clash = model.elements.values().any(|o| o.id != e.id && o.kind == Grid::KIND && o.props.get("name").and_then(Value::as_str).is_some_and(|n| n.trim().eq_ignore_ascii_case(name)));
+        if clash { Err(format!("another grid line is already named '{name}'")) } else { Ok(()) }
+    }
+}
+
+/// A permanent linear dimension in plan: the distance along `axis` (`x` or `y`) between the positions `a` and `b`, drawn on the line at
+/// `at` across it, with extension lines from the measured points (`oa`, `ob` across). When it was taken from walls, grid lines, openings
+/// or columns it names them (`ref_a`, `ref_b`) and follows them when they move.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Dimension {
+    pub axis: String,
+    #[serde(deserialize_with = "mm")]
+    pub a: i64,
+    #[serde(deserialize_with = "mm")]
+    pub b: i64,
+    #[serde(deserialize_with = "mm")]
+    pub oa: i64,
+    #[serde(deserialize_with = "mm")]
+    pub ob: i64,
+    #[serde(deserialize_with = "mm")]
+    pub at: i64,
+    #[serde(default, skip_serializing_if = "opt_is_none")]
+    pub ref_a: Option<String>,
+    #[serde(default, skip_serializing_if = "opt_is_none")]
+    pub ref_b: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Typed for Dimension {
+    const KIND: &'static str = "Dimension";
+    const DISCIPLINE: Discipline = Discipline::Arc;
+    fn validate(&self, _m: &Model, _e: &Element) -> Result<(), String> {
+        if self.axis != "x" && self.axis != "y" {
+            return Err("a dimension measures along x or y".into());
+        }
+        if self.a == self.b {
+            return Err("a dimension needs two different positions".into());
+        }
+        for r in [&self.ref_a, &self.ref_b].into_iter().flatten() {
+            r.parse::<Id>().map_err(|_| format!("'{r}' is not an element id"))?;
+        }
+        Ok(())
+    }
+}
+
+/// A room tag: what it shows of its room (the host Space): the name, the area in m2 and the level elevation. The text is computed from
+/// the room and the level when drawn, so it cannot go out of date. `dx`, `dy` move it from the room's centre.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tag {
+    #[serde(deserialize_with = "mm", default)]
+    pub dx: i64,
+    #[serde(deserialize_with = "mm", default)]
+    pub dy: i64,
+    pub show_name: bool,
+    pub show_area: bool,
+    pub show_elevation: bool,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Typed for Tag {
+    const KIND: &'static str = "Tag";
+    const DISCIPLINE: Discipline = Discipline::Arc;
+    fn validate(&self, model: &Model, e: &Element) -> Result<(), String> {
+        let host = e.host_id.and_then(|h| model.get(&h)).ok_or("a room tag belongs to a room")?;
+        if host.kind != Space::KIND {
+            return Err("a room tag belongs to a room".into());
+        }
+        if !(self.show_name || self.show_area || self.show_elevation) {
+            return Err("a tag must show at least one of the name, the area and the elevation".into());
+        }
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------- model-level checks
 
 /// Validates one element if its kind is a known typed kind; unknown kinds pass.
@@ -629,6 +748,9 @@ pub fn validate_element(model: &Model, el: &Element) -> Result<(), String> {
         Level::KIND => run::<Level>(model, el),
         MepRun::KIND => run::<MepRun>(model, el),
         TieBeam::KIND => run::<TieBeam>(model, el),
+        Grid::KIND => run::<Grid>(model, el),
+        Dimension::KIND => run::<Dimension>(model, el),
+        Tag::KIND => run::<Tag>(model, el),
         crate::project::NanoArchProject::KIND => run::<crate::project::NanoArchProject>(model, el),
         _ => Ok(()),
     }

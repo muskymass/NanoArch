@@ -448,9 +448,10 @@ fn the_inspector_lists_properties_and_edits_them_with_the_checks_that_depend_on_
     let (c, other) = draft::opening_command(&doc.model, &open(OpeningKind::Window, w, 800, 600)).unwrap();
     doc.commit("window", Origin::User, c).unwrap_or_else(|e| panic!("{e}"));
     assert!(draft::set_property(&doc.model, other, "offsetCenter", &json!(2000)).unwrap_err().contains("overlap"));
-    // A room is read-only.
+    // A room's size and key are read-only; only its name and function can be edited.
     let room = doc.model.elements.values().find(|e| e.kind == "Space").unwrap().id;
-    assert!(draft::properties(&doc.model, room).unwrap()["fields"].as_array().unwrap().iter().all(|f| f["editable"] == false));
+    let editable: Vec<String> = draft::properties(&doc.model, room).unwrap()["fields"].as_array().unwrap().iter().filter(|f| f["editable"] == true).map(|f| f["key"].as_str().unwrap().to_string()).collect();
+    assert_eq!(editable, ["name", "func"]);
 }
 
 #[test]

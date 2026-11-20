@@ -24,7 +24,7 @@ Read-only audit of `C:\Projects\floorplan-bim` at commit `215df4a` (Next.js / Re
 
 | floorplan-bim | NanoArch before | Decision |
 |---|---|---|
-| Free wall / door / window drafting | none: the plan was generated, and edited only by moving partitions, resizing rooms and changing an opening's size | **ported** (orthogonal walls, doors, windows) |
+| Free wall / door / window drafting | none: the plan was generated, and edited only by moving partitions, resizing rooms and changing an opening's size | **ported** (orthogonal walls, doors, windows); from v1.1.0 also on a blank project |
 | Snapping (end, crossing, middle, perpendicular, grid, alignment, ortho) | none | **ported** in `nnx-core::draft::snap` |
 | Rubber band, typed length | none | **ported** (page draws, backend snaps) |
 | Window / crossing box select, Shift multi-select | single click | **ported** |
@@ -39,7 +39,7 @@ Read-only audit of `C:\Projects\floorplan-bim` at commit `215df4a` (Next.js / Re
 | 3D orbit, pick | present, plus walk, X-ray, tour | covered; selection is now shared with the plan and outliner |
 | Arc and non-orthogonal walls | the typed `Wall` is horizontal or vertical | **not ported**: it would break the rules, quantities, 3D and structure that read walls; a wall at another angle is refused in words |
 | Wall types with compound layers, location line | thermal layers live in the compliance inputs | **not ported**: a second source of truth for the same layers |
-| Grid lines, persistent dimensions, tags | structural grid optimizer only | **not ported**: new element kinds with their own drawing, quantities and exports; next candidates |
+| Grid lines, persistent dimensions, room tags | structural grid optimizer only | **ported in v1.1.0** (see section 4) |
 | Phases, sheets, underlay tracing, section box | PDF sheets exist | **not ported**: large, and not needed for drafting |
 | Keyboard cursor | none | **not ported**: shortcuts, typed length and Enter cover the common cases |
 | Accounts, Supabase, Stripe, `localStorage` | local desktop app | **not applicable** |
@@ -55,3 +55,17 @@ Read-only audit of `C:\Projects\floorplan-bim` at commit `215df4a` (Next.js / Re
 - The plan's frame includes walls and columns drawn beyond the rooms, so nothing drafted outside the building is cut off.
 - The selection is the shared set of the outliner, the 2D plan, the 3D view and the property panel.
 - `scripts/e2e-draft.js` drives the real window with real mouse and keyboard events.
+
+## 4. Completed in v1.1.0
+
+- **Blank project**: a project element and the level `LVL-1` with nothing else; the plan shows a 20 x 12 m drawing area (a view window, not a design value) that grows with
+  what is drawn. Wall thickness and height and opening sizes are entered by the user (a blank project has nothing to learn them from).
+- **Rooms from walls**: the regions the wall centre lines enclose become rooms when they are rectangles (`Source::Computed`, key `R1`, `R2` ..., function `room`); an enclosed
+  region that is not a rectangle is reported, never guessed; a room that is no longer enclosed goes with its tag. Rooms from a layout are never touched. A wall edit does this
+  in the same undo step.
+- **Grid lines (`G`)**: horizontal or vertical, named `A, B, C ...` (vertical) and `1, 2, 3 ...` (horizontal), unique, project-wide; the pointer snaps to them; drawn on the plan,
+  in every elevation and section, and on the DXF layer `A-GRID`.
+- **Permanent dimensions (`I`)**: measured along x or y between two points, attached to walls, grid lines, openings or columns where the points fall on them, and following
+  them when they move; drawn on the plan and on the DXF layer `A-DIMS`.
+- **Room tags (`Q`)**: name, area in m2 and the level's elevation, computed when drawn; a tagged room has no second default label; the DXF carries the same text.
+- **Properties**: a room's name (a project label) and function, a grid line's name, a dimension's line position and a tag's fields are edited in the same panel.

@@ -203,6 +203,10 @@ fn rebuild(doc: &mut Document, brief: &Brief, so: &StructOpts, level: Option<Id>
     cmds.extend(walls::to_commands(&plan, &ids, level));
     cmds.extend(walls::window_commands(&plan, &wp, &ids, level));
     let removed_keys: Vec<String> = removed.iter().filter_map(|id| doc.model.get(id)?.typed::<Space>().ok().map(|s| s.requirement_key)).collect();
+    // A room that hosts a tag cannot be deleted before the tag.
+    for id in removed {
+        cmds.extend(doc.model.dependents(id).into_iter().map(Command::Delete));
+    }
     cmds.extend(removed.iter().map(|id| Command::Delete(*id)));
     // MEP points sit inside rooms that this edit resizes. Generated ones are dropped in the same transaction
     // (one undo brings them back; recompute places them again); one the user placed or locked stays, so it

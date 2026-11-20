@@ -166,6 +166,23 @@ pub fn build_styled(model: &Model, style: Option<crate::style::Style>) -> Scene 
     scene
 }
 
+/// The elevation, in metres, of the floor of `level` above the floor of the ground level: each level sits on the slab of the one below
+/// (the same stacking `build` uses). `None`, or a level that is not in the model, is the ground level: 0.
+pub fn level_elevation_m(model: &Model, level: Option<Id>) -> f64 {
+    let walls: Vec<Wall> = model.elements.values().filter(|e| e.kind == Wall::KIND).filter_map(|e| e.typed::<Wall>().ok()).collect();
+    let global_storey = walls.iter().map(|w| w.height).max().unwrap_or(3000) as f64 / M;
+    let mut z = 0.0;
+    for (_, lid) in crate::building::levels(model) {
+        if Some(lid) == level {
+            return z;
+        }
+        let storey = model.elements.values().filter(|e| e.kind == Wall::KIND && e.level_id == Some(lid)).filter_map(|e| e.typed::<Wall>().ok()).map(|w| w.height).max().map_or(global_storey, |h| h as f64 / M);
+        let slab_t = model.elements.values().filter(|e| e.kind == Slab::KIND && e.level_id == Some(lid)).filter_map(|e| e.typed::<Slab>().ok()).map(|s| s.thickness).max().unwrap_or(0) as f64 / M;
+        z += storey + slab_t;
+    }
+    0.0
+}
+
 pub fn build(model: &Model) -> Scene {
     let mut boxes: Vec<Box3> = Vec::new();
     let walls: Vec<(Id, Wall)> = model.elements.values().filter(|e| e.kind == Wall::KIND).filter_map(|e| Some((e.id, e.typed::<Wall>().ok()?))).collect();

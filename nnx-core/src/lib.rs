@@ -4,6 +4,7 @@
 //! [`Document`], which provides undo/redo. [`persist`] reads and writes `.nnx` files.
 
 pub mod analysis;
+pub mod annot;
 pub mod asbuilt;
 pub mod analytical;
 pub mod audits;

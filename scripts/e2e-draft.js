@@ -5,7 +5,8 @@
 //
 // It starts target\debug\nanoarch-app.exe with WebView2's remote-debugging port, generates a plan, and exercises: the draft mode toggle,
 // snapping and the rubber band, drawing a wall, placing a door, selecting, editing a property, box select, Move, zoom / pan / fit, the
-// split view following the edit, undo and redo. Needs Node 22 or later (built-in WebSocket). Exits 1 if any check fails.
+// split view following the edit, undo and redo; then a BLANK project drafted from nothing: walls and the room they enclose, a door, a window,
+// grid lines, a permanent dimension attached to the walls, a room tag, renaming in the property panel, DXF and elevation output. Needs Node 22 or later (built-in WebSocket). Exits 1 if any check fails.
 // Drives the REAL NanoArch window over the WebView2 debugging port with real mouse / keyboard events.
 const { spawn } = require("child_process");
 const fs = require("fs");
@@ -164,6 +165,88 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     // ---- project persistence: the project is the model, so a save keeps drafted elements
     const user = await ev(`(async()=>{const o=await call("outline"); let n=0; const walk=x=>{ if(x.kind==="Wall") n++; x.children.forEach(walk)}; walk(o.tree); return n;})()`);
     check("drafted walls appear in the outliner", user > 5);
+
+    // ================================================================ a BLANK project, drafted from nothing
+    // The Blank project button asks before it discards unsaved work (a native dialog a script cannot answer): accept it.
+    await ev(`window.confirm = () => true`);
+    await ev(`(async()=>{ if (DR.on) await drToggle(false); })()`);
+    const nb = await ev(`(()=>{const b=$("newblank").getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
+    await click(nb[0], nb[1]); await sleep(1500);
+    check("the Blank project button opens an empty project in draft mode", await ev(`DR.on && !!DR.frame && document.querySelectorAll("#viewer rect.wall").length===0`));
+    const lv = await ev(`(async()=>JSON.stringify((await call("draft_frame")).defaults))()`);
+    check("nothing is pre-filled for a blank project (the user enters sizes)", JSON.parse(lv).wall === null, lv);
+    const lvl = await ev(`(async()=>{const o=await call("outline"); return o.tree.children.filter(c=>c.kind==="Level").map(c=>c.en);})()`);
+    check("the project has the level LVL-1", lvl.length === 1 && lvl[0].startsWith("LVL-1"), JSON.stringify(lvl));
+    await shot("e2e_5_blank");
+
+    // walls need a thickness and a height: with none entered the first wall is refused in words
+    await key("w");
+    const B = (x, y) => px(x, y);
+    let c0 = await B(2000, 2000), c1 = await B(8000, 2000);
+    await click(c0[0], c0[1]); await click(c1[0], c1[1]);
+    check("a wall without a thickness and a height is refused", (await count("#viewer rect.wall")) === 0 && /thickness/i.test(await ev(`document.getElementById("toast").textContent`)), await ev(`document.getElementById("toast").textContent`));
+    await key("Escape"); await key("Escape");
+    const setOpt = (k, v) => ev(`(()=>{const i=document.querySelector('[data-dopt="${k}"]'); i.value="${v}"; i.dispatchEvent(new Event("change",{bubbles:true}));})()`);
+    await key("w");
+    await setOpt("thick", 200); await setOpt("height", 3000);
+    const corners = [[2000, 2000], [8000, 2000], [8000, 6000], [2000, 6000], [2000, 2000]];
+    for (const [x, y] of corners) { const q = await B(x, y); await click(q[0], q[1]); }
+    check("four wall clicks make four walls", (await count("#viewer rect.wall")) === 4, `${await count("#viewer rect.wall")} walls`);
+    const roomsNow = await ev(`(async()=>JSON.stringify((await call("outline")).tree.children[0].children.filter(g=>g.kind==="Spaces").map(g=>g.children.map(c=>c.en))))()`);
+    check("the closed walls became a room, found automatically", (await count("#viewer rect.room")) === 1, roomsNow);
+    await key("Escape"); await key("Escape");
+
+    // a door and a window in the bottom wall: sizes are entered first
+    await key("d"); await setOpt("dw", 900); await setOpt("dh", 2100);
+    const m1 = await B(4000, 2000); await click(m1[0], m1[1]);
+    check("a door is placed in a drafted wall of the blank project", (await count("#viewer g.door")) === 1);
+    await key("n"); await setOpt("ww", 1200); await setOpt("wh", 1200); await setOpt("ws", 900);
+    const m2 = await B(6500, 2000); await click(m2[0], m2[1]);
+    check("a window is placed too", (await count("#viewer g.window")) === 1);
+
+    // grid lines: G, two clicks each; names are automatic
+    await key("g");
+    let g0 = await B(1000, 1000), g1 = await B(1000, 7500);
+    await click(g0[0], g0[1]); await click(g1[0], g1[1]);
+    let h0 = await B(500, 4000), h1 = await B(9500, 4000);
+    await click(h0[0], h0[1]); await click(h1[0], h1[1]);
+    const gnames = await ev(`JSON.stringify([...document.querySelectorAll("#viewer g.gridline text")].map(t=>t.textContent))`);
+    check("two grid lines drawn with the names A and 1", (await count("#viewer g.gridline")) === 2 && gnames.includes("\"A\"") && gnames.includes("\"1\""), gnames);
+
+    // a permanent dimension between the left and right walls: three clicks, attached to them
+    await key("i");
+    const d0 = await B(2000, 5000), d1 = await B(8000, 5000), d2 = await B(5000, 7000);
+    await click(d0[0], d0[1]); await click(d1[0], d1[1]);
+    await move(d2[0], d2[1]); await sleep(400);
+    check("the dimension preview is drawn before the third click", (await count("#dr-ov line")) >= 3);
+    await click(d2[0], d2[1]);
+    check("a permanent dimension of 6000 mm is on the plan", (await count("#viewer g.dimension")) === 1 && (await ev(`document.querySelector("#viewer g.dimension text").textContent`)) === "6000");
+    await shot("e2e_6_grid_dim");
+
+    // a room tag by clicking inside the room, then rename the room in the property panel and see the tag follow
+    await key("q");
+    const rc = await B(5000, 4500); await click(rc[0], rc[1]);
+    check("the room tag shows the name, the area and the level elevation", (await count("#viewer g.tag")) === 1 && /24\.00 m²/.test(await ev(`document.querySelector("#viewer g.tag").textContent`)) && /±0\.00 m/.test(await ev(`document.querySelector("#viewer g.tag").textContent`)), await ev(`document.querySelector("#viewer g.tag").textContent`));
+    check("a tagged room has no second label", (await count("#viewer text.name")) === 0);
+    await key("v");
+    const rp = await B(3000, 5200); await click(rp[0], rp[1]);
+    const isSpace = await ev(`DR.props && DR.props.kind==="Space"`);
+    check("clicking the room opens its properties", isSpace);
+    await ev(`(()=>{const i=document.querySelector('[data-pf="name"]'); i.value="Majlis"; i.dispatchEvent(new Event("change",{bubbles:true}));})()`); await sleep(1000);
+    check("renaming the room in the panel changes the tag", /Majlis/.test(await ev(`document.querySelector("#viewer g.tag").textContent`)));
+
+    // the elevations and the DXF carry the grid lines and the dimension
+    const exp = await ev(`(async()=>{ const d=await call("export_dxf",{}); const e=await call("elevation",{side:"south"}); return JSON.stringify({grid:d.counts["A-GRID"]||0, dims:d.counts["A-DIMS"]||0, eg:(e.svg.match(/class="grid"/g)||[]).length}); })()`);
+    const ex = JSON.parse(exp);
+    check("the DXF has A-GRID and A-DIMS entities and the elevation shows grid A", ex.grid >= 6 && ex.dims >= 6 && ex.eg === 1, exp);
+    // one undo removes the last edit (the rename), another the tag
+    const nTags = () => count("#viewer g.tag");
+    await key("z", { modifiers: 2 }); await sleep(800); await key("z", { modifiers: 2 }); await sleep(800);
+    check("undo walks back through the tag", (await nTags()) === 0);
+    await key("y", { modifiers: 2 }); await sleep(600); await key("y", { modifiers: 2 }); await sleep(800);
+    check("redo brings it back", (await nTags()) === 1);
+    await shot("e2e_7_blank_done");
+
     check("no uncaught script errors during the session", errors.length === 0, errors.join(" | ").slice(0, 300));
   } catch (e) {
     check("session ran without throwing", false, String(e).slice(0, 400));
