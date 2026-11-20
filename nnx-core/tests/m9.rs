@@ -848,3 +848,31 @@ fn part_names_in_the_ifc_follow_the_room_and_a_part_whose_key_no_longer_extends_
     named.remove("living-2");
     assert_eq!(annot::room_name(&part(&doc, "living-2"), &named).as_deref(), Some("Lounge-2"));
 }
+
+#[test]
+fn a_snapshot_labels_a_divided_part_by_its_display_name_without_changing_what_a_comparison_sees() {
+    let named: std::collections::BTreeMap<String, String> = [("living".to_string(), "Hall".to_string())].into();
+    let mut doc = blank();
+    layout_room(&mut doc, "living", "living", [0, 0, 9000, 4000]);
+    separator(&mut doc, [3000, 0], [3000, 4000]);
+    let take = |d: &Document, labels: &std::collections::BTreeMap<String, String>| {
+        let lib = nnx_core::boq::BoqLib::default();
+        let cost = nnx_core::costtier::CostInputs::default();
+        snapshot::capture(&d.model, "S1", "A", None, 1, labels, &[], &boq::compute(&[], &lib), &costtier::compute(&[], &cost))
+    };
+    let label_of = |s: &snapshot::Snapshot, key: &str| s.elements.values().find(|e| e.kind == "Space" && e.props["requirementKey"] == key).unwrap().label.clone();
+    let shown = snapshot::room_labels(&doc.model, &named);
+    let with_names = take(&doc, &shown);
+    assert_eq!((label_of(&with_names, "living").as_str(), label_of(&with_names, "living-2").as_str()), ("Hall", "Hall-2"));
+    // No display name anywhere: the key is the label, exactly as before this change.
+    assert!(snapshot::room_labels(&doc.model, &Default::default()).is_empty());
+    let plain = take(&doc, &Default::default());
+    assert_eq!(label_of(&plain, "living-2"), "living-2");
+    // The label is display only: two snapshots of the same model compare as identical whatever their labels, and the rooms stay keyed by requirement key.
+    let d = snapshot::compare(&plain, &with_names);
+    assert_eq!((d.added, d.removed, d.modified), (0, 0, 0));
+    assert!(d.rooms.is_empty());
+    // A snapshot saved before this change (labels were keys) still loads and compares.
+    let old: snapshot::Snapshot = serde_json::from_value(serde_json::to_value(&plain).unwrap()).unwrap();
+    assert_eq!(label_of(&old, "living"), "living");
+}

@@ -951,7 +951,11 @@ impl App {
         let boq = nnx_core::boq::compute(&items, &lib);
         let cost = nnx_core::costtier::compute(&items, &self.exec_inputs()?.cost);
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        Ok(nnx_core::snapshot::capture(model, id, name, note, now, &self.element_labels(), &items, &boq, &cost))
+        let mut labels = self.element_labels();
+        if let Some(p) = self.project() {
+            labels.extend(nnx_core::snapshot::room_labels(model, &p.labels));
+        }
+        Ok(nnx_core::snapshot::capture(model, id, name, note, now, &labels, &items, &boq, &cost))
     }
 
     fn snapshots_report(&self) -> Result<Value, String> {

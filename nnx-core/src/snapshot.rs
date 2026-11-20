@@ -81,6 +81,12 @@ pub fn next_id(list: &[Snapshot]) -> String {
     (1..).map(|n| format!("S{n}")).find(|id| !list.iter().any(|s| &s.id == id)).unwrap_or_default()
 }
 
+/// The display name of every room (`Hall`, and `Hall-2` for a divided part) keyed by element id, for a snapshot's labels. Rooms with no display name
+/// anywhere are left out, so `capture` falls back to the key as before. Snapshots stay keyed by element id; only the shown label is derived.
+pub fn room_labels(model: &Model, names: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    model.elements.values().filter_map(|e| Some((e.id.to_string(), crate::annot::room_name(&e.typed::<crate::typed::Space>().ok().filter(|_| e.kind == "Space")?, names)?))).collect()
+}
+
 /// Takes a snapshot of the model as it is. `labels` maps element ids to their names in the schedules.
 #[allow(clippy::too_many_arguments)]
 pub fn capture(model: &Model, id: &str, name: &str, note: Option<&str>, created_unix: u64, labels: &BTreeMap<String, String>, items: &[QtoItem], boq: &BoqReport, cost: &CostReport) -> Snapshot {
