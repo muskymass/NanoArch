@@ -234,6 +234,9 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     const bad = Object.entries(refs1.refs).filter(([id, now]) => now.some((v, i) => { const was = refs0.refs[id][i]; return !(v === was || v === was + "-2") || (v !== was && !refs1.rooms.includes(v)); }));
     check("every opening names what it named, or the new part of that room: none names a room that is gone", bad.length === 0 && Object.keys(refs1.refs).length === Object.keys(refs0.refs).length, JSON.stringify(bad).slice(0, 200));
     try { fs.unlinkSync(`${D}\\project.nnx`); } catch (e) {}
+    const tagsTxt = () => ev(`JSON.stringify([...document.querySelectorAll("#viewer g.tag")].map(g => g.textContent.replace(/\s+/g, " ").trim()).sort())`);
+    await ev(`(async()=>{ await drEdit("draft_tag", {}); })()`); await sleep(900);
+    const tagsSaved = await tagsTxt();
     await menuPress("#saveproj"); await sleep(1500);
     check("the real Save button wrote the .nnx file and the project is clean", fs.existsSync(`${D}\\project.nnx`) && fs.statSync(`${D}\\project.nnx`).size > 1000 && (await ev(`(async()=>(await call("status")).dirty)()`)) === false);
     for (const f of fs.readdirSync(D)) if (/\.dxf$/i.test(f)) fs.unlinkSync(`${D}\\${f}`);
@@ -246,10 +249,17 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
     const refs2 = JSON.parse(await ev(refsExpr));
     check("the reopened file has the division: the parts, the separator, and the same references", (await count("#viewer rect.room")) === roomsGen0 + 1 && (await count("#viewer g.separator")) === 1 && JSON.stringify(refs2) === JSON.stringify(refs1), `${await count("#viewer rect.room")} rooms`);
     check("the reopened project is clean", (await ev(`(async()=>(await call("status")).dirty)()`)) === false);
+    const tagsBack = await tagsTxt();
+    check("the reopened plan keeps every room tag with its name and area (the division's parts included)", tagsBack === tagsSaved && JSON.parse(tagsBack).length === roomsGen0 + 1 && JSON.parse(tagsBack).every(t => /m²/.test(t)), tagsBack.slice(0, 200));
+    {
+      const st0 = await ev(`(async()=>JSON.stringify(await call("status")))()`), r0 = await count("#viewer rect.room");
+      await key("z", { modifiers: 2 }); await sleep(900);
+      check("history starts at the file: Ctrl+Z on a freshly reopened project changes nothing and it stays clean", (await count("#viewer rect.room")) === r0 && (await ev(`(async()=>JSON.stringify(await call("status")))()`)) === st0 && JSON.parse(st0).dirty === false, st0);
+    }
     await shot("e2e_4c_divided_plan_reopened");
     // In the reopened project the separator can still be deleted (the room comes back as the layout made it) and the edit undone.
     await key("v"); await sleep(300);
-    const sepc = await ev(`(()=>{const l=document.querySelector("#viewer g.separator line, #viewer g.separator"); const b=l.getBoundingClientRect(); return [b.x+b.width/2, b.y+b.height/2];})()`);
+    const sepc = await ev(`(()=>{const l=document.querySelector("#viewer g.separator line, #viewer g.separator"); const b=l.getBoundingClientRect(); return [b.x+b.width*0.12, b.y+b.height*0.12];})()`); // near the separator's end: the room tags sit around its middle
     await click(sepc[0], sepc[1]); await sleep(300); await key("Delete"); await sleep(900);
     check("deleting the separator of the reopened project gives the room back", (await count("#viewer rect.room")) === roomsGen0 && (await count("#viewer g.separator")) === 0, `${await count("#viewer rect.room")} rooms`);
     await key("z", { modifiers: 2 }); await sleep(900);
@@ -457,6 +467,8 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
       await send("Emulation.setDeviceMetricsOverride", { width: w, height: 700, deviceScaleFactor: 1, mobile: false }); await sleep(700);
       const rows = await ev(`(()=>{ const ts=[...document.querySelectorAll("#menubar .mt")]; const tops=new Set(ts.map(t=>Math.round(t.getBoundingClientRect().top))); const h=document.querySelector("header").getBoundingClientRect(); return { triggers: ts.length, tops: tops.size, h: Math.round(h.height), right: Math.round(Math.max(...ts.map(t=>t.getBoundingClientRect().right))), left: Math.round(Math.min(...ts.map(t=>t.getBoundingClientRect().left))), inner: innerWidth }; })()`);
       check(`the eight menus are ONE compact row at ${w} px, all inside the window`, rows.triggers === 8 && rows.tops === 1 && rows.h < 56 && rows.right <= rows.inner && rows.left >= 0, JSON.stringify(rows));
+      const clip = await ev(`(()=>{ const ts=[...document.querySelectorAll("#menubar .mt")]; const r=e=>e.getBoundingClientRect(); const trail=[...document.querySelectorAll("header #savestate, header .badge")].filter(e=>e.getClientRects().length).map(r); const over=(a,b)=>a.left<b.right-0.5&&b.left<a.right-0.5&&a.top<b.bottom&&b.top<a.bottom; return { clipped: ts.filter(t=>t.scrollWidth>t.clientWidth+1).map(t=>t.id), overlaps: ts.filter(t=>trail.some(b=>over(r(t),b))).map(t=>t.id), dir: getComputedStyle(document.documentElement).direction, labels: ts.map(t=>t.textContent) }; })()`);
+      check(`the Arabic menu names are whole at ${w} px: nothing clipped, nothing under the header badges`, clip.clipped.length === 0 && clip.overlaps.length === 0 && clip.labels.every(x => /[؀-ۿ]|MEP/.test(x)), JSON.stringify(clip));
       await menuOpen("view"); const vp = await ev(`(()=>{const b=$("mp-view").getBoundingClientRect(); return {l:b.left,r:b.right,t:b.top,b:b.bottom,w:innerWidth,h:innerHeight};})()`);
       check(`at ${w} px the View & Export panel opens fully inside the window`, vp.l >= 0 && vp.r <= vp.w && vp.t >= 0 && vp.b <= vp.h + 1 && vp.r > vp.l, JSON.stringify(vp) + " open=" + (await openName()));
       await shot(`e2e_10_menu_view_${w}`); await key("Escape");

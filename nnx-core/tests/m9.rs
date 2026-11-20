@@ -639,3 +639,57 @@ fn a_divided_room_survives_the_file_undo_and_redo_and_is_clean_after_reopening()
     std::fs::remove_file(&path2).ok();
     assert!(whole.elements.values().filter(|e| e.kind == "Space").all(|e| e.props.get("splitFrom").is_none()));
 }
+
+#[test]
+fn a_room_cut_into_four_parts_keeps_every_part_tag_area_and_link_through_the_file_and_its_history() {
+    let mut doc = blank();
+    let room = layout_room(&mut doc, "living", "living", [0, 0, 9000, 4000]);
+    let (tc, _) = annot::tag_commands(&doc.model, &[room]).unwrap();
+    doc.commit("tag", Origin::User, tc).unwrap_or_else(|e| panic!("{e}"));
+    let (sep_v, _) = separator(&mut doc, [3000, 0], [3000, 4000]);
+    let (sep_h, _) = separator(&mut doc, [0, 2000], [9000, 2000]);
+    let keys = |d: &Document| {
+        let mut k: Vec<String> = d.model.elements.values().filter(|e| e.kind == "Space").map(|e| e.props["requirementKey"].as_str().unwrap().to_string()).collect();
+        k.sort();
+        k
+    };
+    assert_eq!(keys(&doc).len(), 4);
+    assert!(keys(&doc).contains(&"living".to_string()) && keys(&doc).contains(&"living-2".to_string()) && keys(&doc).contains(&"living-3".to_string()));
+    let path = std::env::temp_dir().join(format!("nanoarch-split4-{}.nnx", std::process::id()));
+    persist::save(&doc.model, &path).unwrap();
+    doc.mark_saved();
+    let loaded = persist::load(&path).unwrap();
+    std::fs::remove_file(&path).ok();
+    assert_eq!(loaded.state_hash(), doc.model.state_hash(), "the file holds exactly the divided model");
+    let mut back = Document::new(loaded);
+    assert!(!back.is_dirty() && !back.undo() && !back.redo(), "a reopened project is clean and its history starts at the file");
+    assert_eq!(keys(&back), keys(&doc));
+    // Every part but the one that kept the original's key remembers the room it came from, and the parts' areas add up to the room's.
+    let spaces: Vec<Space> = back.model.elements.values().filter(|e| e.kind == "Space").map(|e| e.typed::<Space>().unwrap()).collect();
+    for sp in &spaces {
+        if sp.requirement_key != "living" {
+            assert_eq!(sp.extra["splitFrom"]["requirementKey"], "living", "{} knows its origin", sp.requirement_key);
+        }
+        assert_eq!(sp.area, (sp.w * sp.h) as f64 / 1e6, "{} has its own area", sp.requirement_key);
+    }
+    assert_eq!(spaces.iter().map(|s| s.area).sum::<f64>(), 36.0);
+    assert_eq!(back.model.elements.values().filter(|e| e.kind == "Tag").count(), 4, "each part has its tag");
+    assert!(back.model.get(&sep_v).is_some() && back.model.get(&sep_h).is_some());
+    assert!(annot::rooms_sync(&back.model, level(&back)).cmds.is_empty(), "the reopened plan is already divided");
+    // Deleting both separators in the reopened project gives the whole room back, byte for byte, and undo walks back to the file.
+    for sep in [sep_v, sep_h] {
+        let mut cmds = draft::delete(&back.model, &[sep]).unwrap().cmds;
+        let mut scratch = Document::new(back.model.clone());
+        scratch.commit("x", Origin::User, cmds.clone()).unwrap_or_else(|e| panic!("{e}"));
+        cmds.extend(annot::rooms_sync(&scratch.model, level(&back)).cmds);
+        back.commit("Delete", Origin::User, cmds).unwrap_or_else(|e| panic!("{e}"));
+    }
+    assert_eq!(rooms(&back), vec![("living".to_string(), [0, 0, 9000, 4000], Source::Generated)]);
+    assert!(back.model.elements.values().filter(|e| e.kind == "Space").all(|e| e.props.get("splitFrom").is_none()));
+    assert_eq!(back.model.elements.values().filter(|e| e.kind == "Tag").count(), 1);
+    assert!(back.undo() && back.undo());
+    assert_eq!(keys(&back).len(), 4);
+    assert!(!back.is_dirty(), "undone to the saved state it is clean again");
+    assert!(back.redo() && back.redo());
+    assert!(back.is_dirty() && keys(&back).len() == 1);
+}
