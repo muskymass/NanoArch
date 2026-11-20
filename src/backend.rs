@@ -6,7 +6,7 @@
 use nnx_core::drawing::{DrawOpts, plan_svg};
 use nnx_core::layout::{Adjacency, Brief, Rect, RoomReq, Side, Zone};
 use nnx_core::qto::{self, QtoOpts};
-use nnx_core::rules::{self, RuleSet};
+use nnx_core::rules;
 use nnx_core::execution::{Activity, BuildError, ExecutionInputs, ScheduleSetup};
 use nnx_core::schedule::{self, Date};
 use nnx_core::structural::{Loads, Soil, StructOpts};
@@ -374,6 +374,18 @@ impl App {
             "qaqc_set" => self.qaqc_set(args),
             "roi" => self.roi_report(),
             "roi_set" => self.roi_set(args),
+            "outline" => self.outline_report(),
+            "snapshots" => self.snapshots_report(),
+            "snapshot_save" => self.snapshot_save(args),
+            "snapshot_delete" => self.snapshot_delete(args),
+            "snapshot_diff" => self.snapshot_diff(args),
+            "snapshot_svg" => self.snapshot_svg(args),
+            "overlays" => self.overlays_report(),
+            "overlay_review" => self.overlay_review(args),
+            "overlay_add" => self.overlay_add(args),
+            "overlay_toggle" => self.overlay_toggle(args),
+            "overlay_remove" => self.overlay_remove(args),
+            "overlay_apply_limits" => self.overlay_apply_limits(args),
             "export_ifc" => self.export_ifc(),
             "export_dxf" => self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false)),
             "report_html" => {
@@ -667,15 +679,8 @@ impl App {
 
     /// The activities of the schedule stored in the project, or why there are none yet.
     fn stored_activities(&self) -> (Option<Vec<Activity>>, Option<String>) {
-        let Some(setup) = self.project().and_then(|p| p.meta.execution.schedule) else {
-            return (None, Some("compute the schedule first (Schedule tab): its start date, calendar and rates are kept in the project".into()));
-        };
-        let (Ok(doc), Ok(q)) = (self.doc(), self.schedule_qto()) else { return (None, Some("choose a layout first".into())) };
-        match setup.build(&doc.model, &q) {
-            Ok((s, _)) => (Some(nnx_core::execution::activities(&s)), None),
-            Err(BuildError::MissingRates(k)) => (None, Some(format!("the schedule is missing {} rate(s): {}", k.len(), k.join(", ")))),
-            Err(BuildError::Invalid(why)) => (None, Some(why)),
-        }
+        let (sched, why) = self.stored_schedule();
+        (sched.map(|s| nnx_core::execution::activities(&s)), why)
     }
 
     /// The BOQ report of the project's stored library (every unpriced item stays listed).
@@ -854,11 +859,16 @@ impl App {
         Ok(v)
     }
 
+    /// Runs the rules: the pack pasted in the Rules tab (if any), then the enabled municipal overlays in order. Every finding names the
+    /// layer its rule belongs to, and `overlays` says what each layer added, replaced and overrode.
     fn check_rules(&self, args: &Value) -> Result<Value, String> {
         let doc = self.doc()?;
-        let pack = args.get("pack").and_then(Value::as_str).ok_or("paste a rule pack (JSON)")?;
-        let mut rs = RuleSet::default();
-        rs.add_layer(pack).map_err(|e| e.to_string())?;
+        let base = args.get("pack").and_then(Value::as_str);
+        let overlays = self.project().map(|p| p.overlays).unwrap_or_default();
+        if base.is_none_or(|b| b.trim().is_empty()) && !overlays.iter().any(|o| o.enabled) {
+            return Err("paste a rule pack (JSON), or load and enable a municipal overlay".into());
+        }
+        let (rs, reports) = nnx_core::overlay::rule_set(base, &overlays)?;
         let r = rules::check(&doc.model, &rs);
         let sev = |s: rules::Severity| match s {
             rules::Severity::Error => "error",
@@ -868,9 +878,231 @@ impl App {
         Ok(json!({
             "checked": r.checked,
             "layers": r.layers,
-            "findings": r.findings.iter().map(|f| json!({ "rule": f.rule_id, "clause": f.clause, "severity": sev(f.severity), "message": f.message, "element": f.element.to_string() })).collect::<Vec<_>>(),
+            "overlays": reports,
+            "findings": r.findings.iter().map(|f| json!({ "rule": f.rule_id, "clause": f.clause, "layer": f.layer, "severity": sev(f.severity), "message": f.message, "element": f.element.to_string() })).collect::<Vec<_>>(),
             "skipped": r.skipped.iter().map(|s| json!({ "rule": s.rule_id, "reason": s.reason })).collect::<Vec<_>>(),
         }))
+    }
+
+    // ------------------------------------------------------------------ Milestone 7: outliner, snapshots, overlays
+
+    /// The schedule built from the setup stored in the project, or why there is none yet.
+    fn stored_schedule(&self) -> (Option<schedule::Schedule>, Option<String>) {
+        let Some(setup) = self.project().and_then(|p| p.meta.execution.schedule) else {
+            return (None, Some("compute the schedule first (Schedule tab)".into()));
+        };
+        let (Ok(doc), Ok(q)) = (self.doc(), self.schedule_qto()) else { return (None, Some("choose a layout first".into())) };
+        match setup.build(&doc.model, &q) {
+            Ok((s, _)) => (Some(s), None),
+            Err(BuildError::MissingRates(k)) => (None, Some(format!("the schedule is missing {} rate(s): {}", k.len(), k.join(", ")))),
+            Err(BuildError::Invalid(why)) => (None, Some(why)),
+        }
+    }
+
+    /// Element id -> its name in the schedules (`COL-1`, `FND-1`, `BM-1`, `SL-1`).
+    fn element_labels(&self) -> BTreeMap<String, String> {
+        let thickness = self.project().and_then(|p| p.sizing).and_then(|s| s.footing_thickness_mm);
+        self.doc().map(|d| nnx_core::structx::schedule_names(&d.model, thickness)).unwrap_or_default()
+    }
+
+    /// The project hierarchy: Site -> Levels -> Spaces, Envelope, Structural, MEP -> Schedule and Execution.
+    fn outline_report(&self) -> Result<Value, String> {
+        let model = &self.doc()?.model;
+        let p = self.project();
+        let (sched, _) = self.stored_schedule();
+        let tasks: Option<Vec<nnx_core::outline::OutlineTask>> = sched.map(|s| {
+            s.tasks
+                .iter()
+                .map(|t| nnx_core::outline::OutlineTask { key: t.key.to_string(), name: t.name.clone(), phase: t.phase.to_string(), start: t.start.iso(), finish: t.finish.iso(), elements: t.elements.iter().map(|e| e.to_string()).collect() })
+                .collect()
+        });
+        Ok(json!({ "tree": nnx_core::outline::build(model, p.as_ref(), &self.element_labels(), tasks.as_deref()) }))
+    }
+
+    /// A snapshot of the model as it is now, with its quantities and cost figures.
+    fn capture_now(&self, id: &str, name: &str, note: Option<&str>) -> Result<nnx_core::snapshot::Snapshot, String> {
+        let model = &self.doc()?.model;
+        let mut items = qto::compute(model, &QtoOpts::default()).items;
+        items.extend(self.extra_items(model));
+        let lib = self.project().and_then(|p| p.boq).unwrap_or_default();
+        let boq = nnx_core::boq::compute(&items, &lib);
+        let cost = nnx_core::costtier::compute(&items, &self.exec_inputs()?.cost);
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        Ok(nnx_core::snapshot::capture(model, id, name, note, now, &self.element_labels(), &items, &boq, &cost))
+    }
+
+    fn snapshots_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let list: Vec<Value> = p
+            .snapshots
+            .iter()
+            .map(|s| json!({ "id": s.id, "name": s.name, "note": s.note, "date": nnx_core::revisions::date(s.created_unix), "elements": s.elements.len(), "boq_total": s.costs.boq_total, "boq_complete": s.costs.boq_complete }))
+            .collect();
+        Ok(json!({ "snapshots": list, "max": nnx_core::snapshot::MAX_SNAPSHOTS }))
+    }
+
+    /// Saves a named snapshot of the model, its quantities and its cost figures in the project: ONE undoable step.
+    fn snapshot_save(&mut self, args: &Value) -> Result<Value, String> {
+        let name = args.get("name").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).ok_or("give the snapshot a name")?.to_string();
+        let note = args.get("note").and_then(Value::as_str).map(str::to_string);
+        let existing = self.project().ok_or("choose a layout first")?.snapshots;
+        let snap = self.capture_now(&nnx_core::snapshot::next_id(&existing), &name, note.as_deref())?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "Snapshot", |p| {
+            p.snapshots.push(snap.clone());
+            Ok(())
+        })?;
+        self.snapshots_report()
+    }
+
+    fn snapshot_delete(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "Delete snapshot", |p| {
+            let before = p.snapshots.len();
+            p.snapshots.retain(|s| s.id != id);
+            if p.snapshots.len() == before {
+                return Err(format!("no snapshot '{id}'"));
+            }
+            Ok(())
+        })?;
+        self.snapshots_report()
+    }
+
+    /// The snapshot `id`, or the model as it is now for `current`.
+    fn snapshot_or_current(&self, id: &str) -> Result<nnx_core::snapshot::Snapshot, String> {
+        if id == "current" {
+            return self.capture_now("current", "Current model", None);
+        }
+        self.project().ok_or("choose a layout first")?.snapshots.into_iter().find(|s| s.id == id).ok_or_else(|| format!("no snapshot '{id}'"))
+    }
+
+    /// What changed from snapshot `a` to snapshot `b` (or the current model). `statuses` names the changed elements that still exist,
+    /// for colouring them in the 3D view.
+    fn snapshot_diff(&self, args: &Value) -> Result<Value, String> {
+        let a = self.snapshot_or_current(args.get("a").and_then(Value::as_str).ok_or("choose the first snapshot")?)?;
+        let b = self.snapshot_or_current(args.get("b").and_then(Value::as_str).unwrap_or("current"))?;
+        let d = nnx_core::snapshot::compare(&a, &b);
+        let statuses: BTreeMap<&str, &str> = d.elements.iter().filter(|e| e.status != "removed").map(|e| (e.id.as_str(), e.status)).collect();
+        Ok(json!({ "diff": d, "statuses": statuses, "on_plan": args.get("b").and_then(Value::as_str).is_none_or(|b| b == "current") }))
+    }
+
+    /// The plan of the level on screen with revision clouds around what changed from snapshot `a` to the current model.
+    fn snapshot_svg(&self, args: &Value) -> Result<Value, String> {
+        let a = self.snapshot_or_current(args.get("a").and_then(Value::as_str).ok_or("choose a snapshot")?)?;
+        let b = self.capture_now("current", "Current model", None)?;
+        let d = nnx_core::snapshot::compare(&a, &b);
+        let changes: Vec<nnx_core::revisions::Change> = d.elements.iter().filter(|e| e.status != "removed").map(|e| nnx_core::revisions::Change { id: e.id.clone(), kind: e.kind.clone(), status: e.status }).collect();
+        let model = &self.doc()?.model;
+        let opts = self.draw_opts(self.show_structure);
+        let svg = plan_svg(model, self.current_level(), &opts).map_err(|e| e.to_string())?;
+        Ok(json!({ "svg": nnx_core::revisions::add_clouds(&svg, model, self.current_level(), &opts, &changes), "clouds": changes.len() }))
+    }
+
+    fn overlays_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let list: Vec<Value> = p
+            .overlays
+            .iter()
+            .map(|o| {
+                let label = serde_json::from_str::<nnx_core::rules::PackDef>(&o.pack).map(|d| format!("{}@{}/{}", d.id, d.edition, d.version)).unwrap_or_default();
+                json!({ "id": o.id, "name": o.name, "authority": o.authority, "document": o.document, "date": o.date, "enabled": o.enabled, "label": label, "has_limits": nnx_core::overlay::limits_of(&o.pack).ok().flatten().is_some() })
+            })
+            .collect();
+        Ok(json!({ "overlays": list, "limits": p.limits }))
+    }
+
+    fn overlay_from_args(&self, args: &Value) -> Result<nnx_core::overlay::Overlay, String> {
+        let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::trim).unwrap_or("").to_string();
+        let list = self.project().ok_or("choose a layout first")?.overlays;
+        Ok(nnx_core::overlay::Overlay {
+            id: nnx_core::overlay::next_id(&list),
+            name: s("name"),
+            authority: s("authority"),
+            document: s("document"),
+            date: Some(s("date")).filter(|d| !d.is_empty()),
+            enabled: args.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+            pack: args.get("pack").and_then(Value::as_str).ok_or("paste or open the overlay (JSON)")?.to_string(),
+        })
+    }
+
+    /// The rule set in force before a new overlay: the pasted base pack (if any), then the enabled overlays already loaded.
+    fn overlay_base(&self, args: &Value) -> Result<nnx_core::rules::RuleSet, String> {
+        let list = self.project().ok_or("choose a layout first")?.overlays;
+        nnx_core::overlay::rule_set(args.get("base").and_then(Value::as_str), &list).map(|r| r.0)
+    }
+
+    /// What loading this overlay would do, without storing anything.
+    fn overlay_review(&self, args: &Value) -> Result<Value, String> {
+        let o = self.overlay_from_args(args)?;
+        let p = self.project().ok_or("choose a layout first")?;
+        let base = self.overlay_base(args)?;
+        Ok(json!({ "review": nnx_core::overlay::review(&base, &o, &p.limits) }))
+    }
+
+    /// Stores the overlay once it is valid and, when it replaces or overrides anything, once the user confirmed that.
+    fn overlay_add(&mut self, args: &Value) -> Result<Value, String> {
+        let o = self.overlay_from_args(args)?;
+        let p = self.project().ok_or("choose a layout first")?;
+        let review = nnx_core::overlay::review(&self.overlay_base(args)?, &o, &p.limits);
+        if !review.errors.is_empty() {
+            return Err(format!("overlay refused: {}", review.errors.join("; ")));
+        }
+        if review.needs_confirm && args.get("confirm").and_then(Value::as_bool) != Some(true) {
+            return Ok(json!({ "stored": false, "review": review }));
+        }
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "Load overlay", |p| {
+            p.overlays.push(o.clone());
+            Ok(())
+        })?;
+        let mut v = self.overlays_report()?;
+        v["stored"] = json!(true);
+        v["review"] = json!(review);
+        Ok(v)
+    }
+
+    fn overlay_toggle(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+        let on = args.get("enabled").and_then(Value::as_bool).ok_or("enabled is required")?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, if on { "Enable overlay" } else { "Disable overlay" }, |p| {
+            p.overlays.iter_mut().find(|o| o.id == id).ok_or_else(|| format!("no overlay '{id}'"))?.enabled = on;
+            Ok(())
+        })?;
+        self.overlays_report()
+    }
+
+    fn overlay_remove(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "Remove overlay", |p| {
+            let before = p.overlays.len();
+            p.overlays.retain(|o| o.id != id);
+            if p.overlays.len() == before {
+                return Err(format!("no overlay '{id}'"));
+            }
+            Ok(())
+        })?;
+        self.overlays_report()
+    }
+
+    /// Writes the limits of an overlay into the project's municipal limits (old and new are returned): ONE undoable step.
+    fn overlay_apply_limits(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+        let mut changed = Vec::new();
+        let mut violations = Vec::new();
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "Apply overlay limits", |p| {
+            let o = p.overlays.iter().find(|o| o.id == id).cloned().ok_or_else(|| format!("no overlay '{id}'"))?;
+            changed = nnx_core::overlay::apply_limits(p, &o)?;
+            Ok(())
+        })?;
+        violations.extend(out.new_violations.iter().map(|v| v.en.clone()));
+        let mut v = self.overlays_report()?;
+        v["changed"] = json!(changed);
+        v["new_violations"] = json!(violations);
+        Ok(v)
     }
 
     /// The engineering report from the project's stored MEP and structural inputs: the printable HTML and the XLSX (base64).
@@ -3875,5 +4107,150 @@ mod tests {
         assert!(app.handle("exec", &json!({})).unwrap()["inputs"]["tender"]["scope"].is_null());
         assert_eq!(app.handle("exec", &json!({})).unwrap()["inputs"]["roi"]["unitTypes"].as_array().unwrap().len(), 1);
         assert!(App::default().handle("exec", &json!({})).is_err() && App::default().handle("cost", &json!({})).is_err() && App::default().handle("tender", &json!({})).is_err());
+    }
+
+    // ------------------------------------------------------------------ Milestone 7: outliner, snapshots, overlays
+
+    #[test]
+    fn the_outline_lists_levels_spaces_structural_mep_and_the_schedule_with_the_elements_each_names() {
+        let mut app = complete_app();
+        let r = app.handle("outline", &json!({})).unwrap();
+        let tree = &r["tree"];
+        assert_eq!(tree["kind"], "Site");
+        let level = &tree["children"][0];
+        assert_eq!(level["kind"], "Level");
+        let kinds: Vec<&str> = level["children"].as_array().unwrap().iter().map(|c| c["kind"].as_str().unwrap()).collect();
+        for k in ["Spaces", "Envelope", "Structural", "MEP"] {
+            assert!(kinds.contains(&k), "{kinds:?}");
+        }
+        // Structural leaves carry their schedule names (COL-1, FND-1 ...).
+        let st = level["children"].as_array().unwrap().iter().find(|c| c["kind"] == "Structural").unwrap();
+        assert!(st["children"].as_array().unwrap().iter().any(|c| c["en"].as_str().unwrap().starts_with("COL-")), "{st}");
+        // Every id in the tree is an element of the open model.
+        let model = &app.doc.as_ref().unwrap().model;
+        assert!(tree["ids"].as_array().unwrap().iter().all(|id| model.get(&id.as_str().unwrap().parse().unwrap()).is_some()));
+        // Before a schedule exists the node says so; after, phases and tasks appear.
+        let exe = |t: &Value| t["children"].as_array().unwrap().iter().find(|c| c["kind"] == "Execution").unwrap().clone();
+        assert!(exe(tree)["children"][0]["en"].as_str().unwrap().contains("not computed"));
+        let rates = all_rates(&mut app);
+        app.handle("schedule", &schedule_args(rates)).unwrap();
+        let r = app.handle("outline", &json!({})).unwrap();
+        let sched = exe(&r["tree"])["children"][0].clone();
+        assert_eq!(sched["goto"]["tab"], "sched");
+        assert_eq!(sched["children"][0]["en"], "Substructure");
+        assert!(sched["children"][0]["children"].as_array().unwrap().iter().any(|t| !t["ids"].as_array().unwrap().is_empty()), "a task names the elements it builds");
+        assert!(App::default().handle("outline", &json!({})).is_err());
+    }
+
+    #[test]
+    fn a_snapshot_is_saved_in_the_project_compared_with_the_current_model_drawn_and_undone() {
+        let mut app = sized_app();
+        assert!(app.handle("snapshot_save", &json!({ "name": "  " })).is_err());
+        let r = app.handle("snapshot_save", &json!({ "name": "Rev A", "note": "before sizing" })).unwrap();
+        assert_eq!(r["snapshots"][0]["id"], "S1");
+        assert!(r["snapshots"][0]["elements"].as_u64().unwrap() > 0);
+        assert!(app.handle("snapshot_save", &json!({ "name": "rev a" })).unwrap_err().contains("already used"));
+        // Nothing changed yet: an empty difference.
+        let d = app.handle("snapshot_diff", &json!({ "a": "S1" })).unwrap();
+        assert_eq!(d["diff"]["added"], 0);
+        assert_eq!(d["diff"]["modified"], 0);
+        // The structural schedules add tie beams: they appear as added.
+        app.handle("sizing", &json!({ "inputs": sizing_inputs() })).unwrap();
+        let d = app.handle("snapshot_diff", &json!({ "a": "S1", "b": "current" })).unwrap();
+        assert!(d["diff"]["added"].as_u64().unwrap() > 0, "{d}");
+        assert_eq!(d["on_plan"], true);
+        assert!(!d["statuses"].as_object().unwrap().is_empty());
+        assert!(d["diff"]["elements"].as_array().unwrap().iter().any(|e| e["kind"] == "TieBeam" && e["status"] == "added"));
+        let svg = app.handle("snapshot_svg", &json!({ "a": "S1" })).unwrap();
+        assert!(svg["clouds"].as_u64().unwrap() > 0 && svg["svg"].as_str().unwrap().contains("rev-clouds"));
+        // Two stored snapshots compare without the current model, and then cannot be drawn on the plan.
+        app.handle("snapshot_save", &json!({ "name": "Rev B" })).unwrap();
+        let d = app.handle("snapshot_diff", &json!({ "a": "S1", "b": "S2" })).unwrap();
+        assert_eq!(d["on_plan"], false);
+        assert_eq!(d["diff"]["a"]["name"], "Rev A");
+        assert!(d["diff"]["added"].as_u64().unwrap() > 0);
+        assert!(app.handle("snapshot_diff", &json!({ "a": "S9" })).is_err());
+        // Deleting and undoing are single steps; a snapshot is part of the project.
+        app.handle("snapshot_delete", &json!({ "id": "S1" })).unwrap();
+        assert_eq!(app.handle("snapshots", &json!({})).unwrap()["snapshots"].as_array().unwrap().len(), 1);
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.handle("snapshots", &json!({})).unwrap()["snapshots"].as_array().unwrap().len(), 2);
+        assert!(app.handle("snapshot_delete", &json!({ "id": "S9" })).is_err());
+        assert!(App::default().handle("snapshot_save", &json!({ "name": "x" })).is_err());
+    }
+
+    #[test]
+    fn a_snapshot_carries_the_cost_figures_of_its_moment() {
+        let mut app = sized_app();
+        let inputs = |rate: f64| json!({ "inputs": { "items": { "WALL.EXT.AREA": { "spec": "s", "spec_source": "synthetic", "rate": rate, "rate_source": "synthetic" } } } });
+        app.handle("boq", &inputs(10.0)).unwrap();
+        app.handle("snapshot_save", &json!({ "name": "Cheap" })).unwrap();
+        app.handle("boq", &inputs(15.0)).unwrap();
+        let d = app.handle("snapshot_diff", &json!({ "a": "S1" })).unwrap();
+        let row = d["diff"]["costs"].as_array().unwrap().iter().find(|c| c["code"] == "WALL.EXT.AREA").expect("the wall row changed");
+        let (from, delta) = (row["from"].as_f64().unwrap(), row["delta"].as_f64().unwrap());
+        assert!((delta - from * 0.5).abs() < 0.01, "{from} {delta}");
+        assert!(d["diff"]["elements"].as_array().unwrap().is_empty(), "only the price changed");
+    }
+
+    const OV_BASE: &str = r#"{ "id": "BASE", "edition": "synthetic", "version": "1", "rules": [ { "id": "room.area", "clause": "T-1", "applies_to": { "kind": "Space" }, "check": "area >= param.min", "params": { "min": { "value": 5, "source": "synthetic base" } }, "severity": "warning", "message": "room too small" } ] }"#;
+    const OV_PACK: &str = r#"{ "id": "MUNI", "edition": "synthetic", "version": "2", "overrides": { "room.area": { "min": { "value": 30, "source": "Circular 1, art. 5" } } },
+        "limits": { "minSetbackFrontM": { "value": 4, "source": "Circular 1, art. 2" } } }"#;
+
+    fn ov_args(pack: &str) -> Value {
+        json!({ "name": "Synthetic municipality", "authority": "Synthetic Municipality", "document": "Circular 1", "date": "2027-01-01", "pack": pack, "base": OV_BASE })
+    }
+
+    #[test]
+    fn an_overlay_is_reviewed_confirmed_stored_layered_into_the_check_and_never_changes_limits_by_itself() {
+        let mut app = started();
+        // Refused without a source or an authority, by name.
+        let bad = OV_PACK.replace("Circular 1, art. 5", "");
+        assert!(app.handle("overlay_add", &ov_args(&bad)).unwrap_err().contains("no source"));
+        let mut noauth = ov_args(OV_PACK);
+        noauth["authority"] = json!("");
+        assert!(app.handle("overlay_add", &noauth).unwrap_err().contains("authority"));
+        // The review lists the override and the limit change; storing needs the user's confirmation.
+        let rv = app.handle("overlay_review", &ov_args(OV_PACK)).unwrap();
+        assert_eq!(rv["review"]["overridden"][0]["from"]["value"], 5.0);
+        assert_eq!(rv["review"]["overridden"][0]["to"]["value"], 30.0);
+        assert_eq!(rv["review"]["limit_changes"].as_array().unwrap().len(), 1);
+        assert_eq!(rv["review"]["needs_confirm"], true);
+        let r = app.handle("overlay_add", &ov_args(OV_PACK)).unwrap();
+        assert_eq!(r["stored"], false);
+        assert!(app.handle("overlays", &json!({})).unwrap()["overlays"].as_array().unwrap().is_empty());
+        let mut yes = ov_args(OV_PACK);
+        yes["confirm"] = json!(true);
+        let r = app.handle("overlay_add", &yes).unwrap();
+        assert_eq!(r["stored"], true);
+        assert_eq!(r["overlays"][0]["label"], "MUNI@synthetic/2");
+        assert_eq!(r["overlays"][0]["has_limits"], true);
+        // Storing did not touch the project's limits.
+        assert!(r["limits"]["minSetbackFrontM"].is_null());
+        // The check applies the base pack, then the overlay: the layers are named and the overlay's override is listed.
+        let layered = app.handle("check_rules", &json!({ "pack": OV_BASE })).unwrap();
+        assert_eq!(layered["layers"], json!(["BASE@synthetic/1", "MUNI@synthetic/2"]));
+        assert!(layered["findings"].as_array().unwrap().iter().any(|f| f["rule"] == "room.area" && f["layer"] == "BASE@synthetic/1"), "{layered}");
+        assert_eq!(layered["overlays"][1]["overridden"][0]["to"]["value"], 30.0);
+        // Disabled, it no longer applies; the base alone passes every room.
+        app.handle("overlay_toggle", &json!({ "id": "ov1", "enabled": false })).unwrap();
+        let off = app.handle("check_rules", &json!({ "pack": OV_BASE })).unwrap();
+        assert_eq!(off["layers"], json!(["BASE@synthetic/1"]));
+        assert!(off["findings"].as_array().unwrap().iter().all(|f| f["rule"] != "room.area"));
+        // No pack and no enabled overlay is the old error.
+        assert!(app.handle("check_rules", &json!({})).is_err());
+        // The limits reach the project only by an explicit apply, which is one undoable step with old and new shown.
+        let a = app.handle("overlay_apply_limits", &json!({ "id": "ov1" })).unwrap();
+        assert_eq!(a["changed"][0]["to"]["value"], 4.0);
+        assert_eq!(a["limits"]["minSetbackFrontM"]["source"], "Circular 1, art. 2");
+        assert!(app.handle("overlay_apply_limits", &json!({ "id": "ov1" })).is_err());
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.handle("overlays", &json!({})).unwrap()["limits"]["minSetbackFrontM"].is_null());
+        // Removal is undoable too.
+        app.handle("overlay_remove", &json!({ "id": "ov1" })).unwrap();
+        assert!(app.handle("overlays", &json!({})).unwrap()["overlays"].as_array().unwrap().is_empty());
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.handle("overlays", &json!({})).unwrap()["overlays"].as_array().unwrap().len(), 1);
+        assert!(app.handle("overlay_remove", &json!({ "id": "zz" })).is_err());
     }
 }

@@ -166,6 +166,10 @@ pub struct NanoArchProject {
     /// Room key -> display name.
     pub labels: BTreeMap<String, String>,
     pub limits: MunicipalLimits,
+    /// Named versions of the project (their own top-level property, so an edit elsewhere does not copy them into the undo history).
+    pub snapshots: Vec<crate::snapshot::Snapshot>,
+    /// Municipal and authority rule overlays loaded by the user, in the order they apply.
+    pub overlays: Vec<crate::overlay::Overlay>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -218,6 +222,8 @@ impl NanoArchProject {
         self.meta.finishes.check()?;
         self.meta.as_built.check()?;
         self.meta.execution.check()?;
+        crate::snapshot::check_all(&self.snapshots)?;
+        crate::overlay::check_all(&self.overlays)?;
         if let Some(f) = &self.meta.furniture
             && f.min_clear_mm.is_some_and(|m| !m.is_finite() || m <= 0.0)
         {

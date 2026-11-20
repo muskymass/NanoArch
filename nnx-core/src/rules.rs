@@ -87,6 +87,28 @@ pub enum PackError {
     UnknownOverride(String),
 }
 
+/// A parameter a layer overrode.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Overridden {
+    pub rule: String,
+    pub param: String,
+    /// The value before the layer; none when the rule did not declare the parameter.
+    pub from: Option<Param>,
+    pub to: Param,
+    /// The layer the rule belongs to.
+    pub layer: String,
+}
+
+/// What one layer did to the rule set.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct LayerReport {
+    pub label: String,
+    pub added: Vec<String>,
+    /// `(rule id, label of the layer whose rule was replaced)`.
+    pub replaced: Vec<(String, String)>,
+    pub overridden: Vec<Overridden>,
+}
+
 /// A rule with its expressions parsed ready to run.
 #[derive(Debug, Clone)]
 struct Compiled {
@@ -108,6 +130,12 @@ impl RuleSet {
     /// Adds a pack on top of the current ones. Rules with an existing id are replaced;
     /// `overrides` patch parameters of rules already loaded.
     pub fn add_layer(&mut self, json: &str) -> Result<(), PackError> {
+        self.add_layer_reporting(json).map(|_| ())
+    }
+
+    /// Like `add_layer`, and says exactly what the layer did to the rules below it: the rules it added, the rules it replaced (and the
+    /// layer each came from) and every parameter it overrode (old and new value, with sources). Nothing changes on an error.
+    pub fn add_layer_reporting(&mut self, json: &str) -> Result<LayerReport, PackError> {
         let pack: PackDef = serde_json::from_str(json)?;
         let label = format!("{}@{}/{}", pack.id, pack.edition, pack.version);
 
@@ -125,17 +153,28 @@ impl RuleSet {
                 return Err(PackError::UnknownOverride(rule_id.clone()));
             }
         }
+        let mut report = LayerReport { label: label.clone(), ..Default::default() };
         for c in compiled {
+            match self.rules.get(&c.def.id) {
+                Some(prev) => report.replaced.push((c.def.id.clone(), prev.layer.clone())),
+                None => report.added.push(c.def.id.clone()),
+            }
             self.rules.insert(c.def.id.clone(), c);
         }
         for (rule_id, params) in pack.overrides {
             let c = self.rules.get_mut(&rule_id).expect("checked");
             for (name, p) in params {
-                c.def.params.insert(name, p);
+                let from = c.def.params.insert(name.clone(), p.clone());
+                report.overridden.push(Overridden { rule: rule_id.clone(), param: name, from, to: p, layer: c.layer.clone() });
             }
         }
         self.layers.push(label);
-        Ok(())
+        Ok(report)
+    }
+
+    /// The rule with this id as it stands now, and the label of the layer it came from.
+    pub fn rule(&self, id: &str) -> Option<(&RuleDef, &str)> {
+        self.rules.get(id).map(|c| (&c.def, c.layer.as_str()))
     }
 
     pub fn len(&self) -> usize {

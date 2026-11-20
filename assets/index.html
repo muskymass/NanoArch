@@ -45,6 +45,19 @@ td.num{font-variant-numeric:tabular-nums}
 #v3 .tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:6px 10px;background:#fff;border-bottom:1px solid #ddd}
 #v3 .tools label{display:flex;gap:4px;align-items:center;margin:0}
 #gl{flex:1;width:100%;min-height:0;display:block;cursor:grab;touch-action:none}
+#vp{flex:1;display:flex;flex-direction:row;min-height:0;min-width:0}
+#vp>#viewer,#vp>#v3{min-width:0}
+#vp.split>#viewer{flex:1 1 50%}#vp.split>#v3{flex:1 1 50%;border-inline-start:2px solid var(--line)}
+#viewer svg .osel{stroke:#e6a100!important;stroke-width:4!important;filter:drop-shadow(0 0 3px #e6a100)}
+#viewer svg g.osel .leaf,#viewer svg g.osel .glass{stroke:#e6a100!important;stroke-width:3!important}
+.osel-row{background:rgba(230,161,0,.22)!important;outline:1px solid #e6a100}
+.olr{display:flex;align-items:center;gap:6px;padding-block:3px;padding-inline-end:6px;border-radius:5px;cursor:pointer;white-space:nowrap}
+.olr:hover{background:var(--bg)}.olr.on{background:rgba(230,161,0,.25);outline:1px solid #e6a100}
+.ola{width:14px;text-align:center;color:var(--mute);user-select:none}
+.olk{width:8px;height:8px;border-radius:2px;background:var(--mute);flex:0 0 auto}
+.olk-Site{background:#1f5fae}.olk-Level{background:#6a4bb8}.olk-Spaces,.olk-Space{background:#2e9b6b}.olk-Structural,.olk-Column,.olk-Beam,.olk-Slab,.olk-Footing,.olk-TieBeam{background:#b6501a}.olk-MEP,.olk-MepRun,.olk-MepPoint{background:#16a0a6}.olk-Execution,.olk-Schedule,.olk-Phase,.olk-Task{background:#c7a100}
+.oll{overflow:hidden;text-overflow:ellipsis}.olc{font-size:10px;color:var(--mute);background:var(--bg);border-radius:8px;padding:0 6px}
+.olg{padding:0 6px;margin-inline-start:auto;border:0;background:transparent;color:var(--accent)}
 #viewer{flex:1;overflow:auto;padding:8px;background:#fff;display:flex;justify-content:center;align-items:flex-start}
 #viewer svg{width:100%;max-width:820px;height:auto;flex:0 0 auto}
 #viewer svg .wall.int,#viewer svg .door,#viewer svg .window,#viewer svg .room{cursor:pointer}
@@ -150,7 +163,7 @@ ul.clean li{margin:3px 0}
       <button id="undo" disabled data-i="undo"></button><button id="redo" disabled data-i="redo"></button>
       <label style="display:flex;gap:6px;align-items:center;margin:0;color:var(--ink)"><input type="checkbox" id="showstruct"><span data-i="show_struct"></span></label>
       <button id="sync" disabled data-i="sync"></button>
-      <button id="to3d" disabled></button>
+      <button id="to3d" disabled></button><button id="split" disabled></button>
       <select id="viewsel" disabled style="width:auto"><option value="plan" data-i="v_plan"></option><option value="north" data-i="v_north"></option><option value="south" data-i="v_south"></option><option value="east" data-i="v_east"></option><option value="west" data-i="v_west"></option><option value="A-A" data-i="v_aa"></option><option value="B-B" data-i="v_bb"></option><option value="site" data-i="v_site"></option><option value="furn" data-i="v_furn"></option></select>
       <input id="sec-at" type="number" step="0.1" style="width:90px" data-title="sec_at" placeholder="m">
       <span style="flex:1"></span>
@@ -160,6 +173,7 @@ ul.clean li{margin:3px 0}
     <div class="alts" id="alts"><div class="empty" data-i="alts_empty"></div></div>
     <div id="levelbar" class="bar" style="display:none;gap:6px;padding:6px 8px"></div>
     <div id="inspector" class="bar" style="display:none"></div>
+    <div id="vp">
     <div id="viewer"><div class="empty" data-i="viewer_empty"></div></div>
     <div id="v3">
       <div class="tools">
@@ -184,13 +198,14 @@ ul.clean li{margin:3px 0}
       <canvas id="gl"></canvas>
       <div class="tools"><span class="note" data-i="v_hint"></span><span id="v3-pick" style="font-weight:600"></span></div>
     </div>
+    </div>
   </section>
 
   <!-- ============ results ============ -->
   <section class="col">
     <div class="tabs">
       <button class="tab on" data-tab="notes" data-i="t_notes"></button><button class="tab" data-tab="qto" data-i="t_qto"></button>
-      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="an" id="tab-an"></button><button class="tab" data-tab="cp" id="tab-cp"></button><button class="tab" data-tab="mx" id="tab-mx"></button><button class="tab" data-tab="pr" id="tab-pr"></button><button class="tab" data-tab="ex" id="tab-ex"></button>
+      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="an" id="tab-an"></button><button class="tab" data-tab="cp" id="tab-cp"></button><button class="tab" data-tab="mx" id="tab-mx"></button><button class="tab" data-tab="pr" id="tab-pr"></button><button class="tab" data-tab="ol" id="tab-ol"></button><button class="tab" data-tab="vr" id="tab-vr"></button><button class="tab" data-tab="ov" id="tab-ov"></button><button class="tab" data-tab="ex" id="tab-ex"></button>
     </div>
     <div class="scroll">
       <div class="pane" id="p-sketch">
@@ -287,6 +302,9 @@ ul.clean li{margin:3px 0}
       <div class="pane" id="p-mx"></div>
       <div class="pane" id="p-pr"></div>
       <div class="pane" id="p-ex"></div>
+      <div class="pane" id="p-ol"></div>
+      <div class="pane" id="p-vr"></div>
+      <div class="pane" id="p-ov"></div>
       <div class="pane" id="p-rules">
         <div class="note" data-i="rules_note"></div>
         <textarea id="pack" spellcheck="false" dir="ltr" style="text-align:left"></textarea>
@@ -420,7 +438,7 @@ function applyLang() {
   try { sxBuild(); } catch (e) { /* not loaded yet */ }
   try { $("tab-mx").textContent = L("MEP متقدم", "Advanced MEP"); mxBuild(); } catch (e) { /* not loaded yet */ }
   try { v5Labels(); prBuild(); } catch (e) { /* not loaded yet */ }
-  try { exBuild(); } catch (e) { /* not loaded yet */ }
+  try { exBuild(); olBuild(); vrBuild(); ovBuild(); applyMode(); } catch (e) { /* not loaded yet */ }
   if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
 }
 
@@ -595,7 +613,7 @@ async function choose(i) {
   renderAlts(); renderNotes(); setPlanButtons(true); $("p-qto").innerHTML = `<div class="empty">${t("working")}</div>`; $("schedout").innerHTML = "";
   loadQto(); refreshStatus(); try { anBuild(); } catch (e) { /* panel not built yet */ }
 }
-function setPlanButtons(on) { ["exportrep", "exportrepx", "viewsel", "undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportpdf", "saveproj", "to3d"].forEach(id => $(id).disabled = !on); }
+function setPlanButtons(on) { ["exportrep", "exportrepx", "viewsel", "undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportpdf", "saveproj", "to3d", "split"].forEach(id => $(id).disabled = !on); }
 
 // ---------------------------------------------------------------- toolbar
 // The generated SVG text is kept as is, so an export is the real file and not the browser's re-serialisation.
@@ -608,7 +626,7 @@ function setLevels(l) {
   bar.innerHTML = list.map(x => `<button class="${x.index === l.current ? "primary" : ""}" data-lv="${x.index}">${levelLabel(x.index)}</button>`).join("");
   bar.querySelectorAll("[data-lv]").forEach(b => b.onclick = () => busy(async () => { const r = await call("level", { index: Number(b.dataset.lv) }); showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } }));
 }
-const showPlan = svg => { state.viewName = "plan.svg"; $("viewsel").value = "plan"; state.svgText = svg || ""; $("viewer").innerHTML = svg || `<div class="empty">${t("viewer_empty")}</div>`; clearSel(); if (V3.on) refresh3d(false); };
+const showPlan = svg => { state.viewName = "plan.svg"; $("viewsel").value = "plan"; state.svgText = svg || ""; $("viewer").innerHTML = svg || `<div class="empty">${t("viewer_empty")}</div>`; clearSel(); selApply2d(); if (V3.on) refresh3d(false); olStale(); };
 $("showstruct").onchange = () => busy(async () => { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); });
 for (const k of ["undo", "redo"]) $(k).onclick = () => busy(async () => { const r = await call(k); showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } if (r.settings) { applyProject(r.settings); applySetbacks(r.settings); } renderSbc(r.sbc); refreshBim(); await refreshStatus(); });
 $("sync").onclick = () => busy(async () => { const r = await call("sync"); showPlan(r.svg); refreshStatus(); toast(t("sync_done").replace("{c}", r.created).replace("{r}", r.removed).replace("{u}", r.unchanged)); });
@@ -925,7 +943,7 @@ function build3() {
     let c = v5Tint(b, colorOf(b));
     if (status4d(b.id) === "active") c = [0.95, 0.62, 0.12, c[3]];
     if (V3.clash.has(b.id)) c = [0.9, 0.1, 0.1, 1];
-    if (V3.sel && b.id === V3.sel) c = [0.9, 0.63, 0, c[3] < 1 ? 0.6 : 1];
+    if ((V3.sel && b.id === V3.sel) || (V3.selSet && V3.selSet.has(b.id))) c = [0.9, 0.63, 0, c[3] < 1 ? 0.6 : 1];
     pushBox(c[3] < 1 ? tr : op, b, c);
   }
   const gl = V3.gl;
@@ -981,11 +999,7 @@ async function refresh3d(refit) {
       sel.value = V3.maxLevel == null ? "all" : String(V3.maxLevel); } if (refit) fit3(sc); build3(); draw3(); $("v3-info").textContent = `${V3.boxes.length} ${t("v_solids")}`; }
   catch (e) { V3.boxes = []; V3.buf.nOp = V3.buf.nTr = 0; draw3(); $("v3-info").textContent = t("viewer_empty"); }
 }
-function setView3(on) {
-  V3.on = on; $("v3").style.display = on ? "flex" : "none"; $("viewer").style.display = on ? "none" : "flex"; $("to3d").textContent = on ? t("to2d") : t("to3d");
-  if (on) refresh3d(true);
-}
-$("to3d").onclick = () => setView3(!V3.on);
+
 for (const [id, key] of [["v-slab", "slab"], ["v-struct", "struct"], ["v-floor", "floor"], ["v-glass", "glass"], ["v-mep", "mep"]]) { $(id).checked = V3.show[key]; $(id).onchange = () => { V3.show[key] = $(id).checked; build3(); draw3(); }; }
 $("v-level").onchange = () => { const v = $("v-level").value; V3.maxLevel = v === "all" ? null : Number(v); build3(); draw3(); };
 $("v-reset").onclick = () => { V3.yaw = -0.8; V3.pitch = 0.55; if (V3.scene) fit3(V3.scene); V3.sel = null; build3(); draw3(); $("v3-pick").textContent = ""; };
@@ -1011,7 +1025,7 @@ const gl3 = $("gl");
 gl3.addEventListener("mousedown", e => { V3.drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey, moved: 0 }; });
 window.addEventListener("mouseup", async e => {
   const d = V3.drag; V3.drag = null; if (!d || !V3.on || V3.walk || d.moved > 4 || e.target !== gl3) return;
-  const b = pick3(e); V3.sel = b ? b.id : null; build3(); draw3();
+  const b = pick3(e); V3.sel = b ? b.id : null; build3(); draw3(); selectIds(b ? [b.id] : [], { src: "3d", level: b ? b.level : null });
   if (!b) { $("v3-pick").textContent = ""; return; }
   $("v3-pick").textContent = `${b.kind}${b.class ? " / " + b.class : ""}${b.visual ? " (" + t("v_visual") + ")" : ""} · ${b.id}`;
 });
@@ -1183,7 +1197,7 @@ document.addEventListener("mouseup", e => {
 $("viewer").addEventListener("click", e => {
   if (drag.moved) { drag.moved = false; return; }
   const el = pickOpening(e) || pickPartition(e) || e.target.closest("[data-id]");
-  if (el && el.ownerSVGElement) busy(async () => selectElement(el));
+  if (el && el.ownerSVGElement) busy(async () => { await selectElement(el); await selectIds([el.dataset.id], { src: "2d" }); });
 });
 
 // ---------------------------------------------------------------- non-rectangular plots
@@ -1829,6 +1843,7 @@ function v5Tint(b, c) {
   const f = V3.fin;
   if (f && f.facade && b.kind === "Wall" && b.class === "ext") c = [f.facade[0], f.facade[1], f.facade[2], c[3]];
   if (f && f.floor && b.kind === "Space" && b.class !== "bathroom" && b.class !== "toilet") c = [f.floor[0], f.floor[1], f.floor[2], c[3]];
+  const df = V3.diff && V3.diff[b.id]; if (df) return df === "added" ? [0.12, 0.65, 0.3, 1] : [0.95, 0.55, 0.05, 1];
   const dv = V3.dev && V3.dev[b.id];
   if (dv) c = dv[1] === "over" ? [0.85, 0.1, 0.1, 1] : dv[1] === "ok" ? [0.18, 0.62, 0.25, 1] : [0.55, 0.55, 0.55, 1];
   if (V3.xray) {
@@ -1992,7 +2007,7 @@ function prWire() {
     PR.ab = await call("asbuilt_set", args); prBuild(); if (V3.on) await refresh3d(false); toast(t("proj_saved"));
   };
   act("pr-ab-save", abSave);
-  act("pr-ab-plan", async () => { await abSave(); const r = await call("asbuilt_svg"); if (V3.on) setView3(false); showPlan(r.svg); });
+  act("pr-ab-plan", async () => { await abSave(); const r = await call("asbuilt_svg"); if (V3.on && !V3.split) setView3(false); showPlan(r.svg); });
   act("pr-ab-3d", async () => { await abSave(); if (!V3.on) setView3(true); else await refresh3d(false); });
   act("pr-tour", async () => { const r = await call("tour_export", { lang: lang === "en" ? "en" : "ar" }); const s = await call("export", { name: r.name, data: r.html }); toast(s.saved ? t("saved") + ": " + s.saved : t("cancelled")); });
   act("pr-stl", async () => {
@@ -2047,7 +2062,7 @@ async function showView() {
   const r = ["north", "south", "east", "west"].includes(v) ? await call("elevation", { side: v }) : await call("section", { name: v, at: num("sec-at") ?? undefined });
   state.svgText = r.svg; state.viewName = r.name; $("viewer").innerHTML = r.svg; clearSel();
 }
-$("viewsel").onchange = () => { if (V3.on) setView3(false); busy(showView); };
+$("viewsel").onchange = () => { if (V3.on && !V3.split) setView3(false); busy(showView); };
 $("sec-at").onchange = () => { if (["A-A", "B-B"].includes($("viewsel").value)) busy(showView); };
 for (const d of ["architectural", "structural", "electrical", "plumbing", "hvac"]) { $("v-d-" + d).checked = true; $("v-d-" + d).onchange = () => { V3.disc[d] = $("v-d-" + d).checked; build3(); draw3(); }; }
 function renderRuns(rs) {
@@ -2333,6 +2348,186 @@ function exRoiWire() {
 
 $("tab-ex").textContent = L("التنفيذ والتكلفة", "Execution & cost");
 document.querySelector('[data-tab="ex"]').addEventListener("click", () => busy(exLoad));
+
+// ---------------------------------------------------------------- Milestone 7: selection hub, outliner, split view, versions, overlays
+// The page computes nothing here either: the tree, the differences and the overlay reviews come from the backend. What the page owns is
+// the selection: ONE set of element ids that the 2D plan, the 3D view, the outliner and any table row marked data-eid all draw.
+const SEL = { ids: new Set(), key: null };
+function selApply2d() {
+  document.querySelectorAll("#viewer .osel").forEach(e => e.classList.remove("osel"));
+  if (!SEL.ids.size) return;
+  document.querySelectorAll("#viewer [data-id]").forEach(e => { if (SEL.ids.has(e.dataset.id)) e.classList.add("osel"); });
+}
+function selApply3d() { V3.selSet = SEL.ids.size > 1 ? SEL.ids : null; V3.sel = SEL.ids.size === 1 ? [...SEL.ids][0] : null; if (V3.on && V3.gl) { build3(); draw3(); } const p = $("v3-pick"); if (p && !SEL.ids.size) p.textContent = ""; }
+function selApplyRows() {
+  document.querySelectorAll("[data-eid]").forEach(e => e.classList.toggle("osel-row", SEL.ids.has(e.dataset.eid)));
+  document.querySelectorAll("#p-ol .olr").forEach(r => r.classList.toggle("on", r.dataset.key === SEL.key || (SEL.ids.size === 1 && r.dataset.el === [...SEL.ids][0])));
+}
+// Selects `ids` everywhere. `o.level` switches the plan to that level first; `o.key` is the outliner node that asked.
+async function selectIds(ids, o = {}) {
+  SEL.ids = new Set(ids); SEL.key = o.key || (ids.length === 1 ? ids[0] : null);
+  if (o.level != null && state.levels && (state.levels.list || []).length > 1 && state.levels.current !== o.level && o.src !== "2d") {
+    try { const r = await call("level", { index: o.level }); showPlan(r.svg); setLevels(r.levels); } catch (e) { /* stays on the level shown */ }
+  }
+  selApply2d(); selApply3d(); selApplyRows();
+  if (o.src !== "outline") olReveal();
+  const lbl = $("v3-pick"); if (lbl && ids.length > 1) lbl.textContent = `${ids.length} ${L("عنصراً", "elements")}`;
+}
+
+// ---- Feature 47: the outliner
+const OL = { tree: null, map: {}, open: new Set(["site", "exec"]), filter: "", stale: true };
+async function olLoad() {
+  OL.tree = (await call("outline")).tree; OL.map = {}; OL.stale = false;
+  (function walk(n, parent) { OL.map[n.key] = { n, parent }; n.children.forEach(c => walk(c, n.key)); })(OL.tree, null);
+  if (OL.open.size <= 2) OL.tree.children.forEach(l => { if (l.kind === "Level") OL.open.add(l.key); });
+  olBuild();
+}
+function olStale() { OL.stale = true; const p = $("p-ol"); if (p && p.classList.contains("on")) { clearTimeout(OL.t); OL.t = setTimeout(() => olLoad().catch(() => {}), 250); } }
+const olLabel = n => L(n.ar, n.en);
+function olMatches(n, f) { return olLabel(n).toLowerCase().includes(f) || n.children.some(c => olMatches(c, f)); }
+function olRow(n, depth, f) {
+  if (f && !olMatches(n, f)) return "";
+  const kids = n.children, open = f ? true : OL.open.has(n.key), on = n.key === SEL.key || (SEL.ids.size === 1 && n.element === [...SEL.ids][0]);
+  const arrow = kids.length ? `<span class="ola" data-tog="${esc(n.key)}">${open ? "▾" : "▸"}</span>` : `<span class="ola"></span>`;
+  const go = n.goto ? `<button class="olg" data-go="${esc(n.key)}" title="${L("افتح التبويب", "Open the tab")}">↗</button>` : "";
+  const cnt = n.count > 1 ? `<span class="olc">${n.count}</span>` : "";
+  return `<div class="olr ${on ? "on" : ""}" data-key="${esc(n.key)}" ${n.element ? `data-el="${esc(n.element)}"` : ""} style="padding-inline-start:${depth * 14 + 4}px">${arrow}<span class="olk olk-${esc(n.kind)}"></span><span class="oll">${esc(olLabel(n))}</span>${cnt}${go}</div>` + (open ? kids.map(c => olRow(c, depth + 1, f)).join("") : "");
+}
+function olBuild() {
+  const box = $("p-ol"); if (!box) return; $("tab-ol").textContent = L("شجرة المشروع", "Outliner");
+  if (!OL.tree) { box.innerHTML = `<div class="note">${L("افتح مشروعاً أو ولّد مخططاً أولاً.", "Open a project or generate a plan first.")}</div>`; return; }
+  box.innerHTML = `<div class="note">${L("الموقع ← الأدوار ← الفراغات والغلاف والإنشائي والكهروميكانيك ← الجدول والتنفيذ. النقر على عقدة يحدّد عناصرها في المخطط ثنائي الأبعاد والعرض ثلاثي الأبعاد والجداول؛ والتحديد من المخطط أو المجسم يظهر هنا. السهم ↗ يفتح تبويب العقدة.", "Site → levels → spaces, envelope, structural, MEP → schedule and execution. Click a node to select its elements in the 2D plan, the 3D view and the tables; a selection made in the plan or the model shows here. The ↗ arrow opens the node's tab.")}</div>
+    <div class="bar" style="padding:0 0 6px;border:0"><input id="ol-f" placeholder="${L("بحث…", "Search…")}" value="${esc(OL.filter)}" style="max-width:200px"><button id="ol-all">${L("وسّع الكل", "Expand all")}</button><button id="ol-none">${L("اطوِ الكل", "Collapse all")}</button><button id="ol-clear">${L("ألغِ التحديد", "Clear selection")}</button></div>
+    <div id="ol-tree">${olRow(OL.tree, 0, OL.filter.trim().toLowerCase())}</div>`;
+  $("ol-f").oninput = e => { OL.filter = e.target.value; const pos = e.target.selectionStart; olBuild(); const i = $("ol-f"); i.focus(); i.setSelectionRange(pos, pos); };
+  $("ol-all").onclick = () => { Object.keys(OL.map).forEach(k => OL.map[k].n.children.length && OL.open.add(k)); olBuild(); };
+  $("ol-none").onclick = () => { OL.open = new Set(["site"]); olBuild(); };
+  $("ol-clear").onclick = () => selectIds([], { src: "outline" });
+  box.querySelectorAll("[data-tog]").forEach(a => a.onclick = e => { e.stopPropagation(); const k = a.dataset.tog; OL.open.has(k) ? OL.open.delete(k) : OL.open.add(k); olBuild(); });
+  box.querySelectorAll("[data-go]").forEach(b => b.onclick = e => { e.stopPropagation(); olGoto(OL.map[b.dataset.go].n); });
+  box.querySelectorAll(".olr").forEach(r => r.onclick = () => { const n = OL.map[r.dataset.key].n; selectIds(n.ids, { key: n.key, level: n.level, src: "outline" }); });
+}
+function olGoto(n) {
+  if (!n.goto) return; if (n.goto.tab === "ex" && n.goto.section) EX.sec = n.goto.section;
+  document.querySelector(`[data-tab="${n.goto.tab}"]`).click();
+}
+// Opens the branch of the single selected element and brings its row into view.
+function olReveal() {
+  if (!OL.tree || SEL.ids.size !== 1) return; const id = [...SEL.ids][0];
+  const hit = Object.values(OL.map).find(x => x.n.element === id); if (!hit) return;
+  for (let p = hit.parent; p; p = OL.map[p].parent) OL.open.add(p);
+  SEL.key = id; if ($("p-ol").classList.contains("on")) { olBuild(); const r = document.querySelector(`#p-ol .olr[data-el="${id}"]`); if (r) r.scrollIntoView({ block: "nearest" }); }
+}
+$("tab-ol").textContent = L("شجرة المشروع", "Outliner");
+document.querySelector('[data-tab="ol"]').addEventListener("click", () => busy(olLoad));
+
+// ---- Feature 48: the split view (2D plan and 3D model side by side)
+function applyMode() {
+  const on = V3.on, sp = on && !!V3.split;
+  $("v3").style.display = on ? "flex" : "none"; $("viewer").style.display = on && !sp ? "none" : "flex";
+  $("to3d").textContent = on ? t("to2d") : t("to3d"); $("split").classList.toggle("primary", sp); $("vp").classList.toggle("split", sp);
+  $("split").textContent = L("عرض مقسوم", "Split view");
+}
+function setView3(on) { V3.on = on; applyMode(); if (on) refresh3d(true); }
+$("to3d").onclick = () => { V3.split = false; setView3(!V3.on); };
+$("split").onclick = () => { if (V3.split && V3.on) { V3.split = false; setView3(false); } else { V3.split = true; setView3(true); } };
+if (window.ResizeObserver) new ResizeObserver(() => { if (V3.on) draw3(); }).observe($("gl"));
+applyMode();
+
+// ---- Feature 49: versions and the visual difference
+const VR = { list: [], a: "", b: "current", res: null, shown: false };
+async function vrLoad() { VR.list = (await call("snapshots")).snapshots; vrBuild(); }
+const vrCol = s => (s === "added" ? "#1b7a43" : s === "removed" ? "#b3261e" : "#a65b00");
+const vrSt = s => `<b style="color:${vrCol(s)}">${s === "added" ? L("مضاف", "added") : s === "removed" ? L("محذوف", "removed") : L("معدّل", "modified")}</b>`;
+const vrV = v => (v == null ? "—" : typeof v === "object" ? esc(JSON.stringify(v)) : esc(String(v)));
+const vrN = (v, d = 2) => (v == null ? "—" : Number(v).toLocaleString("en-US", { maximumFractionDigits: d }));
+const vrD = (v, d = 2) => (v == null ? "—" : `<b style="color:${v > 0 ? "#1b7a43" : v < 0 ? "#b3261e" : "inherit"}">${v > 0 ? "+" : ""}${vrN(v, d)}</b>`);
+function vrBuild() {
+  const box = $("p-vr"); if (!box) return; $("tab-vr").textContent = L("الإصدارات", "Versions");
+  const opts = (sel, withCur) => (withCur ? `<option value="current" ${sel === "current" ? "selected" : ""}>${L("النموذج الحالي", "Current model")}</option>` : "") + VR.list.map(s => `<option value="${s.id}" ${s.id === sel ? "selected" : ""}>${esc(s.name)} · ${s.date}</option>`).join("");
+  if (!VR.a || !VR.list.some(s => s.id === VR.a)) VR.a = VR.list.length ? VR.list[VR.list.length - 1].id : "";
+  const list = VR.list.length ? sxT(VR.list.map(s => [esc(s.id), esc(s.name) + (s.note ? `<br><small>${esc(s.note)}</small>` : ""), s.date, s.elements, s.boq_total == null ? "—" : vrN(s.boq_total) + (s.boq_complete ? "" : " (PARTIAL)"), `<button data-vdel="${s.id}">✕</button>`]), ["#", L("الاسم", "Name"), L("التاريخ", "Date"), L("عناصر", "Elements"), "BOQ", ""]) : `<div class="note">${L("لا إصدارات محفوظة بعد.", "No snapshots saved yet.")}</div>`;
+  box.innerHTML = `<div class="note">${L("الإصدار المسمّى يحفظ في المشروع كل عناصر النموذج وخصائصها والكميات وأرقام التكلفة لحظة الحفظ (تراجع/إعادة وملف .nnx). المقارنة تُظهر المضاف والمحذوف والمعدّل من العناصر والغرف والكميات وفروق التكلفة؛ وإجمالي جزئي في أحد الإصدارين لا يُحسب فرقه.", "A named snapshot keeps in the project every element with its properties, the quantities and the cost figures of that moment (undo/redo and the .nnx file follow). A comparison shows the elements, rooms, quantities and cost differences; a total that is PARTIAL in either snapshot gets no computed difference.")}</div>
+    <div class="row"><div><label>${L("اسم الإصدار", "Snapshot name")}</label><input id="vr-name"></div><div><label>${L("ملاحظة", "Note")}</label><input id="vr-note"></div></div>
+    <div class="bar" style="padding:6px 0;border:0"><button id="vr-save" class="primary">${L("احفظ إصداراً", "Save snapshot")}</button><span class="hint">${VR.list.length} / 20</span></div>${list}
+    ${VR.list.length ? `<h2>${L("قارن", "Compare")}</h2><div class="row3"><div><label>${L("من", "From")}</label><select id="vr-a">${opts(VR.a, false)}</select></div><div><label>${L("إلى", "To")}</label><select id="vr-b">${opts(VR.b, true)}</select></div><div style="align-self:end"><button id="vr-cmp" class="primary">${L("قارن", "Compare")}</button></div></div>` : ""}
+    <div id="vr-out">${VR.res ? vrResult(VR.res) : ""}</div>`;
+  $("vr-save").onclick = () => busy(async () => { const r = await call("snapshot_save", { name: $("vr-name").value, note: $("vr-note").value }); VR.list = r.snapshots; VR.res = null; vrBuild(); toast(t("proj_saved")); olStale(); });
+  box.querySelectorAll("[data-vdel]").forEach(b => b.onclick = () => busy(async () => { const r = await call("snapshot_delete", { id: b.dataset.vdel }); VR.list = r.snapshots; VR.res = null; vrBuild(); olStale(); }));
+  const cmp = $("vr-cmp"); if (cmp) cmp.onclick = () => busy(async () => { VR.a = $("vr-a").value; VR.b = $("vr-b").value; VR.res = await call("snapshot_diff", { a: VR.a, b: VR.b }); VR.shown = false; vrBuild(); });
+  vrWire();
+}
+function vrResult(r) {
+  const d = r.diff, t0 = d.totals, cur = d.b.id === "current";
+  const head = `<h2>${esc(d.a.name)} → ${esc(d.b.name)}</h2><div class="row" style="flex-wrap:wrap;gap:8px"><span class="ok">${L("مضاف", "added")} <b>${d.added}</b></span><span class="bad">${L("محذوف", "removed")} <b>${d.removed}</b></span><span class="warn">${L("معدّل", "modified")} <b>${d.modified}</b></span><span class="hint">${L("غرف", "rooms")} ${d.rooms.length} · ${L("كميات", "quantities")} ${d.quantities.length} · ${L("بنود تكلفة", "cost rows")} ${d.costs.length}</span></div>
+    <div class="bar" style="padding:6px 0;border:0;gap:6px;flex-wrap:wrap"><button id="vr-hl">${L("أبرز على المخطط والمجسم (عرض مقسوم)", "Highlight on plan and 3D (split view)")}</button><button id="vr-hl-clear">${L("أزل الإبراز", "Clear highlight")}</button>${cur ? "" : `<span class="hint">${L("الإبراز متاح عند المقارنة بالنموذج الحالي", "Highlight needs the comparison with the current model")}</span>`}</div>`;
+  const els = d.elements.length ? sxT(d.elements.slice(0, 300).map(e => [vrSt(e.status), esc(e.kind), esc(e.label), e.changes.slice(0, 4).map(c => `${esc(c.key)}: ${vrV(c.from)} → ${vrV(c.to)}`).join("<br>") + (e.changes.length > 4 ? `<br>… +${e.changes.length - 4}` : "")]), [L("الحالة", "Status"), L("النوع", "Kind"), L("الاسم", "Name"), L("التغييرات", "Changes")]) : `<div class="note">${L("لا فرق في العناصر.", "No element differences.")}</div>`;
+  const rooms = d.rooms.length ? sxT(d.rooms.map(x => [esc(x.key), vrSt(x.status), vrN(x.area_from), vrN(x.area_to), vrD(x.delta, 3)]), [L("الغرفة", "Room"), L("الحالة", "Status"), L("المساحة قبل", "Area before"), L("بعد", "after"), "Δ m²"]) : "";
+  const qty = d.quantities.length ? sxT(d.quantities.slice(0, 300).map(x => [esc(x.code), esc(x.unit), vrN(x.from, 3), vrN(x.to, 3), vrD(x.delta, 3)]), [L("الرمز", "Code"), L("الوحدة", "Unit"), L("قبل", "Before"), L("بعد", "After"), "Δ"]) : "";
+  const cost = d.costs.length ? sxT(d.costs.slice(0, 300).map(x => [esc(x.code), vrN(x.from), vrN(x.to), vrD(x.delta)]), [L("البند", "Item"), L("قبل", "Before"), L("بعد", "After"), "Δ"]) : "";
+  const tot = `<div class="${t0.boq_delta == null ? "warn" : "ok"}">${L("إجمالي BOQ", "BOQ total")}: <b dir="ltr">${vrN(t0.boq_from)} → ${vrN(t0.boq_to)}</b> ${t0.boq_delta != null ? vrD(t0.boq_delta) : ""} ${esc(t0.currency || "")}${t0.tier_from != null || t0.tier_to != null ? ` · ${L("المستوى", "tier")}: <b dir="ltr">${vrN(t0.tier_from)} → ${vrN(t0.tier_to)}</b> ${t0.tier_delta != null ? vrD(t0.tier_delta) : ""}` : ""}</div>`;
+  return head + `<h2>${L("العناصر", "Elements")}</h2>${els}${rooms ? `<h2>${L("الغرف", "Rooms")}</h2>` + rooms : ""}${qty ? `<h2>${L("الكميات", "Quantities")}</h2>` + qty : ""}<h2>${L("التكلفة", "Cost")}</h2>${tot}${cost}${d.notes.length ? `<ul class="clean">${d.notes.map(n => `<li class="warn">${esc(n)}</li>`).join("")}</ul>` : ""}`;
+}
+function vrWire() {
+  if (!VR.res) return;
+  const d = VR.res.diff, rows = d.elements.length ? document.querySelector("#vr-out table") : null;
+  if (rows) rows.querySelectorAll("tbody tr").forEach((tr, i) => { const e = d.elements[i]; if (!e) return; tr.dataset.eid = e.id; tr.style.cursor = e.status === "removed" ? "default" : "pointer"; if (e.status !== "removed") tr.onclick = () => selectIds([e.id], { src: "table" }); });
+  const hl = $("vr-hl"); if (hl) hl.onclick = () => busy(async () => {
+    if (VR.res.diff.b.id !== "current") throw new Error(L("قارن بالنموذج الحالي لإبراز التغييرات", "Compare with the current model to highlight the changes"));
+    const svg = await call("snapshot_svg", { a: VR.res.diff.a.id }); V3.diff = VR.res.statuses; VR.shown = true;
+    V3.split = true; if (!V3.on) setView3(true); else applyMode(); showPlan(svg.svg); const root = document.querySelector("#viewer svg"); if (root) root.dataset.diffcl = "1"; if (V3.gl) { build3(); draw3(); }
+  });
+  const cl = $("vr-hl-clear"); if (cl) cl.onclick = () => busy(async () => { V3.diff = null; VR.shown = false; showPlan((await call("svg", { show_structure: $("showstruct").checked })).svg); if (V3.gl) { build3(); draw3(); } });
+}
+$("tab-vr").textContent = L("الإصدارات", "Versions");
+document.querySelector('[data-tab="vr"]').addEventListener("click", () => busy(vrLoad));
+
+// ---- Feature 50: municipal rule overlays
+const OVL = { list: [], limits: null, review: null, draft: { name: "", authority: "", document: "", date: "", pack: "" }, check: null };
+async function ovLoad() { const r = await call("overlays"); OVL.list = r.overlays; OVL.limits = r.limits; ovBuild(); }
+const ovParam = p => (p ? `${p.value == null ? L("غير محدد", "unset") : p.value} <small>(${esc(p.source || "—")})</small>` : "—");
+const LIM_NAMES = { minSetbackFrontM: ["أدنى ارتداد أمامي", "Front setback"], minSetbackBackM: ["أدنى ارتداد خلفي", "Rear setback"], minSetbackSideM: ["أدنى ارتداد جانبي", "Side setback"], maxCoverageRatio: ["أقصى نسبة بناء", "Coverage ratio"] };
+function ovReview(r) {
+  if (!r) return "";
+  const err = r.errors.length ? `<div class="bad"><b>${L("مرفوض", "Refused")}</b><ul class="clean">${r.errors.map(e => `<li>${esc(e)}</li>`).join("")}</ul></div>` : "";
+  const ov = r.overridden.length ? `<h2>${L("معاملات يغيّرها", "Parameters it overrides")}</h2>${sxT(r.overridden.map(o => [esc(o.rule), esc(o.param), ovParam(o.from), ovParam(o.to), esc(o.layer)]), [L("القاعدة", "Rule"), L("المعامل", "Parameter"), L("قبل", "Before"), L("بعد", "After"), L("الطبقة", "Layer")])}` : "";
+  const rep = r.replaced.length ? `<h2>${L("قواعد يستبدلها", "Rules it replaces")}</h2><ul class="clean">${r.replaced.map(([id, l]) => `<li class="warn">${esc(id)} ← ${esc(l)}</li>`).join("")}</ul>` : "";
+  const lim = r.limit_changes.length ? `<h2>${L("حدود يقترحها للمشروع (لا تُطبَّق إلا بزر التطبيق)", "Limits it proposes for the project (applied only by the Apply button)")}</h2>${sxT(r.limit_changes.map(c => [esc(L(...(LIM_NAMES[c.name] || [c.name, c.name]))), ovParam(c.from), ovParam(c.to)]), [L("الحد", "Limit"), L("الحالي", "Current"), L("المقترح", "Proposed")])}` : "";
+  return `${err}${r.label ? `<div class="hint">${esc(r.label)}</div>` : ""}${r.added.length ? `<div class="ok">${L("قواعد مضافة", "Rules added")}: ${r.added.map(esc).join(", ")}</div>` : ""}${rep}${ov}${lim}${r.unset.length ? `<div class="warn">${L("معاملات متروكة غير محددة (تُتخطى قواعدها ولا تُعطى قيمة)", "Parameters left unset (their rules are skipped, never defaulted)")}: ${r.unset.map(esc).join(", ")}</div>` : ""}<ul class="clean">${r.notes.map(n => `<li class="hint">${esc(n)}</li>`).join("")}</ul>
+    ${r.errors.length ? "" : `<div class="bar" style="padding:6px 0;border:0"><button id="ov-load" class="primary">${r.needs_confirm ? L("أؤكد: حمّل الطبقة بهذه التغييرات", "I confirm: load it with these changes") : L("حمّل", "Load")}</button></div>`}`;
+}
+function ovBuild() {
+  const box = $("p-ov"); if (!box) return; $("tab-ov").textContent = L("قواعد البلدية", "Municipal rules");
+  const d = OVL.draft, lim = OVL.limits || {};
+  const limRows = Object.keys(LIM_NAMES).map(k => [esc(L(...LIM_NAMES[k])), ovParam(lim[k])]);
+  const list = OVL.list.length ? sxT(OVL.list.map(o => [`<input type="checkbox" data-ovt="${o.id}" ${o.enabled ? "checked" : ""}>`, esc(o.name), esc(o.authority), esc(o.document) + (o.date ? ` <small>${esc(o.date)}</small>` : ""), esc(o.label), (o.has_limits ? `<button data-ova="${o.id}">${L("طبّق حدودها", "Apply its limits")}</button> ` : "") + `<button data-ovr="${o.id}">✕</button>`]), [L("مفعّل", "On"), L("الاسم", "Name"), L("الجهة", "Authority"), L("المستند", "Document"), L("الحزمة", "Pack"), ""]) : `<div class="note">${L("لا طبقات محمّلة.", "No overlays loaded.")}</div>`;
+  const ck = OVL.check;
+  const chk = ck ? `<h2>${L("نتيجة الفحص", "Check result")} (${ck.checked})</h2><div class="hint">${ck.layers.map(esc).join(" → ")}</div>${ck.findings.length ? sxT(ck.findings.map(f => [esc(f.severity), esc(f.rule), esc(f.clause), esc(f.layer), esc(f.message), `<a href="#" data-fel="${esc(f.element)}">${esc(f.element.slice(0, 8))}</a>`]), [L("الخطورة", "Severity"), L("القاعدة", "Rule"), L("البند", "Clause"), L("الطبقة", "Layer"), L("الرسالة", "Message"), L("العنصر", "Element")]) : `<div class="ok">${L("لا مخالفات", "No findings")}</div>`}${ck.skipped.length ? `<h2>${L("قواعد متخطاة", "Skipped rules")} (${ck.skipped.length})</h2><ul class="clean">${ck.skipped.map(s => `<li class="warn">${esc(s.rule)}: ${esc(s.reason)}</li>`).join("")}</ul>` : ""}` : "";
+  box.innerHTML = `<div class="note">${L("حمّل ملف JSON من البلدية أو الجهة: حزمة قواعد (قواعد مضافة وتعديلات معاملات) مع حقل اختياري limits للارتدادات ونسبة البناء. كل قيمة تحتاج مصدرها وكل قاعدة بندها، وتُسمّى الجهة والمستند. تُعرض مراجعة بما سيتغير قبل التحميل، وما يستبدل أو يعدّل يحتاج تأكيدك. لا تمس الطبقة فحوص الكود المدمجة، ولا تصل حدودها للمشروع إلا بزر «طبّق حدودها» (خطوة واحدة يمكن التراجع عنها).", "Load a JSON file from the municipality or authority: a rule pack (added rules and parameter overrides) with an optional limits object for setbacks and coverage. Every value needs its source and every rule its clause, and the authority and document are named. A review shows what will change before loading, and anything that replaces or overrides needs your confirmation. An overlay never touches the built-in code checks, and its limits reach the project only through «Apply its limits» (one undoable step).")}</div>
+    <div class="row"><div><label>${L("الاسم", "Name")}</label><input id="ov-name" value="${esc(d.name)}"></div><div><label>${L("الجهة المصدِرة", "Issuing authority")}</label><input id="ov-auth" value="${esc(d.authority)}"></div></div>
+    <div class="row"><div><label>${L("المستند (تعميم / لائحة / إصدار)", "Document (circular / regulation / edition)")}</label><input id="ov-doc" value="${esc(d.document)}"></div><div><label>${L("تاريخ المستند", "Document date")}</label><input type="date" id="ov-date" dir="ltr" value="${esc(d.date)}"></div></div>
+    <label>${L("ملف JSON", "JSON file")}</label><input type="file" id="ov-file" accept=".json,.txt"><label>${L("أو الصق النص", "or paste the text")}</label><textarea id="ov-pack" rows="6" dir="ltr" spellcheck="false">${esc(d.pack)}</textarea>
+    <div class="hint">${L("الحزمة الأساسية تؤخذ من تبويب القواعد (إن وُجدت) والطبقات المفعّلة قبلها.", "The base is the pack in the Rules tab (if any) and the enabled overlays before it.")}</div>
+    <div class="bar" style="padding:6px 0;border:0"><button id="ov-rev" class="primary">${L("راجع قبل التحميل", "Review before loading")}</button></div>
+    <div id="ov-review">${ovReview(OVL.review)}</div>
+    <h2>${L("الطبقات المحمّلة (بترتيب التطبيق)", "Loaded overlays (in the order they apply)")}</h2>${list}
+    <div class="bar" style="padding:6px 0;border:0"><button id="ov-check">${L("افحص النموذج بالقواعد والطبقات", "Check the model with the rules and overlays")}</button></div>${chk}
+    <h2>${L("حدود البلدية في المشروع", "Municipal limits in the project")}</h2>${sxT(limRows, [L("الحد", "Limit"), L("القيمة (المصدر)", "Value (source)")])}`;
+  const grab = () => { OVL.draft = { name: $("ov-name").value, authority: $("ov-auth").value, document: $("ov-doc").value, date: $("ov-date").value, pack: $("ov-pack").value }; return OVL.draft; };
+  const args = () => { const g = grab(); return { ...g, base: ($("pack") && $("pack").value) || "" }; };
+  $("ov-file").onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { $("ov-pack").value = String(r.result); grab(); }; r.readAsText(f); };
+  $("ov-rev").onclick = () => busy(async () => { OVL.review = (await call("overlay_review", args())).review; ovBuild(); });
+  const load = $("ov-load"); if (load) load.onclick = () => busy(async () => {
+    const r = await call("overlay_add", { ...args(), confirm: true }); OVL.list = r.overlays; OVL.limits = r.limits; OVL.review = null; OVL.draft = { name: "", authority: "", document: "", date: "", pack: "" }; ovBuild(); olStale(); toast(t("proj_saved"));
+  });
+  box.querySelectorAll("[data-ovt]").forEach(c => c.onchange = () => busy(async () => { const r = await call("overlay_toggle", { id: c.dataset.ovt, enabled: c.checked }); OVL.list = r.overlays; ovBuild(); }));
+  box.querySelectorAll("[data-ovr]").forEach(b => b.onclick = () => busy(async () => { const r = await call("overlay_remove", { id: b.dataset.ovr }); OVL.list = r.overlays; ovBuild(); olStale(); }));
+  box.querySelectorAll("[data-ova]").forEach(b => b.onclick = () => busy(async () => { const r = await call("overlay_apply_limits", { id: b.dataset.ova }); OVL.limits = r.limits; OVL.list = r.overlays; ovBuild(); toast(L("طُبّقت الحدود", "Limits applied") + (r.new_violations.length ? ` · ${r.new_violations.length} ${L("مخالفة جديدة", "new violation(s)")}` : "")); try { const s = await call("sbc_check"); renderSbc(s); } catch (e) { /* no check yet */ } }));
+  $("ov-check").onclick = () => busy(async () => { OVL.check = await call("check_rules", { pack: ($("pack") && $("pack").value) || "" }); ovBuild(); });
+  box.querySelectorAll("[data-fel]").forEach(a => a.onclick = e => { e.preventDefault(); selectIds([a.dataset.fel], { src: "table" }); });
+}
+$("tab-ov").textContent = L("قواعد البلدية", "Municipal rules");
+document.querySelector('[data-tab="ov"]').addEventListener("click", () => busy(ovLoad));
 
 applyLang();
 call("assumptions").then(a => { state.assumptions = a; if (state.rooms_out) renderNotes(); });
