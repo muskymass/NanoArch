@@ -256,6 +256,14 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
       await key("z", { modifiers: 2 }); await sleep(900);
       check("history starts at the file: Ctrl+Z on a freshly reopened project changes nothing and it stays clean", (await count("#viewer rect.room")) === r0 && (await ev(`(async()=>JSON.stringify(await call("status")))()`)) === st0 && JSON.parse(st0).dirty === false, st0);
     }
+    // The DXF made from the REOPENED project is the drawing of the divided plan again: same layers, the separator, the parts' names and areas.
+    for (const f of fs.readdirSync(D)) if (/\.dxf$/i.test(f)) fs.unlinkSync(`${D}\\${f}`);
+    await menuPress("#exportdxf"); await sleep(2500);
+    const dxfs2 = fs.readdirSync(D).filter(f => /\.dxf$/i.test(f));
+    const dtxt2 = dxfs2.length ? fs.readFileSync(`${D}\\${dxfs2[0]}`, "utf8") : "";
+    const nSep = t => (t.match(/A-ROOM-SEP/g) || []).length;
+    check("the DXF of the reopened divided plan has the separator on A-ROOM-SEP, the new part's room and the area labels", dxfs2.length === 1 && nSep(dtxt2) >= 1 && dtxt2.includes(newKeys[0]) && (dtxt2.match(/\d+\.\d\d m\\U\+00B2/g) || []).length >= roomsGen0 + 1, `${dxfs2.length} files, sep ${nSep(dtxt2)}, key ${dtxt2.includes(newKeys[0])} ${newKeys[0]}, area labels ${(dtxt2.match(/\d+\.\d\d m\\U\+00B2/g) || []).length}`);
+    check("reopening changes nothing in the drawing: the DXF text equals the one made before saving", nSep(dtxt2) === nSep(dtxt) && dtxt2.length === dtxt.length && dtxt2 === dtxt, `${dtxt.length} / ${dtxt2.length} chars`);
     await shot("e2e_4c_divided_plan_reopened");
     // In the reopened project the separator can still be deleted (the room comes back as the layout made it) and the edit undone.
     await key("v"); await sleep(300);
@@ -471,6 +479,8 @@ const check = (name, ok, extra = "") => { results.push(ok); console.log((ok ? "P
       check(`the Arabic menu names are whole at ${w} px: nothing clipped, nothing under the header badges`, clip.clipped.length === 0 && clip.overlaps.length === 0 && clip.labels.every(x => /[؀-ۿ]|MEP/.test(x)), JSON.stringify(clip));
       await menuOpen("view"); const vp = await ev(`(()=>{const b=$("mp-view").getBoundingClientRect(); return {l:b.left,r:b.right,t:b.top,b:b.bottom,w:innerWidth,h:innerHeight};})()`);
       check(`at ${w} px the View & Export panel opens fully inside the window`, vp.l >= 0 && vp.r <= vp.w && vp.t >= 0 && vp.b <= vp.h + 1 && vp.r > vp.l, JSON.stringify(vp) + " open=" + (await openName()));
+      const sels = await ev(`JSON.stringify(["v-light","v-fin-facade","v-fin-floor"].map(i=>{const e=$(i), b=e.getBoundingClientRect(), t=e.selectedIndex>=0?e.options[e.selectedIndex].text:""; return {i, n:e.options.length, t, w:Math.round(b.width), h:Math.round(b.height), in:b.left>=$("mp-view").getBoundingClientRect().left-1&&b.right<=$("mp-view").getBoundingClientRect().right+1}}))`);
+      check(`the 3D option drop-downs show their text at ${w} px (light, facade finish, floor finish): filled, sized to their text, inside the panel`, JSON.parse(sels).every(o => o.n > 0 && o.t.length > 0 && o.w >= 60 && o.w < 330 && o.h >= 18 && o.in), sels);
       await shot(`e2e_10_menu_view_${w}`); await key("Escape");
       await shot(`e2e_10_narrow_${w}`);
       // the plan keeps its room: the side panels give way, the window toolbar is one row, and nothing makes the page scroll sideways

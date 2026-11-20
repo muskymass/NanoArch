@@ -77,6 +77,7 @@ header{position:relative;z-index:20}
 .mp select,.mp input[type=number]{padding:3px 5px;font-size:12px}
 .mgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:4px 10px;min-width:min(720px,calc(100vw - 32px))}
 .mcol.wide{grid-column:1/-1;border-top:1px solid var(--line);margin-top:4px;padding-top:2px}
+#v3tools select,#v3tools input[type=number]{width:auto;max-width:100%}
 #v3tools{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;padding:4px 10px}
 #levelbar{border:0;padding:4px 10px!important;flex-wrap:wrap}
 #levelbar::before{content:attr(data-label);font-size:12px;color:var(--mute)}
@@ -756,7 +757,7 @@ async function choose(i) {
   renderAlts(); renderNotes(); setPlanButtons(true); $("p-qto").innerHTML = `<div class="empty">${t("working")}</div>`; $("schedout").innerHTML = "";
   loadQto(); refreshStatus(); try { anBuild(); } catch (e) { /* panel not built yet */ }
 }
-function setPlanButtons(on) { ["exportrep", "exportrepx", "viewsel", "undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportpdf", "saveproj", "to3d", "split", "draft"].forEach(id => $(id).disabled = !on); }
+function setPlanButtons(on) { ["exportrep", "exportrepx", "viewsel", "undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportpdf", "saveproj", "to3d", "split", "draft"].forEach(id => $(id).disabled = !on); if (on && typeof v5SyncFin === "function") v5SyncFin(); }
 
 // ---------------------------------------------------------------- toolbar
 // The generated SVG text is kept as is, so an export is the real file and not the browser's re-serialisation.

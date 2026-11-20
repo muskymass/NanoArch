@@ -693,3 +693,28 @@ fn a_room_cut_into_four_parts_keeps_every_part_tag_area_and_link_through_the_fil
     assert!(back.redo() && back.redo());
     assert!(back.is_dirty() && keys(&back).len() == 1);
 }
+
+#[test]
+fn the_dxf_of_a_divided_room_is_the_same_after_the_file_is_saved_and_reopened() {
+    let mut doc = blank();
+    layout_room(&mut doc, "living", "living", [0, 0, 9000, 4000]);
+    let (sep, _) = separator(&mut doc, [3000, 0], [3000, 4000]);
+    let before = dxf::export_dxf(&doc.model, &[level(&doc)], &dxf_opts()).unwrap();
+    let path = std::env::temp_dir().join(format!("nanoarch-split-dxf-{}.nnx", std::process::id()));
+    persist::save(&doc.model, &path).unwrap();
+    let loaded = persist::load(&path).unwrap();
+    std::fs::remove_file(&path).ok();
+    let back = Document::new(loaded);
+    let after = dxf::export_dxf(&back.model, &[level(&back)], &dxf_opts()).unwrap();
+    // The separator is on its own layer, once, and is not a wall.
+    assert_eq!(after.counts.get("A-ROOM-SEP"), Some(&1));
+    assert!(back.model.get(&sep).is_some());
+    assert_eq!(after.counts.get("A-ROOM"), Some(&2), "one outline per part");
+    // Both parts are named and carry their own areas: 6 m x 4 m and 3 m x 4 m.
+    for label in ["living", "living-2", "24.0 m2", "12.0 m2"] {
+        assert!(after.text.contains(label), "the drawing has {label}");
+    }
+    // Reopening changes nothing in the drawing: same layers, same entities, same text.
+    assert_eq!(after.counts, before.counts);
+    assert_eq!(after.text, before.text);
+}
