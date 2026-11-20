@@ -190,7 +190,7 @@ ul.clean li{margin:3px 0}
   <section class="col">
     <div class="tabs">
       <button class="tab on" data-tab="notes" data-i="t_notes"></button><button class="tab" data-tab="qto" data-i="t_qto"></button>
-      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="an" id="tab-an"></button><button class="tab" data-tab="cp" id="tab-cp"></button><button class="tab" data-tab="mx" id="tab-mx"></button><button class="tab" data-tab="pr" id="tab-pr"></button>
+      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="an" id="tab-an"></button><button class="tab" data-tab="cp" id="tab-cp"></button><button class="tab" data-tab="mx" id="tab-mx"></button><button class="tab" data-tab="pr" id="tab-pr"></button><button class="tab" data-tab="ex" id="tab-ex"></button>
     </div>
     <div class="scroll">
       <div class="pane" id="p-sketch">
@@ -286,6 +286,7 @@ ul.clean li{margin:3px 0}
       <div class="pane" id="p-cp"></div>
       <div class="pane" id="p-mx"></div>
       <div class="pane" id="p-pr"></div>
+      <div class="pane" id="p-ex"></div>
       <div class="pane" id="p-rules">
         <div class="note" data-i="rules_note"></div>
         <textarea id="pack" spellcheck="false" dir="ltr" style="text-align:left"></textarea>
@@ -419,6 +420,7 @@ function applyLang() {
   try { sxBuild(); } catch (e) { /* not loaded yet */ }
   try { $("tab-mx").textContent = L("MEP متقدم", "Advanced MEP"); mxBuild(); } catch (e) { /* not loaded yet */ }
   try { v5Labels(); prBuild(); } catch (e) { /* not loaded yet */ }
+  try { exBuild(); } catch (e) { /* not loaded yet */ }
   if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
 }
 
@@ -2098,6 +2100,239 @@ $("openproj").onclick = () => busy(async () => {
   showPlan(r.svg); state.notes = r.warnings; state.rooms_out = r.rooms; applyProject(r.settings || {}); renderSbc(r.sbc); refreshBim();
   renderNotes(); setPlanButtons(true); refreshStatus(); loadQto(); toast(t("opened") + ": " + r.opened);
 });
+
+// ---------------------------------------------------------------- the Execution tab (Milestone 6)
+// Cost tiers, tender pack, payment schedule, long-lead procurement, QA/QC checklists and the apartment ROI. The page only collects
+// inputs and draws what the backend returns: every figure, date and status is computed by nnx-core, and every input is stored in the
+// project (undo/redo and the .nnx file follow). A value left blank stays unset; the backend names what is missing.
+const EX = { sec: "cost", st: null, rep: {}, draft: {} };
+const EX_SECS = [["cost", "تكلفة المستويات", "Cost tiers"], ["tender", "حزمة المناقصة", "Tender pack"], ["pay", "الدفعات", "Payments"], ["proc", "المشتريات", "Procurement"], ["qa", "فحص الجودة", "QA/QC"], ["roi", "عائد العمارة", "Apartment ROI"]];
+const exN = (v, what) => { v = String(v ?? "").trim(); if (v === "") return null; const n = Number(v); if (!Number.isFinite(n)) throw new Error((what ? what + ": " : "") + L("قيمة غير رقمية: ", "not a number: ") + v); return n; };
+const exReq = (v, what) => { const n = exN(v, what); if (n == null) throw new Error(what + ": " + L("مطلوب", "required")); return n; };
+const exS = v => { v = String(v ?? "").trim(); return v === "" ? null : v; };
+const exF = n => (n == null ? "—" : Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 }));
+const exLang = () => (lang === "en" ? "en" : "ar");
+const exPhase = p => ((t("phase") || {})[p] || p);
+const exSaved = r => toast(r && r.changed === false ? L("لا تغيير", "No change") : t("proj_saved"));
+const exRows = id => [...document.querySelectorAll(`#${id} tr[data-r]`)].map(tr => { const o = {}; tr.querySelectorAll("[data-f]").forEach(e => { o[e.dataset.f] = e.type === "checkbox" ? e.checked : e.value; }); return o; });
+const exIn = (f, v, w = 90, type = "text") => `<input data-f="${f}" type="${type}" ${type === "number" ? 'step="any" dir="ltr"' : ""} value="${esc(v ?? "")}" style="width:${w}px">`;
+const exSel = (f, opts, sel) => `<select data-f="${f}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${v === sel ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+const exTable = (id, head, rows) => `<table class="rooms" id="${id}"><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}<th></th></tr></thead><tbody>${rows.map((r, i) => `<tr data-r="${i}">${r.map(c => `<td>${c}</td>`).join("")}<td><button data-del="${i}" title="${L("حذف", "Delete")}">✕</button></td></tr>`).join("")}</tbody></table>`;
+const exTierOpts = () => EX.st.tiers.map(x => [x.id, L(x.ar, x.en)]);
+const exLinkOpts = () => [...EX.st.tasks.map(k => ["task:" + k.key, exPhase(k.phase) + " · " + k.name]), ...EX.st.phases.map(p => ["phase:" + p, L("كل مرحلة: ", "Whole phase: ") + exPhase(p)])];
+const exLink = v => (v.startsWith("task:") ? { kind: "task", key: v.slice(5) } : { kind: "phase", name: v.slice(6) });
+const exLinkVal = l => (l.kind === "task" ? "task:" + l.key : "phase:" + l.name);
+const exBadge = (txt, kind) => `<span class="${kind}" style="font-weight:700">${esc(txt)}</span>`;
+const exNotes = list => (list && list.length ? `<ul class="clean">${list.map(n => `<li class="warn">${esc(n)}</li>`).join("")}</ul>` : "");
+const exSave = async (sec, cmd, args) => { const r = await call(cmd, args); EX.st = await call("exec"); delete EX.draft[sec]; EX.rep[sec] = r; exBuild(); exSaved(r); return r; };
+const exExport = async (name, key, data, mime) => { const s = await call("export", mime === "b64" ? { name, b64: data } : { name, data }); toast(s.saved ? t("saved") + ": " + s.saved : t("cancelled")); };
+const exPdf = async (html, name) => { const s = await call("save_pdf", { html, name, size: "A4" }); toast(s.saved ? t("saved") + ": " + s.saved : t("cancelled")); };
+
+async function exFetch(sec) {
+  return call({ cost: "cost", tender: "tender", pay: "payment", proc: "procure", qa: "qaqc", roi: "roi" }[sec], { lang: exLang() });
+}
+async function exLoad() { EX.st = await call("exec"); EX.draft = {}; EX.rep[EX.sec] = await exFetch(EX.sec); exBuild(); }
+async function exSwitch(sec) { EX.sec = sec; EX.rep[sec] = await exFetch(sec); exBuild(); }
+
+function exBuild() {
+  const box = $("p-ex"); if (!box || !EX.st) return;
+  $("tab-ex").textContent = L("التنفيذ والتكلفة", "Execution & cost");
+  const nav = `<div class="bar" style="padding:0 0 8px;border:0;gap:6px;flex-wrap:wrap">${EX_SECS.map(([k, a, e]) => `<button data-exsec="${k}" class="${k === EX.sec ? "primary" : ""}">${L(a, e)}</button>`).join("")}</div>`;
+  const body = { cost: exCost, tender: exTender, pay: exPay, proc: exProc, qa: exQa, roi: exRoi }[EX.sec]();
+  box.innerHTML = nav + `<div id="ex-body">${body}</div>`;
+  box.querySelectorAll("[data-exsec]").forEach(b => b.onclick = () => busy(() => exSwitch(b.dataset.exsec)));
+  ({ cost: exCostWire, tender: exTenderWire, pay: exPayWire, proc: exProcWire, qa: exQaWire, roi: exRoiWire })[EX.sec]();
+}
+// A table whose rows can be added and removed: `draft` keeps unsaved rows between redraws.
+function exGrow(sec, tableId, blank, after) {
+  const sync = () => { EX.draft[sec] = exRows(tableId); };
+  const add = document.querySelector(`[data-add="${tableId}"]`);
+  if (add) add.onclick = () => { sync(); EX.draft[sec].push({ ...blank }); exBuild(); };
+  document.querySelectorAll(`#${tableId} [data-del]`).forEach(b => b.onclick = () => { sync(); EX.draft[sec].splice(Number(b.dataset.del), 1); exBuild(); });
+  if (after) after();
+}
+const exAddBtn = (id, label) => `<button data-add="${id}">＋ ${label}</button>`;
+
+// ---- cost tiers (Feature 41)
+function exCost() {
+  const inp = EX.st.inputs.cost, rep = EX.rep.cost.report;
+  const rows = EX.draft.cost || inp.lines.map(l => ({ tier: l.tier, phase: l.phase, kind: l.basis.kind, code: l.basis.code || "", rate: l.rate, label: l.label || "", source: l.source }));
+  EX.draft.cost = rows;
+  const kinds = [["gross_area", L("م² إجمالي الأدوار", "per m² gross floor area")], ["qto", L("رمز كمية", "per take-off quantity")], ["lump", L("مبلغ مقطوع", "lump sum")]];
+  const table = exTable("ex-cost-rows", [L("المستوى", "Tier"), L("المرحلة", "Phase"), L("الأساس", "Basis"), L("رمز الكمية", "Quantity code"), L("السعر / المبلغ", "Rate / amount"), L("الوصف", "Label"), L("المصدر (مطلوب)", "Source (required)")],
+    rows.map(r => [exSel("tier", exTierOpts(), r.tier), exSel("phase", EX.st.phases.map(p => [p, exPhase(p)]), r.phase), exSel("kind", kinds, r.kind), exIn("code", r.code, 110), exIn("rate", r.rate, 90, "number"), exIn("label", r.label, 110), exIn("source", r.source, 140)]));
+  const tiers = rep.tiers.map(tr => `<h2>${esc(L(tr.ar, tr.en))} — <b dir="ltr">${exF(tr.total)} ${esc(rep.currency || "")}</b> ${tr.complete ? exBadge(L("كامل", "complete"), "ok") : exBadge(L("جزئي", "PARTIAL"), "warn")}${rep.selected === tr.tier ? " ★" : ""}${tr.per_m2 != null ? ` <span class="hint" dir="ltr">${exF(tr.per_m2)} / m²</span>` : ""}</h2>
+    ${sxT(tr.phases.map(p => [esc(exPhase(p.phase)), p.lines, exF(p.amount), p.expected ? (p.priced ? "✔" : exBadge(L("بلا سعر", "no price"), "bad")) : "·"]), [L("المرحلة", "Phase"), L("البنود", "Lines"), L("المبلغ", "Amount"), L("ضمن النطاق", "In scope")])}
+    ${tr.lines.length ? sxT(tr.lines.map(l => [esc(exPhase(l.phase)), esc(l.label), l.quantity == null ? "—" : exF(l.quantity) + " " + esc(l.unit || ""), exF(l.rate), l.amount == null ? exBadge(L("بلا كمية", "no quantity"), "bad") : exF(l.amount), esc(l.note || "")]), [L("المرحلة", "Phase"), L("البند", "Line"), L("الكمية", "Quantity"), L("السعر", "Rate"), L("المبلغ", "Amount"), ""]) : ""}`).join("");
+  return `<div class="note">${L("كل سعر تدخله أنت بمصدره (لا أسعار سوق مدمجة). الكمية تُقاس من النموذج: م² إجمالي الأدوار، أو رمز من جدول الكميات (مثل SLAB.VOL أو FLOOR.AREA.*)، أو مبلغ مقطوع. مستويا الهيكل يغطيان الأساسات والهيكل؛ مستويات التشطيب الثلاثة تغطي المراحل الست، وأي مرحلة بلا سعر تُذكر ويُعلَّم الإجمالي جزئياً.", "Every rate is entered by you with its source (no market prices are built in). The quantity is measured from the model: gross floor area (m²), a take-off code (such as SLAB.VOL or FLOOR.AREA.*) or a lump sum. The two shell tiers cover substructure and superstructure; the three finish tiers cover all six phases, and any phase without a price is named and the total marked PARTIAL.")}</div>
+    <div class="row"><div><label>${L("المستوى المعتمد للعقد", "Tier the contract is priced on")}</label><select id="ex-sel"><option value=""></option>${exTierOpts().map(([v, l]) => `<option value="${v}" ${v === inp.selected ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div><div><label>${L("العملة", "Currency")}</label><input id="ex-cur" value="${esc(inp.currency || "")}" style="width:90px"></div></div>
+    ${table}<div class="bar" style="padding:6px 0;border:0;gap:6px">${exAddBtn("ex-cost-rows", L("سطر تكلفة", "Cost line"))}<button id="ex-save" class="primary">${L("احفظ واحسب", "Save and compute")}</button></div>
+    ${exNotes(rep.notes)}${tiers}`;
+}
+function exCostWire() {
+  exGrow("cost", "ex-cost-rows", { tier: "shell_with_materials", phase: "Substructure", kind: "gross_area", code: "", rate: "", label: "", source: "" });
+  $("ex-save").onclick = () => busy(async () => {
+    const lines = exRows("ex-cost-rows").map((r, i) => ({ tier: r.tier, phase: r.phase, basis: r.kind === "qto" ? { kind: "qto", code: r.code } : { kind: r.kind }, rate: exReq(r.rate, L("سطر ", "line ") + (i + 1)), label: exS(r.label), source: r.source }));
+    await exSave("cost", "cost_set", { cost: { selected: exS($("ex-sel").value), currency: exS($("ex-cur").value), lines } });
+  });
+}
+
+// ---- tender pack (Feature 42)
+function exTender() {
+  const inp = EX.st.inputs.tender, r = EX.rep.tender, pk = r.pack, b = pk.boq;
+  const notes = EX.draft.tender || inp.notes.map(n => ({ title: n.title, text: n.text }));
+  EX.draft.tender = notes;
+  const table = exTable("ex-notes-rows", [L("العنوان", "Title"), L("النص", "Text")], notes.map(n => [exIn("title", n.title, 160), `<textarea data-f="text" rows="2" style="width:360px">${esc(n.text)}</textarea>`]));
+  return `<div class="note">${L("حزمة واحدة للمقاولين: وصف المشروع والمواصفات الفنية وملاحظاتك ونطاق العمل، مع جدول الكميات المسعّر (مجاميع بمعادلات حيّة في Excel) وتفصيل المستوى المختار والدفعات. ما ينقص من مواصفات أو أسعار أو أحمال يُسرد بالاسم.", "One package for contractors: the project description, technical specifications, your notes and scope of work, the priced BOQ (totals are live formulas in Excel) and the selected tier and payments. Missing specifications, rates and loads are listed by name.")}</div>
+    <label>${L("نطاق العمل", "Scope of work")}</label><textarea id="ex-scope" rows="3">${esc(inp.scope || "")}</textarea>
+    <div class="row3"><div><label>${L("آخر موعد للعروض", "Bid deadline")}</label><input type="date" id="ex-deadline" dir="ltr" value="${esc(inp.bidDeadline || "")}"></div><div><label>${L("سريان العرض (يوم)", "Bid validity (days)")}</label><input type="number" id="ex-valid" dir="ltr" value="${inp.validityDays ?? ""}"></div><div><label>${L("جهة الاتصال", "Contact")}</label><input id="ex-contact" value="${esc(inp.contact || "")}"></div></div>
+    <h2>${L("المواصفات الفنية والشروط", "Technical specifications and conditions")}</h2>${table}
+    <div class="bar" style="padding:6px 0;border:0;gap:6px;flex-wrap:wrap">${exAddBtn("ex-notes-rows", L("ملاحظة", "Note"))}<button id="ex-save" class="primary">${L("احفظ", "Save")}</button><button id="ex-pdf">${L("صدّر PDF", "Export PDF")}</button><button id="ex-xlsx">${L("صدّر Excel", "Export Excel")}</button></div>
+    <h2>${L("الإجمالي", "Totals")}</h2>
+    <div class="${b.complete ? "ok" : "warn"}">${L("المجموع الفرعي", "Subtotal")} <b dir="ltr">${exF(b.subtotal)}</b> · ${L("الإجمالي", "Total")} <b dir="ltr">${exF(b.total)} ${esc(b.project.currency || "")}</b> · ${b.complete ? L("كامل", "complete") : L("جزئي: بنود بلا سعر", "PARTIAL: items without a rate") + " (" + b.unpriced + ")"}</div>
+    <h2>${L("نواقص", "Gaps")} (${pk.missing.length})</h2>${exNotes(pk.missing)}`;
+}
+function exTenderWire() {
+  exGrow("tender", "ex-notes-rows", { title: "", text: "" });
+  const collect = () => ({ scope: exS($("ex-scope").value), notes: exRows("ex-notes-rows").map(n => ({ title: n.title, text: n.text })), bidDeadline: exS($("ex-deadline").value), validityDays: exN($("ex-valid").value), contact: exS($("ex-contact").value) });
+  const save = () => exSave("tender", "tender_set", { tender: collect(), lang: exLang() });
+  $("ex-save").onclick = () => busy(save);
+  $("ex-pdf").onclick = () => busy(async () => { const r = await save(); await exPdf(r.html, "tender-pack.pdf"); });
+  $("ex-xlsx").onclick = () => busy(async () => { const r = await save(); await exExport("tender-pack.xlsx", "xlsx", r.xlsx_b64, "b64"); });
+}
+
+// ---- payment schedule (Feature 43)
+function exPay() {
+  const inp = EX.st.inputs.payment, r = EX.rep.pay, rep = r.report;
+  const rows = EX.draft.pay || inp.milestones.map(m => ({ id: m.id, name: m.name, link: exLinkVal(m.link), trigger: m.trigger, pct: m.pct ?? "", amount: m.amount ?? "", note: m.note || "" }));
+  EX.draft.pay = rows;
+  const trig = [["start", L("البداية", "start")], ["finish", L("النهاية", "finish")]];
+  const table = exTable("ex-pay-rows", [L("الرمز", "Id"), L("الدفعة", "Milestone"), L("مرتبطة بـ", "Linked to"), L("عند", "At"), "%", L("أو مبلغ", "or amount"), L("ملاحظة", "Note")],
+    rows.map(m => [exIn("id", m.id, 60), exIn("name", m.name, 130), exSel("link", exLinkOpts(), m.link), exSel("trigger", trig, m.trigger), exIn("pct", m.pct, 70, "number"), exIn("amount", m.amount, 90, "number"), exIn("note", m.note, 110)]));
+  const status = { balanced: exBadge(L("موزّعة بالكامل", "fully allocated"), "ok"), under: exBadge(L("غير مكتملة التوزيع", "under-allocated"), "warn"), over: exBadge(L("تتجاوز العقد", "over-allocated"), "bad"), unknown: exBadge(L("غير محققة", "cannot be checked"), "warn") }[rep.status];
+  return `<div class="note">${L("كل دفعة مرتبطة بنشاط أو مرحلة من جدول 4D (عند بدايته أو نهايته) بنسبة من قيمة العقد أو بمبلغ ثابت، ويأتي تاريخها من الجدول فيتحرك معه. التوزيع يُتحقق منه ولا يُعدَّل تلقائياً. احسب الجدول الزمني أولاً (تبويب الجدول).", "Each payment is tied to an activity or phase of the 4D schedule (at its start or finish) with a share of the contract value or a fixed amount; its date comes from the schedule and moves with it. The allocation is validated, never adjusted. Compute the schedule first (Schedule tab).")}</div>
+    ${r.schedule_ready ? "" : `<div class="warn">${esc(r.schedule_note || "")}</div>`}
+    <div class="row3"><div><label>${L("قيمة العقد", "Contract value")}</label><input type="number" step="any" dir="ltr" id="ex-cv" value="${inp.contractValue ?? ""}"></div><div><label>${L("مصدر القيمة", "Source of the value")}</label><input id="ex-cs" value="${esc(inp.contractSource || "")}"></div><div><label>${L("العملة", "Currency")}</label><input id="ex-cur" value="${esc(inp.currency || "")}" style="width:90px"></div></div>
+    <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ex-fromboq" ${inp.contractFromBoq ? "checked" : ""}> ${L("اعتمد إجمالي BOQ قيمةً للعقد (إن كانت كل البنود مسعّرة)", "Use the BOQ total as the contract value (only when every item is priced)")}</label>
+    ${table}<div class="bar" style="padding:6px 0;border:0;gap:6px;flex-wrap:wrap">${exAddBtn("ex-pay-rows", L("دفعة", "Milestone"))}<button id="ex-save" class="primary">${L("احفظ", "Save")}</button><button id="ex-csv">${L("صدّر CSV", "Export CSV")}</button></div>
+    <h2>${L("جدول الدفعات", "Payment schedule")} ${status} <span class="hint" dir="ltr">${exF(rep.allocated_pct)}%${rep.allocated_amount != null ? " · " + exF(rep.allocated_amount) : ""}${rep.contract_value != null ? " / " + exF(rep.contract_value) : ""}</span></h2>
+    ${sxT(rep.milestones.map(m => [esc(m.name), esc(m.link.kind === "task" ? m.link.key : m.link.name), m.date || "—", m.pct == null ? "—" : exF(m.pct) + "%", m.amount == null ? "—" : exF(m.amount), m.cumulative_amount == null ? "—" : exF(m.cumulative_amount)]), [L("الدفعة", "Milestone"), L("مرتبطة بـ", "Linked to"), L("التاريخ", "Date"), "%", L("المبلغ", "Amount"), L("التراكمي", "Cumulative")])}
+    ${exNotes(rep.issues)}`;
+}
+function exPayWire() {
+  exGrow("pay", "ex-pay-rows", { id: "", name: "", link: "phase:Substructure", trigger: "finish", pct: "", amount: "", note: "" });
+  const save = () => exSave("pay", "payment_set", { payment: {
+    contractValue: exN($("ex-cv").value), contractSource: exS($("ex-cs").value), contractFromBoq: $("ex-fromboq").checked, currency: exS($("ex-cur").value),
+    milestones: exRows("ex-pay-rows").map(m => ({ id: m.id, name: m.name, link: exLink(m.link), trigger: m.trigger, pct: exN(m.pct, m.id), amount: exN(m.amount, m.id), note: exS(m.note) })) } });
+  $("ex-save").onclick = () => busy(save);
+  $("ex-csv").onclick = () => busy(async () => { const r = await save(); await exExport("payment-schedule.csv", "csv", r.csv); });
+}
+
+// ---- long-lead procurement (Feature 44)
+function exProc() {
+  const inp = EX.st.inputs.procurement, r = EX.rep.proc, rep = r.report;
+  const rows = EX.draft.proc || inp.items.map(i => ({ id: i.id, name: i.name, category: i.category, link: exLinkVal(i.neededFor), at: i.neededAt, lead: i.leadDays ?? "", buffer: i.bufferDays ?? "", source: i.source || "" }));
+  EX.draft.proc = rows;
+  const at = [["start", L("بدايته", "its start")], ["finish", L("نهايته", "its finish")]];
+  const table = exTable("ex-proc-rows", [L("الرمز", "Id"), L("الصنف", "Item"), L("الفئة", "Category"), L("يلزم لـ", "Needed for"), L("عند", "At"), L("مدة التوريد (يوم)", "Lead (days)"), L("هامش أمان (يوم)", "Buffer (days)"), L("مصدر المدة", "Lead-time source")],
+    rows.map(i => [exIn("id", i.id, 60), exIn("name", i.name, 120), `<input data-f="category" list="ex-cats" value="${esc(i.category)}" style="width:90px">`, exSel("link", exLinkOpts(), i.link), exSel("at", at, i.at), exIn("lead", i.lead, 70, "number"), exIn("buffer", i.buffer, 70, "number"), exIn("source", i.source, 130)]));
+  const st = { overdue: exBadge(L("فات موعد الطلب", "OVERDUE"), "bad"), due: exBadge(L("اليوم", "today"), "warn"), ok: exBadge(L("في الموعد", "on time"), "ok"), unknown: exBadge(L("غير محدد", "unknown"), "warn") };
+  return `<div class="note">${L("آخر موعد للطلب = تاريخ حاجة العمل للصنف (بداية أو نهاية النشاط في جدول 4D) − مدة التوريد − هامش الأمان، بالأيام التقويمية. مدة التوريد من عرض المورد وتُدخل بمصدرها؛ لا مدد مدمجة. يُعلَّم الصنف الذي فات موعد طلبه بالنسبة لتاريخ اليوم (أو التاريخ الذي تدخله) أو قبل بدء المشروع.", "Latest order date = the date the work needs the item (start or finish of a 4D activity) − lead time − buffer, in calendar days. The lead time comes from the supplier's quotation and is entered with its source; none is built in. An item whose order date has passed relative to today (or the date you enter), or that falls before the project start, is flagged.")}</div>
+    ${r.schedule_ready ? "" : `<div class="warn">${esc(r.schedule_note || "")}</div>`}
+    <div class="row"><div><label>${L("تاريخ المرجع (اتركه فارغاً لتاريخ اليوم)", "Reference date (blank = today)")}</label><input type="date" id="ex-asof" dir="ltr" value="${esc(inp.asOf || "")}"></div><div class="hint" style="align-self:end">${L("المرجع المعتمد", "In use")}: <b dir="ltr">${esc(rep.as_of || "—")}</b> (${rep.as_of_source === "entered" ? L("مُدخل", "entered") : L("ساعة النظام", "system clock")}) · ${L("بدء المشروع", "project start")}: <b dir="ltr">${esc(rep.project_start || "—")}</b></div></div>
+    <datalist id="ex-cats">${EX.st.categories.map(c => `<option value="${c}">`).join("")}</datalist>
+    ${table}<div class="bar" style="padding:6px 0;border:0;gap:6px;flex-wrap:wrap">${exAddBtn("ex-proc-rows", L("صنف", "Item"))}<button id="ex-save" class="primary">${L("احفظ واحسب", "Save and compute")}</button><button id="ex-csv">${L("صدّر CSV", "Export CSV")}</button></div>
+    <h2>${L("جدول الطلبات", "Order schedule")} · ${L("فائتة", "overdue")} <b>${rep.overdue}</b> · ${L("قبل بدء المشروع", "before project start")} <b>${rep.before_project_start}</b></h2>
+    ${sxT(rep.items.map(i => [esc(i.name), esc(i.category), i.needed_on || "—", i.lead_days == null ? "—" : i.lead_days + "+" + i.buffer_days, `<b>${i.order_by || "—"}</b>`, i.days_to_order == null ? "—" : i.days_to_order, st[i.status] + (i.before_project_start ? " " + exBadge(L("قبل البدء", "pre-start"), "warn") : "")]), [L("الصنف", "Item"), L("الفئة", "Category"), L("يلزم في", "Needed on"), L("توريد+هامش", "Lead+buffer"), L("اطلب قبل", "Order by"), L("أيام متبقية", "Days left"), L("الحالة", "Status")])}
+    ${exNotes(rep.issues)}`;
+}
+function exProcWire() {
+  exGrow("proc", "ex-proc-rows", { id: "", name: "", category: "custom", link: "phase:Finishing", at: "start", lead: "", buffer: "", source: "" });
+  const save = () => exSave("proc", "procure_set", { procurement: { asOf: exS($("ex-asof").value), items: exRows("ex-proc-rows").map(i => ({ id: i.id, name: i.name, category: i.category, neededFor: exLink(i.link), neededAt: i.at, leadDays: exN(i.lead, i.id), bufferDays: exN(i.buffer, i.id), source: exS(i.source) })) } });
+  $("ex-save").onclick = () => busy(save);
+  $("ex-csv").onclick = () => busy(async () => { const r = await save(); await exExport("long-lead-procurement.csv", "csv", r.csv); });
+}
+
+// ---- QA/QC checklists (Feature 45)
+const EX_QA_STATES = { not_started: ["لم يبدأ", "Not started", "hint"], in_progress: ["جارٍ", "In progress", "warn"], passed: ["مُجتاز", "Passed", "ok"], failed: ["راسب", "FAILED", "bad"] };
+function exQa() {
+  const r = EX.rep.qa, rep = r.report;
+  const stats = [["pending", L("قيد الانتظار", "Pending")], ["pass", L("مطابق", "Pass")], ["fail", L("غير مطابق", "Fail")], ["na", L("لا ينطبق", "N/A")]];
+  const stages = rep.stages.map(s => {
+    const [a, e, k] = EX_QA_STATES[s.state];
+    const rows = s.items.map(i => `<tr data-item="${esc(i.id)}"><td>${esc(L(i.ar, i.en))}${i.record_en ? `<br><small class="hint">[${L("سجّل", "record")}: ${esc(L(i.record_ar, i.record_en))}]</small>` : ""}${i.issue ? `<br><small class="warn">${esc(i.issue)}</small>` : ""}${i.custom ? ` <button data-delcustom="${esc(i.id)}" title="${L("احذف الفحص", "Remove the check")}">✕</button>` : ""}</td>
+      <td>${exSel("status", stats, i.status)}</td><td>${exIn("by", i.by, 90)}</td><td>${exIn("date", i.date, 110, "date")}</td><td>${exIn("value", i.value, 110)}</td><td>${exIn("note", i.note, 110)}</td></tr>`).join("");
+    return `<details ${s.state !== "not_started" ? "open" : ""}><summary><b>${esc(L(s.ar, s.en))}</b> — ${exBadge(L(a, e), k)} <span class="hint" dir="ltr">${s.pass}/${s.items.length - s.na} · ${s.progress_pct}%</span> <span class="hint">${L("الاستحقاق", "due")}: <b dir="ltr">${esc(s.due || "—")}</b> ${esc(s.due ? L(s.due_ar, s.due_en) : "")}</span></summary>
+      <table class="rooms"><thead><tr><th>${L("الفحص", "Check")}</th><th>${L("الحالة", "Status")}</th><th>${L("المفتش", "Inspector")}</th><th>${L("التاريخ", "Date")}</th><th>${L("القيمة المسجلة", "Recorded value")}</th><th>${L("ملاحظة", "Note")}</th></tr></thead><tbody>${rows}</tbody></table></details>`;
+  }).join("");
+  return `<div class="note">${L("قوائم فحص إجرائية مرتبطة بمراحل الجدول: الحفر والتأسيس، التسليح قبل الصب، العزل المائي، اختبارات الضغط والتسرب، اختبارات الاستمرارية الكهربائية، والتسليم. لا تذكر حدود قبول: الفحص الذي يعتمد على رقم (ضغط الاختبار، السماكة، المقاومة) يطلب تسجيل ما تنص عليه مواصفة المشروع وما قيس. لا تُجتاز المرحلة إلا إذا اجتازت كل بنودها وسُجّلت قيمها، وأي رسوب يُرسِبها. لا يُعتمد مطابق/غير مطابق بلا اسم المفتش.", "Procedural checklists tied to the schedule stages: excavation and foundations, reinforcement before the pour, waterproofing, pressure and leak tests, electrical continuity tests and handover. They state no acceptance limit: a check that depends on a figure (test pressure, thickness, resistance) asks you to record what the project specification requires and what was measured. A stage passes only when every check passed with its recorded value; any fail fails it. Pass or fail needs the inspector's name.")}</div>
+    ${r.schedule_ready ? "" : `<div class="warn">${esc(r.schedule_note || "")}</div>`}
+    <div class="bar" style="padding:0 0 8px;border:0;gap:6px;flex-wrap:wrap"><button id="ex-save" class="primary">${L("احفظ السجلات", "Save records")}</button><button id="ex-pdf">${L("صدّر التقرير PDF", "Export report PDF")}</button><button id="ex-xlsx">${L("صدّر Excel", "Export Excel")}</button><span class="hint">${L("مراحل مجتازة", "Stages passed")}: <b>${rep.passed_stages}</b> / ${rep.stages.length} · ${L("راسبة", "failed")}: <b>${rep.failed_stages}</b></span></div>
+    ${stages}
+    <h2>${L("أضف فحصاً خاصاً", "Add your own check")}</h2>
+    <div class="row3"><div><label>${L("المرحلة", "Stage")}</label><select id="ex-cstage">${EX.st.stages.map(s => `<option value="${s.id}">${esc(L(s.ar, s.en))}</option>`).join("")}</select></div><div><label>${L("نص الفحص", "Check text")}</label><input id="ex-ctext"></div><div><label>${L("ما يُسجَّل (اختياري)", "What to record (optional)")}</label><input id="ex-crec"></div></div>
+    <div class="bar" style="padding:6px 0;border:0"><button id="ex-cadd">${L("أضف", "Add")}</button></div>${exNotes(rep.issues.filter(i => !i.includes("not been computed")))}`;
+}
+function exQaWire() {
+  const collect = () => {
+    const records = []; document.querySelectorAll("#ex-body tr[data-item]").forEach(tr => {
+      const o = { item: tr.dataset.item }; tr.querySelectorAll("[data-f]").forEach(e => { o[e.dataset.f] = e.value; });
+      if (o.status !== "pending" || o.by || o.value || o.note) records.push({ item: o.item, status: o.status, by: exS(o.by), date: exS(o.date), value: exS(o.value), note: exS(o.note) });
+    });
+    return records;
+  };
+  const customs = () => EX.st.inputs.qaqc.customItems;
+  const save = (records, customItems) => exSave("qa", "qaqc_set", { qaqc: { records, customItems }, lang: exLang() });
+  $("ex-save").onclick = () => busy(() => save(collect(), customs()));
+  $("ex-pdf").onclick = () => busy(async () => { const r = await save(collect(), customs()); await exPdf(r.html, "qa-qc-report.pdf"); });
+  $("ex-xlsx").onclick = () => busy(async () => { const r = await save(collect(), customs()); await exExport("qa-qc-report.xlsx", "xlsx", r.xlsx_b64, "b64"); });
+  $("ex-cadd").onclick = () => busy(async () => {
+    const text = $("ex-ctext").value.trim(); if (!text) throw new Error(L("اكتب نص الفحص", "Write the check text"));
+    await save(collect(), [...customs(), { id: "x." + Date.now().toString(36), stage: $("ex-cstage").value, text, record: exS($("ex-crec").value) }]);
+  });
+  document.querySelectorAll("[data-delcustom]").forEach(b => b.onclick = () => busy(async () => { const id = b.dataset.delcustom; await save(collect().filter(r => r.item !== id), customs().filter(c => c.id !== id)); }));
+}
+
+// ---- apartment feasibility and ROI (Feature 46)
+function exRoi() {
+  const inp = EX.st.inputs.roi, rep = EX.rep.roi.report, apt = EX.st.building_type === "apartment_building";
+  const units = EX.draft.roi || inp.unitTypes.map(u => ({ name: u.name, count: u.count, rent: u.annualRent ?? "", source: u.rentSource || "" }));
+  EX.draft.roi = units;
+  const others = EX.draft.roiO || inp.otherCosts.map(o => ({ name: o.name, amount: o.amount, source: o.source }));
+  EX.draft.roiO = others;
+  const ut = exTable("ex-roi-units", [L("نوع الوحدة", "Unit type"), L("العدد", "Count"), L("الإيجار السنوي للوحدة", "Yearly rent of one unit"), L("مصدر الإيجار", "Rent source")], units.map(u => [exIn("name", u.name, 100), exIn("count", u.count, 60, "number"), exIn("rent", u.rent, 100, "number"), exIn("source", u.source, 150)]));
+  const ot = exTable("ex-roi-other", [L("تكلفة أخرى", "Other cost"), L("المبلغ", "Amount"), L("المصدر", "Source")], others.map(o => [exIn("name", o.name, 120), exIn("amount", o.amount, 100, "number"), exIn("source", o.source, 150)]));
+  const basis = [["cost_tier", L("إجمالي المستوى المختار", "Selected tier total")], ["boq", L("إجمالي BOQ", "BOQ total")], ["manual", L("مبلغ أدخله", "An amount I enter")]];
+  const card = (label, v, suffix = "") => `<div style="border:1px solid #8886;border-radius:8px;padding:6px 12px;min-width:120px"><div class="hint">${label}</div><b dir="ltr" style="font-size:18px">${v == null ? "—" : exF(v) + suffix}</b></div>`;
+  return `<div class="note">${L("للعمارات السكنية (أو متى فعّلتها): إجمالي الوحدات من أنواع الوحدات التي تدخلها، ورأس المال CAPEX من المستوى المختار أو BOQ أو مبلغ تدخله + تكاليف أخرى بمصادرها، والإيجار السنوي من إيجار الوحدة الذي تدخله. العائد الإجمالي = الإيجار ÷ CAPEX. الاسترداد = CAPEX ÷ الدخل (صافي التشغيل إن أدخلت الشغور أو المصروفات، وإلا الإيجار الإجمالي). لا إيجارات ولا نسب مدمجة، والمدخل الناقص يُسمّى ولا يُحسب ما يعتمد عليه.", "For apartment buildings (or when you switch it on): total units from the unit types you enter, CAPEX from the selected tier, the BOQ or an amount you enter plus other costs with their sources, and yearly rent from the rent you enter per unit. Gross yield = rent ÷ CAPEX. Payback = CAPEX ÷ income (net operating income when you enter vacancy or running costs, otherwise gross rent). No rents or ratios are built in; a missing input is named and what depends on it is not computed.")}</div>
+    <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ex-roi-on" ${inp.enabled || apt ? "checked" : ""} ${apt ? "disabled" : ""}> ${apt ? L("مفعّلة: نوع المبنى عمارة سكنية", "On: the building type is apartment building") : L("فعّل الحاسبة لهذا المشروع", "Switch the calculator on for this project")}</label>
+    <div class="row3"><div><label>${L("العملة", "Currency")}</label><input id="ex-cur" value="${esc(inp.currency || "")}" style="width:90px"></div><div><label>${L("أساس CAPEX", "CAPEX basis")}</label><select id="ex-basis">${basis.map(([v, l]) => `<option value="${v}" ${v === inp.capexBasis ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div><div></div></div>
+    <div class="row"><div><label>${L("مبلغ CAPEX (للأساس اليدوي)", "CAPEX amount (manual basis)")}</label><input type="number" step="any" dir="ltr" id="ex-capex" value="${inp.capexManual ?? ""}"></div><div><label>${L("مصدره", "Its source")}</label><input id="ex-capex-src" value="${esc(inp.capexManualSource || "")}"></div></div>
+    ${ut}<div class="bar" style="padding:4px 0;border:0">${exAddBtn("ex-roi-units", L("نوع وحدة", "Unit type"))}</div>
+    ${ot}<div class="bar" style="padding:4px 0;border:0">${exAddBtn("ex-roi-other", L("تكلفة أخرى", "Other cost"))}</div>
+    <div class="row"><div><label>${L("نسبة الشغور %", "Vacancy %")}</label><input type="number" step="any" dir="ltr" id="ex-vac" value="${inp.vacancyPct ?? ""}"></div><div><label>${L("مصدرها", "Source")}</label><input id="ex-vac-src" value="${esc(inp.vacancySource || "")}"></div></div>
+    <div class="row"><div><label>${L("مصروفات التشغيل السنوية", "Yearly running costs")}</label><input type="number" step="any" dir="ltr" id="ex-opex" value="${inp.annualOpex ?? ""}"></div><div><label>${L("مصدرها", "Source")}</label><input id="ex-opex-src" value="${esc(inp.opexSource || "")}"></div></div>
+    <div class="bar" style="padding:6px 0;border:0"><button id="ex-save" class="primary">${L("احفظ واحسب", "Save and compute")}</button></div>
+    ${rep.active ? `<h2>${L("النتيجة", "Result")}</h2><div class="row" style="flex-wrap:wrap;gap:8px">${card(L("إجمالي الوحدات", "Total units"), rep.total_units)}${card(L("وحدات/دور", "Units per floor"), rep.units_per_floor)}${card("CAPEX " + esc(rep.currency || ""), rep.capex)}${card(L("الإيجار السنوي الإجمالي", "Gross yearly rent"), rep.gross_rent)}${card(L("العائد الإجمالي", "Gross yield"), rep.gross_yield_pct, "%")}${card(L("الاسترداد (سنة)", "Payback (years)"), rep.payback_years)}${card(L("CAPEX/وحدة", "CAPEX per unit"), rep.capex_per_unit)}</div>
+      <div class="hint">${L("أساس الاسترداد", "Payback basis")}: <b>${rep.payback_basis === "gross rent" ? L("الإيجار الإجمالي", "gross rent") : L("صافي دخل التشغيل", "net operating income")}</b>${rep.net_income != null ? ` · ${L("صافي الدخل", "net income")} <b dir="ltr">${exF(rep.net_income)}</b>` : ""}</div>
+      ${rep.missing.length ? `<h2>${L("مدخلات ناقصة", "Missing inputs")} (${rep.missing.length})</h2>${exNotes(rep.missing)}` : ""}` : ""}${exNotes(rep.notes)}`;
+}
+function exRoiWire() {
+  const sync = () => { EX.draft.roi = exRows("ex-roi-units"); EX.draft.roiO = exRows("ex-roi-other"); };
+  const grow = (tableId, key, blank) => {
+    const add = document.querySelector(`[data-add="${tableId}"]`); if (add) add.onclick = () => { sync(); EX.draft[key].push({ ...blank }); exBuild(); };
+    document.querySelectorAll(`#${tableId} [data-del]`).forEach(b => b.onclick = () => { sync(); EX.draft[key].splice(Number(b.dataset.del), 1); exBuild(); });
+  };
+  grow("ex-roi-units", "roi", { name: "", count: "", rent: "", source: "" }); grow("ex-roi-other", "roiO", { name: "", amount: "", source: "" });
+  $("ex-save").onclick = () => busy(() => exSave("roi", "roi_set", { roi: {
+    enabled: $("ex-roi-on").checked, currency: exS($("ex-cur").value), capexBasis: $("ex-basis").value, capexManual: exN($("ex-capex").value), capexManualSource: exS($("ex-capex-src").value),
+    unitTypes: exRows("ex-roi-units").map(u => ({ name: u.name, count: exReq(u.count, u.name), annualRent: exN(u.rent, u.name), rentSource: exS(u.source) })),
+    otherCosts: exRows("ex-roi-other").map(o => ({ name: o.name, amount: exReq(o.amount, o.name), source: o.source })),
+    vacancyPct: exN($("ex-vac").value), vacancySource: exS($("ex-vac-src").value), annualOpex: exN($("ex-opex").value), opexSource: exS($("ex-opex-src").value) } }));
+}
+
+$("tab-ex").textContent = L("التنفيذ والتكلفة", "Execution & cost");
+document.querySelector('[data-tab="ex"]').addEventListener("click", () => busy(exLoad));
 
 applyLang();
 call("assumptions").then(a => { state.assumptions = a; if (state.rooms_out) renderNotes(); });

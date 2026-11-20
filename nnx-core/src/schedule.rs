@@ -280,6 +280,11 @@ pub fn template_keys() -> Vec<(&'static str, bool)> {
     templates().map(|t| (t.key, matches!(t.kind, Fixed))).collect()
 }
 
+/// `(key, name, phase)` of every activity of the build sequence, for the pages that link a record to one.
+pub fn template_names() -> Vec<(&'static str, &'static str, &'static str)> {
+    templates().map(|t| (t.key, t.name, PHASES[t.phase])).collect()
+}
+
 /// The keys of the tasks that exist only when the model has the work.
 pub fn optional_keys() -> Vec<&'static str> {
     templates().filter(|t| t.optional).map(|t| t.key).collect()
@@ -298,6 +303,8 @@ pub struct Measure {
 #[derive(Debug, Clone)]
 pub struct Task {
     pub id: String,
+    /// The template key of the activity (`footing_pour`, `plaster` ...): stable, unlike `id`, so other records can link to it.
+    pub key: &'static str,
     pub name: String,
     /// Phase of the work breakdown (`PHASES`) and the task's number in it, for example `2.3`.
     pub phase: &'static str,
@@ -519,6 +526,7 @@ fn build_inner(qto: &Qto, lib: &RateLib, cal: &Calendar, zones: usize, zone_map:
             let idx = tasks.len();
             tasks.push(Task {
                 id: format!("T{:02}", idx + 1),
+                key: t.key,
                 name: if t.zoned && zones > 1 { format!("{} (zone {})", t.name, z + 1) } else { t.name.to_string() },
                 phase: PHASES[t.phase],
                 wbs: wbs.clone(),

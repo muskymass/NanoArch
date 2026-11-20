@@ -82,6 +82,8 @@ pub struct ProjectMeta {
     pub finishes: crate::finishes::Finishes,
     /// Measured coordinates and dimensions compared with the design.
     pub as_built: crate::asbuilt::AsBuilt,
+    /// Milestone 6 inputs: the schedule setup, cost tiers, tender pack, payment milestones, long-lead items, QA/QC records and the apartment ROI.
+    pub execution: crate::execution::ExecutionInputs,
 }
 
 /// Limits set by the municipality for this plot. Each carries the source the user took it from. A limit without a
@@ -215,6 +217,7 @@ impl NanoArchProject {
         self.meta.mep_ext.check()?;
         self.meta.finishes.check()?;
         self.meta.as_built.check()?;
+        self.meta.execution.check()?;
         if let Some(f) = &self.meta.furniture
             && f.min_clear_mm.is_some_and(|m| !m.is_finite() || m <= 0.0)
         {

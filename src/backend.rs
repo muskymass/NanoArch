@@ -7,7 +7,8 @@ use nnx_core::drawing::{DrawOpts, plan_svg};
 use nnx_core::layout::{Adjacency, Brief, Rect, RoomReq, Side, Zone};
 use nnx_core::qto::{self, QtoOpts};
 use nnx_core::rules::{self, RuleSet};
-use nnx_core::schedule::{self, Calendar, Date, RateLib};
+use nnx_core::execution::{Activity, BuildError, ExecutionInputs, ScheduleSetup};
+use nnx_core::schedule::{self, Date};
 use nnx_core::structural::{Loads, Soil, StructOpts};
 use nnx_core::walls::{WallOpts, WindowOpts};
 use crate::editing;
@@ -360,6 +361,19 @@ impl App {
             "asbuilt_svg" => self.asbuilt_svg(),
             "tour_export" => self.tour_export(args),
             "stl_export" => self.stl_export(args),
+            "exec" => self.exec_state(),
+            "cost" => self.cost_report(),
+            "cost_set" => self.cost_set(args),
+            "tender" => self.tender_report(args),
+            "tender_set" => self.tender_set(args),
+            "payment" => self.payment_report(),
+            "payment_set" => self.payment_set(args),
+            "procure" => self.procure_report(),
+            "procure_set" => self.procure_set(args),
+            "qaqc" => self.qaqc_report(args),
+            "qaqc_set" => self.qaqc_set(args),
+            "roi" => self.roi_report(),
+            "roi_set" => self.roi_set(args),
             "export_ifc" => self.export_ifc(),
             "export_dxf" => self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false)),
             "report_html" => {
@@ -586,33 +600,36 @@ impl App {
         Ok(json!({ "items": items, "warnings": q.warnings, "csv": q.to_csv() }))
     }
 
-    fn schedule(&self, args: &Value) -> Result<Value, String> {
+    /// The take-off the schedule is built from: the model's quantities, insulation, MEP devices and runs, and the concrete and steel of
+    /// the structural schedules. A finish has no productivity input, so it is a quantity and a BOQ row, not a scheduled activity.
+    fn schedule_qto(&self) -> Result<qto::Qto, String> {
         let doc = self.doc()?;
-        let lib = RateLib::from_json(&json!({ "rates": args.get("rates").cloned().unwrap_or(json!({})) }).to_string()).map_err(|e| format!("rates: {e}"))?;
-        let start = args.get("start").and_then(Value::as_str).and_then(Date::parse).ok_or("enter the start date as YYYY-MM-DD")?;
-        let days: Vec<bool> = args.get("workdays").and_then(Value::as_array).map(|a| a.iter().map(|v| v.as_bool().unwrap_or(false)).collect()).unwrap_or_default();
-        let work_days: [bool; 7] = days.try_into().map_err(|_| "workdays needs seven entries, Monday first")?;
-        let mut cal = Calendar::new(start, work_days).ok_or("at least one working day a week is required")?;
-        for h in args.get("holidays").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter_map(Date::parse) {
-            cal.holidays.insert(h);
-        }
-        let zones = args.get("zones").and_then(Value::as_u64).unwrap_or(1).max(1) as usize;
-        // The take-off, plus insulation, MEP devices and runs, and the concrete and steel of the structural schedules.
         let mut q = qto::compute(&doc.model, &QtoOpts::default());
         q.items.extend(self.extra_items(&doc.model));
-        // A finish has no productivity input, so it is a quantity and a BOQ row, not a scheduled activity.
         q.items.retain(|i| !i.code.starts_with("FIN."));
         if let Some(inputs) = self.project().and_then(|p| p.sizing.map(|s| (s, p.structure.bearing_kpa))) {
             q.items.extend(nnx_core::sizing::schedule_items(&nnx_core::sizing::compute(&doc.model, inputs.1, &inputs.0)));
         }
-        match schedule::build_with_model(&doc.model, &q, &lib, &cal, zones) {
-            Ok(s) => {
+        Ok(q)
+    }
+
+    /// Computes the 4D schedule from the rates, start date and calendar sent, and keeps them in the project (one undoable step, a no-op
+    /// when unchanged) so the payment, procurement and QA/QC features read the very same schedule.
+    fn schedule(&mut self, args: &Value) -> Result<Value, String> {
+        let setup: ScheduleSetup = serde_json::from_value(args.clone()).map_err(|e| format!("schedule inputs: {e}"))?;
+        if setup.start.trim().is_empty() {
+            return Err("enter the start date as YYYY-MM-DD".into());
+        }
+        let q = self.schedule_qto()?;
+        let built = setup.build(&self.doc()?.model, &q);
+        match built {
+            Ok((s, cal)) => {
                 let tasks: Vec<Value> = s
                     .tasks
                     .iter()
                     .map(|t| {
                         json!({
-                            "id": t.id, "name": t.name, "wbs": t.wbs, "phase": t.phase, "duration": t.duration, "es": t.es, "ef": t.ef,
+                            "id": t.id, "key": t.key, "name": t.name, "wbs": t.wbs, "phase": t.phase, "duration": t.duration, "es": t.es, "ef": t.ef,
                             "start": t.start.iso(), "finish": t.finish.iso(), "float": t.float, "critical": t.critical,
                             "quantity": t.quantity, "unit": t.unit.map(|u| u.label()),
                             "also": t.also.iter().map(|m| json!({ "label": m.label, "quantity": m.quantity, "unit": m.unit.label() })).collect::<Vec<_>>(),
@@ -620,15 +637,221 @@ impl App {
                         })
                     })
                     .collect();
-                Ok(json!({
+                let out = json!({
                     "ok": true, "project_days": s.project_days, "finish": s.finish.iso(), "tasks": tasks, "warnings": s.warnings,
                     "svg": s.gantt_svg(&cal, &self.title()), "csv": s.to_csv(),
                     "calendar": (0..=s.project_days).map(|d| cal.nth_workday(d).iso()).collect::<Vec<_>>()
-                }))
+                });
+                if self.project().is_some() {
+                    self.exec_update("Schedule setup", |e| {
+                        e.schedule = Some(setup.clone());
+                        Ok(())
+                    })?;
+                }
+                Ok(out)
             }
-            Err(schedule::ScheduleError::MissingRates(keys)) => Ok(json!({ "ok": false, "missing": keys })),
-            Err(e) => Err(e.to_string()),
+            Err(BuildError::MissingRates(keys)) => Ok(json!({ "ok": false, "missing": keys })),
+            Err(BuildError::Invalid(why)) => Err(why),
         }
+    }
+
+    /// The execution inputs of the project, changed as ONE undoable step (nothing happens when the edit changes nothing).
+    fn exec_update(&mut self, label: &str, edit: impl FnOnce(&mut ExecutionInputs) -> Result<(), String>) -> Result<bool, String> {
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        Ok(nnx_core::project::update(doc, label, |p| edit(&mut p.meta.execution))?.changed)
+    }
+
+    fn exec_inputs(&self) -> Result<ExecutionInputs, String> {
+        Ok(self.project().ok_or("choose a layout first")?.meta.execution)
+    }
+
+    /// The activities of the schedule stored in the project, or why there are none yet.
+    fn stored_activities(&self) -> (Option<Vec<Activity>>, Option<String>) {
+        let Some(setup) = self.project().and_then(|p| p.meta.execution.schedule) else {
+            return (None, Some("compute the schedule first (Schedule tab): its start date, calendar and rates are kept in the project".into()));
+        };
+        let (Ok(doc), Ok(q)) = (self.doc(), self.schedule_qto()) else { return (None, Some("choose a layout first".into())) };
+        match setup.build(&doc.model, &q) {
+            Ok((s, _)) => (Some(nnx_core::execution::activities(&s)), None),
+            Err(BuildError::MissingRates(k)) => (None, Some(format!("the schedule is missing {} rate(s): {}", k.len(), k.join(", ")))),
+            Err(BuildError::Invalid(why)) => (None, Some(why)),
+        }
+    }
+
+    /// The BOQ report of the project's stored library (every unpriced item stays listed).
+    fn boq_now(&self) -> Result<nnx_core::boq::BoqReport, String> {
+        let model = &self.doc()?.model;
+        let mut items = qto::compute(model, &QtoOpts::default()).items;
+        items.extend(self.extra_items(model));
+        let lib = self.project().and_then(|p| p.boq).unwrap_or_default();
+        Ok(nnx_core::boq::compute(&items, &lib))
+    }
+
+    fn cost_now(&self) -> Result<nnx_core::costtier::CostReport, String> {
+        let model = &self.doc()?.model;
+        let mut items = qto::compute(model, &QtoOpts::default()).items;
+        items.extend(self.extra_items(model));
+        Ok(nnx_core::costtier::compute(&items, &self.exec_inputs()?.cost))
+    }
+
+    /// Everything Milestone 6 stores, for the page to fill its forms from.
+    fn exec_state(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        Ok(json!({
+            "inputs": p.meta.execution,
+            "tiers": nnx_core::costtier::Tier::ALL.iter().map(|t| json!({ "id": t.id(), "en": t.label().0, "ar": t.label().1, "phases": t.expected_phases().iter().map(|&i| nnx_core::schedule::PHASES[i]).collect::<Vec<_>>() })).collect::<Vec<_>>(),
+            "phases": nnx_core::schedule::PHASES,
+            "tasks": schedule::template_names().iter().map(|(k, n, p)| json!({ "key": k, "name": n, "phase": p })).collect::<Vec<_>>(),
+            "stages": nnx_core::qaqc::STAGES.iter().map(|s| json!({ "id": s.id, "en": s.en, "ar": s.ar })).collect::<Vec<_>>(),
+            "categories": nnx_core::procure::CATEGORIES,
+            "building_type": p.meta.building_type,
+        }))
+    }
+
+    fn cost_report(&self) -> Result<Value, String> {
+        Ok(json!({ "report": self.cost_now()? }))
+    }
+
+    /// Stores the cost lines, the selected tier and the currency: ONE undoable edit.
+    fn cost_set(&mut self, args: &Value) -> Result<Value, String> {
+        let c: nnx_core::costtier::CostInputs = serde_json::from_value(args.get("cost").cloned().ok_or("cost is required")?).map_err(|e| format!("cost: {e}"))?;
+        let changed = self.exec_update("Cost tiers", |e| {
+            e.cost = c.clone();
+            Ok(())
+        })?;
+        let mut v = self.cost_report()?;
+        v["changed"] = json!(changed);
+        Ok(v)
+    }
+
+    fn tender_pack(&self, arabic: bool) -> Result<(nnx_core::tender::TenderPack, bool), String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let model = &self.doc()?.model;
+        let finishes = nnx_core::finishes::report(model, &p.meta.finishes, p.boq.as_ref());
+        let payment = self.payment_now().ok();
+        Ok((nnx_core::tender::pack(nnx_core::tender::TenderParts { project: &p, boq: self.boq_now()?, cost: self.cost_now()?, finishes, payment }), arabic))
+    }
+
+    /// The tender pack: the data, the printable document and the workbook. `lang` is `en` or `ar` (Arabic when absent).
+    fn tender_report_in(&self, args: &Value) -> Result<Value, String> {
+        let (pack, arabic) = self.tender_pack(args.get("lang").and_then(Value::as_str) != Some("en"))?;
+        Ok(json!({ "pack": pack, "html": pack.html(arabic), "xlsx_b64": nnx_core::xlsx::base64_encode(&pack.workbook(arabic).to_bytes()), "name": "tender-pack" }))
+    }
+
+    fn tender_report(&self, args: &Value) -> Result<Value, String> {
+        self.tender_report_in(args)
+    }
+
+    fn tender_set(&mut self, args: &Value) -> Result<Value, String> {
+        let t: nnx_core::tender::TenderInputs = serde_json::from_value(args.get("tender").cloned().ok_or("tender is required")?).map_err(|e| format!("tender: {e}"))?;
+        let changed = self.exec_update("Tender notes", |e| {
+            e.tender = t.clone();
+            Ok(())
+        })?;
+        let mut v = self.tender_report_in(args)?;
+        v["changed"] = json!(changed);
+        Ok(v)
+    }
+
+    fn payment_now(&self) -> Result<nnx_core::payment::PaymentReport, String> {
+        let inputs = self.exec_inputs()?.payment;
+        let (acts, _) = self.stored_activities();
+        let boq = self.boq_now()?;
+        let boq_total = boq.complete.then_some(boq.total);
+        Ok(nnx_core::payment::compute(&inputs, acts.as_deref(), boq_total))
+    }
+
+    fn payment_report(&self) -> Result<Value, String> {
+        let (acts, why) = self.stored_activities();
+        let r = self.payment_now()?;
+        Ok(json!({ "csv": r.csv(), "report": r, "schedule_ready": acts.is_some(), "schedule_note": why }))
+    }
+
+    fn payment_set(&mut self, args: &Value) -> Result<Value, String> {
+        let pay: nnx_core::payment::PaymentInputs = serde_json::from_value(args.get("payment").cloned().ok_or("payment is required")?).map_err(|e| format!("payment: {e}"))?;
+        let changed = self.exec_update("Payment schedule", |e| {
+            e.payment = pay.clone();
+            Ok(())
+        })?;
+        let mut v = self.payment_report()?;
+        v["changed"] = json!(changed);
+        Ok(v)
+    }
+
+    fn procure_now(&self) -> Result<nnx_core::procure::ProcureReport, String> {
+        let inputs = self.exec_inputs()?.procurement;
+        let (acts, _) = self.stored_activities();
+        let today = Date::parse(&utc_now().chars().take(10).collect::<String>());
+        let has_elevator = self.project().is_some_and(|p| p.meta.vertical.is_some_and(|v| v.elevator.is_some()));
+        Ok(nnx_core::procure::compute(&inputs, acts.as_deref(), today, has_elevator))
+    }
+
+    fn procure_report(&self) -> Result<Value, String> {
+        let (acts, why) = self.stored_activities();
+        let r = self.procure_now()?;
+        Ok(json!({ "csv": r.csv(), "report": r, "schedule_ready": acts.is_some(), "schedule_note": why }))
+    }
+
+    fn procure_set(&mut self, args: &Value) -> Result<Value, String> {
+        let pr: nnx_core::procure::ProcureInputs = serde_json::from_value(args.get("procurement").cloned().ok_or("procurement is required")?).map_err(|e| format!("procurement: {e}"))?;
+        let changed = self.exec_update("Long-lead procurement", |e| {
+            e.procurement = pr.clone();
+            Ok(())
+        })?;
+        let mut v = self.procure_report()?;
+        v["changed"] = json!(changed);
+        Ok(v)
+    }
+
+    fn qaqc_report_in(&self, args: &Value) -> Result<Value, String> {
+        let inputs = self.exec_inputs()?.qaqc;
+        let (acts, why) = self.stored_activities();
+        let r = nnx_core::qaqc::report(&inputs, acts.as_deref());
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        Ok(json!({ "html": r.html(&self.display_title(), arabic), "xlsx_b64": nnx_core::xlsx::base64_encode(&r.workbook(arabic).to_bytes()), "report": r, "schedule_ready": acts.is_some(), "schedule_note": why }))
+    }
+
+    fn qaqc_report(&self, args: &Value) -> Result<Value, String> {
+        self.qaqc_report_in(args)
+    }
+
+    fn qaqc_set(&mut self, args: &Value) -> Result<Value, String> {
+        let qa: nnx_core::qaqc::QaInputs = serde_json::from_value(args.get("qaqc").cloned().ok_or("qaqc is required")?).map_err(|e| format!("qaqc: {e}"))?;
+        let changed = self.exec_update("QA/QC records", |e| {
+            e.qaqc = qa.clone();
+            Ok(())
+        })?;
+        let mut v = self.qaqc_report_in(args)?;
+        v["changed"] = json!(changed);
+        Ok(v)
+    }
+
+    fn roi_now(&self) -> Result<nnx_core::roi::RoiReport, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let cost = self.cost_now()?;
+        let boq = self.boq_now()?;
+        let ctx = nnx_core::roi::RoiContext {
+            is_apartment_building: p.meta.building_type == Some(nnx_core::project::BuildingType::ApartmentBuilding),
+            tier_total: cost.selected_result().map(|t| (t.total, t.complete)),
+            boq_total: (boq.priced > 0).then_some((boq.total, boq.complete)),
+            floors: p.structure.floors,
+        };
+        Ok(nnx_core::roi::compute(&p.meta.execution.roi, &ctx))
+    }
+
+    fn roi_report(&self) -> Result<Value, String> {
+        Ok(json!({ "report": self.roi_now()? }))
+    }
+
+    fn roi_set(&mut self, args: &Value) -> Result<Value, String> {
+        let r: nnx_core::roi::RoiInputs = serde_json::from_value(args.get("roi").cloned().ok_or("roi is required")?).map_err(|e| format!("roi: {e}"))?;
+        let changed = self.exec_update("Apartment ROI", |e| {
+            e.roi = r.clone();
+            Ok(())
+        })?;
+        let mut v = self.roi_report()?;
+        v["changed"] = json!(changed);
+        Ok(v)
     }
 
     fn check_rules(&self, args: &Value) -> Result<Value, String> {
@@ -3550,4 +3773,107 @@ mod tests {
         assert!(html.contains("<canvas id=\"gl\">") && html.contains("\"k\":\"Wall\"") && !html.contains("src=\"http"));
         assert_eq!(t["name"], "tour.html");
         assert!(App::default().handle("tour_export", &json!({})).is_err() && App::default().handle("stl_export", &json!({ "scale": 100.0 })).is_err());
-    }}
+    }
+
+    // ------------------------------------------------------------------ Milestone 6: execution commands
+
+    #[test]
+    fn the_schedule_setup_is_kept_in_the_project_and_the_m6_features_read_it() {
+        let mut app = complete_app();
+        // Before any schedule: nothing has dates, and the reason says so.
+        let pay = json!({ "payment": { "contractValue": 1000.0, "contractSource": "synthetic contract", "milestones": [{ "id": "m1", "name": "Footings", "link": { "kind": "task", "key": "footing_pour" }, "trigger": "finish", "pct": 100.0 }] } });
+        let r = app.handle("payment_set", &pay).unwrap();
+        assert_eq!(r["schedule_ready"], false);
+        assert!(r["schedule_note"].as_str().unwrap().contains("compute the schedule"));
+        assert!(r["report"]["milestones"][0]["date"].is_null());
+
+        // Computing the schedule stores its setup (one undoable step, a no-op the second time).
+        let rates = all_rates(&mut app);
+        let args = schedule_args(rates);
+        let s = app.handle("schedule", &args).unwrap();
+        assert_eq!(s["ok"], true);
+        let pour = s["tasks"].as_array().unwrap().iter().find(|t| t["key"] == "footing_pour").unwrap();
+        let stored = app.handle("exec", &json!({})).unwrap();
+        assert_eq!(stored["inputs"]["schedule"]["start"], "2026-11-15");
+        let steps = app.doc.as_ref().unwrap().undo_label().map(str::to_string);
+        app.handle("schedule", &args).unwrap();
+        assert_eq!(app.doc.as_ref().unwrap().undo_label().map(str::to_string), steps, "an unchanged setup commits nothing");
+
+        // The payment milestone now carries the schedule's own date.
+        let r = app.handle("payment", &json!({})).unwrap();
+        assert_eq!(r["schedule_ready"], true);
+        assert_eq!(r["report"]["milestones"][0]["date"], pour["finish"]);
+        assert_eq!(r["report"]["status"], "balanced");
+        // A refused schedule input is not stored.
+        assert!(app.handle("schedule", &json!({ "rates": {}, "start": "nope", "workdays": [true, true, true, true, true, true, true] })).is_err());
+        assert_eq!(app.handle("exec", &json!({})).unwrap()["inputs"]["schedule"]["start"], "2026-11-15");
+    }
+
+    #[test]
+    fn cost_tiers_procurement_qaqc_roi_and_the_tender_pack_are_stored_undoable_and_exported() {
+        let mut app = complete_app();
+        let rates = all_rates(&mut app);
+        app.handle("schedule", &schedule_args(rates)).unwrap();
+
+        // Cost tiers: a rate needs its source; the tier total follows the model's areas.
+        let bad = json!({ "cost": { "selected": "shell_with_materials", "lines": [{ "tier": "shell_with_materials", "phase": "Substructure", "basis": { "kind": "gross_area" }, "rate": 100.0, "source": "" }] } });
+        assert!(app.handle("cost_set", &bad).is_err());
+        let cost = json!({ "cost": { "selected": "shell_with_materials", "currency": "SAR", "lines": [
+            { "tier": "shell_with_materials", "phase": "Substructure", "basis": { "kind": "gross_area" }, "rate": 100.0, "source": "synthetic" },
+            { "tier": "shell_with_materials", "phase": "Superstructure", "basis": { "kind": "lump" }, "rate": 5000.0, "source": "synthetic" } ] } });
+        let r = app.handle("cost_set", &cost).unwrap();
+        assert_eq!(r["changed"], true);
+        let tier = &r["report"]["tiers"][0];
+        assert_eq!(tier["id"], "shell_with_materials");
+        assert_eq!(tier["complete"], true);
+        let gross = r["report"]["gross_area_m2"].as_f64().unwrap();
+        assert!((tier["total"].as_f64().unwrap() - (gross * 100.0 + 5000.0)).abs() < 0.01);
+        assert_eq!(app.handle("cost_set", &cost).unwrap()["changed"], false);
+
+        // Procurement: order date from the stored schedule; a missing lead time stays undated.
+        let proc = json!({ "procurement": { "asOf": "2026-11-20", "items": [
+            { "id": "win", "name": "Windows", "category": "windows", "neededFor": { "kind": "task", "key": "doors_windows" }, "neededAt": "start", "leadDays": 60, "bufferDays": 7, "source": "synthetic quotation" },
+            { "id": "hv", "name": "HVAC units", "category": "hvac", "neededFor": { "kind": "task", "key": "duct_runs" }, "neededAt": "start" } ] } });
+        let r = app.handle("procure_set", &proc).unwrap();
+        assert_eq!(r["schedule_ready"], true);
+        let items = r["report"]["items"].as_array().unwrap();
+        let win = items.iter().find(|i| i["id"] == "win").unwrap();
+        assert!(win["order_by"].is_string() && win["needed_on"].is_string());
+        assert_eq!(items.iter().find(|i| i["id"] == "hv").unwrap()["status"], "unknown");
+        assert!(r["csv"].as_str().unwrap().contains("Windows"));
+
+        // QA/QC: stored per check, exported as a printable report and a workbook.
+        let qa = json!({ "qaqc": { "records": [{ "item": "excavation.setout", "status": "pass", "by": "Eng. Test", "date": "2026-11-20" }], "customItems": [] }, "lang": "en" });
+        let r = app.handle("qaqc_set", &qa).unwrap();
+        let ex = r["report"]["stages"].as_array().unwrap().iter().find(|s| s["id"] == "excavation").unwrap();
+        assert_eq!(ex["state"], "in_progress");
+        assert!(ex["due"].is_string(), "the excavation stage is due before the footing formwork");
+        assert!(r["html"].as_str().unwrap().contains("Eng. Test") && !r["xlsx_b64"].as_str().unwrap().is_empty());
+        assert!(app.handle("qaqc_set", &json!({ "qaqc": { "records": [{ "item": "excavation.setout", "status": "pass" }] } })).is_err());
+
+        // Apartment ROI: off for a villa unless enabled; with entered figures the yield follows.
+        let off = app.handle("roi", &json!({})).unwrap();
+        assert_eq!(off["report"]["active"], false);
+        let roi = json!({ "roi": { "enabled": true, "unitTypes": [{ "name": "2BR", "count": 4, "annualRent": 40000.0, "rentSource": "synthetic" }], "capexBasis": "manual", "capexManual": 1600000.0, "capexManualSource": "synthetic" } });
+        let r = app.handle("roi_set", &roi).unwrap();
+        assert_eq!(r["report"]["total_units"], 4);
+        assert!((r["report"]["gross_yield_pct"].as_f64().unwrap() - 10.0).abs() < 1e-9);
+        assert!((r["report"]["payback_years"].as_f64().unwrap() - 10.0).abs() < 1e-9);
+
+        // Tender pack: PDF html and XLSX, with the tier, the gaps and no invented price.
+        let t = json!({ "tender": { "scope": "Synthetic scope", "notes": [{ "title": "General", "text": "Synthetic condition" }], "bidDeadline": "2026-12-31" }, "lang": "en" });
+        let r = app.handle("tender_set", &t).unwrap();
+        let html = r["html"].as_str().unwrap();
+        assert!(html.contains("Synthetic scope") && html.contains("Synthetic condition") && html.contains("PARTIAL") && html.contains("Shell with materials"));
+        assert!(r["pack"]["missing"].as_array().unwrap().iter().any(|m| m.as_str().unwrap().starts_with("rate of ")));
+        assert!(!r["xlsx_b64"].as_str().unwrap().is_empty());
+        assert!(app.handle("tender_set", &json!({ "tender": { "bidDeadline": "soon" } })).is_err());
+
+        // Everything is one undo step per edit, in reverse order, and the file model carries it.
+        assert_eq!(app.handle("exec", &json!({})).unwrap()["inputs"]["tender"]["scope"], "Synthetic scope");
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.handle("exec", &json!({})).unwrap()["inputs"]["tender"]["scope"].is_null());
+        assert_eq!(app.handle("exec", &json!({})).unwrap()["inputs"]["roi"]["unitTypes"].as_array().unwrap().len(), 1);
+        assert!(App::default().handle("exec", &json!({})).is_err() && App::default().handle("cost", &json!({})).is_err() && App::default().handle("tender", &json!({})).is_err());
+    }
+}
