@@ -106,6 +106,7 @@ header{position:relative;z-index:20}
 .olk-Site{background:#1f5fae}.olk-Level{background:#6a4bb8}.olk-Spaces,.olk-Space{background:#2e9b6b}.olk-Structural,.olk-Column,.olk-Beam,.olk-Slab,.olk-Footing,.olk-TieBeam{background:#b6501a}.olk-MEP,.olk-MepRun,.olk-MepPoint{background:#16a0a6}.olk-Execution,.olk-Schedule,.olk-Phase,.olk-Task{background:#c7a100}
 .oll{overflow:hidden;text-overflow:ellipsis}.olc{font-size:10px;color:var(--mute);background:var(--bg);border-radius:8px;padding:0 6px}
 .olg{padding:0 6px;margin-inline-start:auto;border:0;background:transparent;color:var(--accent)}
+#sk-stage{flex:1;overflow:auto;background:#fff;min-width:0}#sk-stage #sk-wrap{max-height:none!important;border:0!important;height:100%}
 #viewer{flex:1;overflow:auto;padding:8px;background:#fff;display:flex;justify-content:center;align-items:flex-start}
 #viewer svg{width:100%;max-width:820px;height:auto;flex:0 0 auto}
 #viewer svg .wall.int,#viewer svg .door,#viewer svg .window,#viewer svg .room{cursor:pointer}
@@ -336,6 +337,7 @@ main.hl{grid-template-columns:1fr 420px}main.hr{grid-template-columns:400px 1fr}
     <div id="dr-opts"></div>
     <div id="dr-hint"></div>
     <div id="viewer"><div class="empty" data-i="viewer_empty"></div></div>
+    <div id="sk-stage" style="display:none"></div>
     <div id="v3">
 
       <canvas id="gl"></canvas>
@@ -639,6 +641,13 @@ const structInputs = () => ({ dead_kpa: num("dead"), live_kpa: num("live"), bear
 
 // ---------------------------------------------------------------- draft sketch (image / PDF) to trace over
 const SK = { base: null, ppm: null, tool: null, pts: [], marks: [], zoom: 1, pdf: null, page: 1, name: "" };
+// The sketch is worked on in the big central area (where the plan is drawn), not in the narrow side panel: its canvas is
+// moved into #sk-stage while the Draft sketch tab is open and a sketch is loaded, and back into the panel otherwise.
+function skStage(on) {
+  const show = on && !!SK.base && $("p-sketch").classList.contains("on"), w = $("sk-wrap");
+  if (show) { $("sk-stage").appendChild(w); } else { $("p-sketch").appendChild(w); }
+  $("sk-stage").style.display = show ? "" : "none"; $("viewer").style.display = show ? "none" : "";
+}
 const b64bytes = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
 const skMsg = (k, o = {}) => { let m = t(k); for (const [a, v] of Object.entries(o)) m = m.replace("{" + a + "}", v); $("sk-status").textContent = m; };
 $("sk-func").innerHTML = FUNCS.map(f => `<option value="${f}">${t("func")[f]}</option>`).join("");
@@ -659,7 +668,7 @@ function skDraw() {
 }
 function skSetBase(canvas, name) {
   SK.base = canvas; SK.ppm = null; SK.marks = []; SK.pts = []; SK.tool = null; SK.name = name;
-  $("sk-tools").style.display = ""; $("sk-clear").disabled = false; skDraw(); skMsg("sk_loaded", { name });
+  $("sk-tools").style.display = ""; $("sk-clear").disabled = false; skStage(true); skDraw(); skMsg("sk_loaded", { name });
 }
 async function skLoadImage(p) {
   const url = URL.createObjectURL(new Blob([b64bytes(p.b64)], { type: p.mime }));
@@ -689,7 +698,7 @@ async function skLoadPdf(p) {
 $("sk-import").onclick = () => busy(async () => { const r = (await call("pick_sketch")).picked; if (!r) return; if (r.kind === "pdf") await skLoadPdf(r); else await skLoadImage(r); });
 $("sk-prev").onclick = () => busy(() => SK.page > 1 ? skShowPage(SK.page - 1) : 0);
 $("sk-next").onclick = () => busy(() => SK.pdf && SK.page < SK.pdf.numPages ? skShowPage(SK.page + 1) : 0);
-$("sk-clear").onclick = () => { SK.base = null; SK.ppm = null; SK.marks = []; SK.pts = []; SK.pdf = null; SK.tool = null; $("sk-tools").style.display = "none"; $("sk-pager").style.display = "none"; $("sk-clear").disabled = true; $("sk-status").textContent = ""; skDraw(); };
+$("sk-clear").onclick = () => { skStage(false); SK.base = null; SK.ppm = null; SK.marks = []; SK.pts = []; SK.pdf = null; SK.tool = null; $("sk-tools").style.display = "none"; $("sk-pager").style.display = "none"; $("sk-clear").disabled = true; $("sk-status").textContent = ""; skDraw(); };
 $("sk-reset").onclick = () => { SK.marks = []; SK.pts = []; SK.tool = null; skDraw(); };
 $("sk-zin").onclick = () => { SK.zoom = Math.min(5, SK.zoom * 1.25); skDraw(); };
 $("sk-zout").onclick = () => { SK.zoom = Math.max(0.2, SK.zoom / 1.25); skDraw(); };
@@ -746,6 +755,7 @@ $("generate").onclick = () => busy(async () => {
   state.alts = res.alternatives; state.sel = -1; state.qto = null; state.sched = null; state.rooms_out = null; state.notes = null;
   renderAlts(); $("viewer").innerHTML = `<div class="empty">${t("alts_empty")}</div>`; setPlanButtons(false);
   await choose(0);
+  skStage(false);
 });
 function renderAlts() {
   $("alts").innerHTML = state.alts.map((a, i) => `<div class="alt ${i === state.sel ? "sel" : ""}" data-n="${i}" title="${t("cost")} ${a.cost}">${i === 0 ? `<span class="tag">${a.from_sketch ? t("sk_alt") : t("cheapest")}</span>` : (i === 1 && state.alts[0].from_sketch ? `<span class="tag">${t("cheapest")}</span>` : "")}${a.svg}</div>`).join("");
@@ -793,6 +803,7 @@ $("lang").onclick = () => { lang = lang === "ar" ? "en" : "ar"; applyLang(); };
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === b));
   document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "p-" + b.dataset.tab));
+  skStage(true);
 });
 
 // ---------------------------------------------------------------- notes and quantities
