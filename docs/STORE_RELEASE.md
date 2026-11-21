@@ -31,8 +31,10 @@ Status of the packaging work and what only the publisher can do. Sources were re
 
 ## Known risks to settle before submitting
 - **WebView2 runtime.** Windows 11 includes it; "a small number" of Windows 10 devices do not (WebView2 distribution page,
-  updated 2026-10-02). The page gives no Store-specific advice. If the runtime is absent the app cannot start. What the
-  app shows in that case is **not tested**: test on a Windows 10 machine without the runtime, or add a clear message.
+  updated 2026-10-02). Found by simulation on 2026-11-21 (`WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` pointing at an empty
+  folder, Windows 11): the app used to panic with exit code 101 and no message. It now shows an English/Arabic dialog
+  naming the runtime and its download page, then exits. **Not tested** on a real Windows 10 machine without the runtime
+  (no VM available here: Windows 11 Home has no Sandbox or Hyper-V), nor from the installed MSIX package.
 - **Minimum Windows.** The manifest says 10.0.19041.0 (first build that accepts `uap10:RuntimeBehavior`, per the manual
   conversion page, updated 2026-04-15). No older or other Windows build was tested; the app was run on Windows 11 only.
 - **Logo files.** The Learn page for logo sizes returned 404, so the sizes used (44, 150, 50, 310x150) are the commonly

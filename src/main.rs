@@ -277,6 +277,25 @@ fn print_to_pdf(_: &WebView, _: &Path, _: (f64, f64), done: impl FnOnce(Result<(
     Ok(())
 }
 
+/// The interface needs the Microsoft Edge WebView2 runtime; without it the window cannot be built. Tell the user what to
+/// install instead of closing with no message (a GUI app has no console to print a panic to).
+fn webview_missing(detail: &str) {
+    rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title("NanoArch")
+        .set_description(format!(
+            "NanoArch needs the Microsoft Edge WebView2 Runtime, which was not found on this computer.
+             Install it from https://developer.microsoft.com/microsoft-edge/webview2/ then start NanoArch again.
+
+             يحتاج NanoArch إلى مكوّن Microsoft Edge WebView2 Runtime ولم يُعثر عليه على هذا الجهاز.
+             ثبّته من https://developer.microsoft.com/microsoft-edge/webview2/ ثم شغّل البرنامج مرة أخرى.
+
+{detail}"
+        ))
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
+}
+
 fn main() {
     let event_loop = EventLoopBuilder::<Ui>::with_user_event().build();
     let proxy = event_loop.create_proxy();
@@ -304,8 +323,14 @@ fn main() {
                 }
             });
         })
-        .build(&window)
-        .expect("webview (is the WebView2 runtime installed?)");
+        .build(&window);
+    let webview = match webview {
+        Ok(w) => w,
+        Err(e) => {
+            webview_missing(&e.to_string());
+            return;
+        }
+    };
 
     let mut printers: Vec<Option<Printer>> = Vec::new();
     event_loop.run(move |event, target, flow| {
