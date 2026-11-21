@@ -640,7 +640,7 @@ const structInputs = () => ({ dead_kpa: num("dead"), live_kpa: num("live"), bear
 
 
 // ---------------------------------------------------------------- draft sketch (image / PDF) to trace over
-const SK = { base: null, ppm: null, tool: null, pts: [], marks: [], zoom: 1, pdf: null, page: 1, name: "" };
+const SK = { keep: {}, base: null, ppm: null, tool: null, pts: [], marks: [], zoom: 1, pdf: null, page: 1, name: "" };
 // The sketch is worked on in the big central area (where the plan is drawn), not in the narrow side panel: its canvas is
 // moved into #sk-stage while the Draft sketch tab is open and a sketch is loaded, and back into the panel otherwise.
 function skStage(on) {
@@ -667,6 +667,7 @@ function skDraw() {
   cv.style.width = (SK.zoom * 100) + "%";
 }
 function skSetBase(canvas, name) {
+  SK.keep = { ...SK.keep, ...(skPlacementNow() || {}) };
   SK.base = canvas; SK.ppm = null; SK.marks = []; SK.pts = []; SK.tool = null; SK.name = name;
   $("sk-tools").style.display = ""; $("sk-clear").disabled = false; skStage(true); skDraw(); skMsg("sk_loaded", { name });
 }
@@ -698,8 +699,8 @@ async function skLoadPdf(p) {
 $("sk-import").onclick = () => busy(async () => { const r = (await call("pick_sketch")).picked; if (!r) return; if (r.kind === "pdf") await skLoadPdf(r); else await skLoadImage(r); });
 $("sk-prev").onclick = () => busy(() => SK.page > 1 ? skShowPage(SK.page - 1) : 0);
 $("sk-next").onclick = () => busy(() => SK.pdf && SK.page < SK.pdf.numPages ? skShowPage(SK.page + 1) : 0);
-$("sk-clear").onclick = () => { skStage(false); SK.base = null; SK.ppm = null; SK.marks = []; SK.pts = []; SK.pdf = null; SK.tool = null; $("sk-tools").style.display = "none"; $("sk-pager").style.display = "none"; $("sk-clear").disabled = true; $("sk-status").textContent = ""; skDraw(); };
-$("sk-reset").onclick = () => { SK.marks = []; SK.pts = []; SK.tool = null; skDraw(); };
+$("sk-clear").onclick = () => { skStage(false); SK.keep = {}; SK.base = null; SK.ppm = null; SK.marks = []; SK.pts = []; SK.pdf = null; SK.tool = null; $("sk-tools").style.display = "none"; $("sk-pager").style.display = "none"; $("sk-clear").disabled = true; $("sk-status").textContent = ""; skDraw(); };
+$("sk-reset").onclick = () => { SK.keep = {}; SK.marks = []; SK.pts = []; SK.tool = null; skDraw(); };
 $("sk-zin").onclick = () => { SK.zoom = Math.min(5, SK.zoom * 1.25); skDraw(); };
 $("sk-zout").onclick = () => { SK.zoom = Math.max(0.2, SK.zoom / 1.25); skDraw(); };
 function skTool(tool) {
@@ -711,7 +712,14 @@ $("sk-t-scale").onclick = () => skTool("scale"); $("sk-t-plot").onclick = () => 
 
 // Rooms marked on the sketch, in the frame the engine uses: millimetres, origin at the south-west corner of the
 // buildable area (plot minus setbacks), y up. The top of the image is north and the front setback is the south side.
+// Every sketch of a set (ground floor, first floor, roof) is drawn on the same plot, so rooms marked on an earlier sketch are
+// kept in these millimetre coordinates when the next sketch is imported; only a room marked again replaces its entry.
 function skPlacement() {
+  const cur = skPlacementNow(), out = {};
+  for (const [k, v] of Object.entries({ ...SK.keep, ...(cur || {}) })) if (state.rooms.some(r => r.key === k)) out[k] = v;
+  return Object.keys(out).length ? out : null;
+}
+function skPlacementNow() {
   const plot = SK.marks.find(m => m.kind === "plot");
   if (!SK.base || !SK.ppm || !plot || $("sk-swap").checked) return null;
   const mm = v => v / SK.ppm * 1000, left = Math.min(plot.a.x, plot.b.x), bottom = Math.max(plot.a.y, plot.b.y);

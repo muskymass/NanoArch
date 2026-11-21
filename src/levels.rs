@@ -268,6 +268,109 @@ pub fn generate_building_locked(plan: &BuildingPlan, seed: u64, locked: &BTreeMa
     Ok((0..count).map(|k| Building { levels: per_level.iter().map(|v| v[k.min(v.len() - 1)].clone()).collect() }).collect())
 }
 
+/// Edges of two marked rooms closer than this (a wall's thickness, however the user measured it) are taken to be one shared wall.
+pub const SNAP_MM: i64 = 500;
+
+/// Marked rectangles are only as exact as the clicks that made them, and a user marks the inside of each room, so two
+/// neighbours end up a wall apart (or a hair overlapping). Left like that the engine would give every room its own outer
+/// walls and no door could join them. Facing edges of rooms that share at least 0.5 m of side, and edges lying within
+/// `tol` of the buildable envelope, are therefore moved onto one line (the midpoint for two rooms, the envelope edge for
+/// the envelope). Edges farther apart than `tol` are left exactly as marked: a real gap stays a gap.
+pub fn snap_rects(r: &mut [layout::Rect], env: &layout::Rect, tol: i64) {
+    // Every edge is a node; edges that face each other within `tol` (and share a side of at least 0.5 m) are united.
+    // Each group then takes ONE value, applied to all its members at once, so nothing is moved twice.
+    // x nodes: left of room i = 2i, right = 2i + 1; the envelope's left and right follow them. y nodes likewise.
+    fn find(p: &mut [usize], mut a: usize) -> usize {
+        while p[a] != a {
+            p[a] = p[p[a]];
+            a = p[a];
+        }
+        a
+    }
+    fn union(p: &mut [usize], a: usize, b: usize) {
+        let (a, b) = (find(p, a), find(p, b));
+        if a != b {
+            p[b] = a;
+        }
+    }
+    let n = r.len();
+    let min_shared = 500;
+    let mut px: Vec<usize> = (0..2 * n + 2).collect();
+    let mut py: Vec<usize> = (0..2 * n + 2).collect();
+    let (env_l, env_r) = (2 * n, 2 * n + 1);
+    let xv = |i: usize, node: usize| if node == 2 * i { r[i].x } else { r[i].x + r[i].w };
+    let yv = |i: usize, node: usize| if node == 2 * i { r[i].y } else { r[i].y + r[i].h };
+    for i in 0..n {
+        for j in 0..n {
+            if i == j {
+                continue;
+            }
+            let (a, b) = (r[i], r[j]);
+            if (a.y + a.h).min(b.y + b.h) - a.y.max(b.y) >= min_shared && (a.x + a.w - b.x).abs() <= tol {
+                union(&mut px, 2 * i + 1, 2 * j);
+            }
+            if (a.x + a.w).min(b.x + b.w) - a.x.max(b.x) >= min_shared && (a.y + a.h - b.y).abs() <= tol {
+                union(&mut py, 2 * i + 1, 2 * j);
+            }
+        }
+        if (r[i].x - env.x).abs() <= tol {
+            union(&mut px, 2 * i, env_l);
+        }
+        if (r[i].x + r[i].w - (env.x + env.w)).abs() <= tol {
+            union(&mut px, 2 * i + 1, env_r);
+        }
+        if (r[i].y - env.y).abs() <= tol {
+            union(&mut py, 2 * i, env_l);
+        }
+        if (r[i].y + r[i].h - (env.y + env.h)).abs() <= tol {
+            union(&mut py, 2 * i + 1, env_r);
+        }
+    }
+    // The value of a group: the envelope's own coordinate when it holds an envelope edge, else the mean of its edges.
+    let group_values = |p: &mut Vec<usize>, val: &dyn Fn(usize) -> i64, lo: i64, hi: i64| -> Vec<i64> {
+        let total = p.len();
+        let mut sum = vec![0i64; total];
+        let mut cnt = vec![0i64; total];
+        for node in 0..2 * n {
+            let g = find(p, node);
+            sum[g] += val(node);
+            cnt[g] += 1;
+        }
+        let (gl, gr) = (find(p, env_l), find(p, env_r));
+        (0..total).map(|node| {
+            let g = find(p, node);
+            if g == gl && g != gr { lo } else if g == gr && g != gl { hi } else if cnt[g] > 0 { (((sum[g] as f64 / cnt[g] as f64) / 10.0).round() as i64) * 10 } else { 0 }
+        }).collect()
+    };
+    let xs = group_values(&mut px, &|node| xv(node / 2, node), env.x, env.x + env.w);
+    let ys = group_values(&mut py, &|node| yv(node / 2, node), env.y, env.y + env.h);
+    let marked: Vec<layout::Rect> = r.to_vec();
+    for (i, q) in r.iter_mut().enumerate() {
+        let (l, rt, b, t) = (xs[2 * i], xs[2 * i + 1], ys[2 * i], ys[2 * i + 1]);
+        // A group so large that a room would collapse leaves that room as it was marked.
+        if rt - l >= 100 && t - b >= 100 {
+            *q = layout::Rect { x: l, y: b, w: rt - l, h: t - b };
+        }
+    }
+    // Snapping must never turn a valid marking into an overlap: two rooms that overlap afterwards go back to what the user marked.
+    let overlap = |a: &layout::Rect, b: &layout::Rect| a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    for _ in 0..n {
+        let mut reverted = false;
+        for i in 0..n {
+            for j in i + 1..n {
+                if overlap(&r[i], &r[j]) && !overlap(&marked[i], &marked[j]) && (r[i] != marked[i] || r[j] != marked[j]) {
+                    r[i] = marked[i];
+                    r[j] = marked[j];
+                    reverted = true;
+                }
+            }
+        }
+        if !reverted {
+            break;
+        }
+    }
+}
+
 /// A building whose levels follow rooms the user marked on a sketch. `placement` maps a room key to its rectangle
 /// `{x, y, w, h}` in millimetres, in the buildable envelope's own frame (origin at its south-west corner, y up).
 /// A level is taken from the sketch only when every one of its rooms is marked; the other levels come from `other`.
@@ -290,8 +393,10 @@ pub fn placed_building(plan: &BuildingPlan, placement: &serde_json::Value, other
             continue;
         }
         let env = lp.brief.envelope;
+        let mut marked: Vec<layout::Rect> = rects.into_iter().flatten().collect();
+        snap_rects(&mut marked, &env, SNAP_MM);
         let mut rooms: Vec<layout::PlacedRoom> = Vec::new();
-        for (req, rect) in lp.brief.rooms.iter().zip(rects.into_iter().flatten()) {
+        for (req, rect) in lp.brief.rooms.iter().zip(marked) {
             if rect.w < 500 || rect.h < 500 {
                 return Err(format!("room '{}' marked on the sketch is smaller than 0.5 m in one side", req.key));
             }
@@ -468,4 +573,67 @@ pub fn assemble(b: &Building, plan: &BuildingPlan, base: &StructOpts, project: O
     let mut doc = Document::default();
     doc.commit("generate house", Origin::Generator, all).map_err(|e| e.to_string())?;
     Ok((doc, warnings))
+}
+
+#[cfg(test)]
+mod snap_tests {
+    use super::*;
+    fn r(x: i64, y: i64, w: i64, h: i64) -> layout::Rect {
+        layout::Rect { x, y, w, h }
+    }
+    #[test]
+    fn neighbours_a_wall_apart_share_one_edge() {
+        let env = r(0, 0, 14000, 12000);
+        let mut v = vec![r(0, 0, 4800, 4000), r(5120, 0, 4000, 4000), r(0, 4300, 4800, 3000)];
+        snap_rects(&mut v, &env, SNAP_MM);
+        assert_eq!(v[0].x + v[0].w, v[1].x, "left and right rooms meet on one line");
+        assert_eq!(v[0].y + v[0].h, v[2].y, "the room above meets the one below");
+    }
+    #[test]
+    fn a_real_gap_is_left_alone() {
+        let env = r(0, 0, 14000, 12000);
+        let mut v = vec![r(0, 0, 4000, 4000), r(6000, 0, 4000, 4000)];
+        let before = v.clone();
+        snap_rects(&mut v, &env, SNAP_MM);
+        assert_eq!(v, before, "a 2 m gap is not a wall");
+    }
+    #[test]
+    fn rooms_that_only_touch_at_a_corner_are_not_joined() {
+        let env = r(0, 0, 14000, 12000);
+        let mut v = vec![r(1000, 1000, 3000, 3000), r(4200, 4200, 3000, 3000)];
+        let before = v.clone();
+        snap_rects(&mut v, &env, SNAP_MM);
+        assert_eq!(v, before, "no shared side of 0.5 m, no snap");
+    }
+    #[test]
+    fn a_chain_of_near_edges_never_ends_in_an_overlap() {
+        // Rooms of a real ground floor, marked by hand: a study, a wardrobe, a bathroom, a master bedroom and a sitting room,
+        // each a different small distance from its neighbours.
+        let env = r(0, 0, 40000, 30000);
+        let mut v = vec![
+            r(20694, 23056, 5556, 3889),
+            r(26614, 22270, 3356, 1816),
+            r(26614, 24245, 3356, 2488),
+            r(30168, 22270, 6634, 4462),
+            r(31629, 17730, 5173, 4383),
+            r(26614, 17750, 3356, 4350),
+        ];
+        snap_rects(&mut v, &env, SNAP_MM);
+        for i in 0..v.len() {
+            for j in i + 1..v.len() {
+                let (a, b) = (v[i], v[j]);
+                assert!(!(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h), "rooms {i} and {j} overlap: {a:?} {b:?}");
+            }
+        }
+        assert_eq!(v[1].x + v[1].w, v[3].x, "the wardrobe and the master bedroom share one wall");
+        assert_eq!(v[1].y + v[1].h, v[2].y, "the wardrobe and the bathroom share one wall");
+    }
+    #[test]
+    fn edges_near_the_envelope_move_onto_it() {
+        let env = r(0, 0, 10000, 8000);
+        let mut v = vec![r(150, 200, 4000, 3000), r(5000, 4000, 4850, 3900)];
+        snap_rects(&mut v, &env, SNAP_MM);
+        assert_eq!((v[0].x, v[0].y), (0, 0));
+        assert_eq!((v[1].x + v[1].w, v[1].y + v[1].h), (10000, 8000));
+    }
 }
