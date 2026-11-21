@@ -1,3 +1,6 @@
 target/
 dist/*.exe
 *.nnx
+dist/*.msix
+dist/msix-stage/
+dist/msix-check/
