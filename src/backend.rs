@@ -5003,7 +5003,11 @@ mod tests {
         assert!(!reopened.is_dirty() && opened["warnings"].as_array().unwrap().is_empty(), "{}", opened["warnings"]);
         let again = reopened.handle("level", &json!({ "index": 1 })).unwrap();
         assert_eq!(names(&again)[&part_key], format!("{parent_name}-2"));
-        assert_eq!(reopened.handle("export_ifc", &json!({})).unwrap()["ifc"], ifc["ifc"], "the reopened project gives the same IFC");
+        // The IFC header's FILE_NAME line carries the export time (to the second): two exports a second apart differ only there.
+        let without_export_time = |v: &Value| v["ifc"].as_str().unwrap().lines().filter(|l| !l.starts_with("FILE_NAME(")).collect::<Vec<_>>().join("\n");
+        let reopened_ifc = reopened.handle("export_ifc", &json!({})).unwrap();
+        assert!(ifc["ifc"].as_str().unwrap().contains("FILE_NAME(") && reopened_ifc["ifc"].as_str().unwrap().contains("FILE_NAME("), "the header line exists, so the comparison below drops something real");
+        assert_eq!(without_export_time(&reopened_ifc), without_export_time(&ifc), "the reopened project gives the same IFC");
         let dxf2 = reopened.handle("export_dxf", &json!({})).unwrap();
         assert_eq!(dxf2["counts"], dxf["counts"]);
         assert_eq!(dxf2["dxf"], dxf["dxf"], "and the same DXF");
