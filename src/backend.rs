@@ -3130,6 +3130,31 @@ mod tests {
     }
 
     #[test]
+    fn the_wall_height_the_user_gives_is_the_storey_height_of_every_level() {
+        let built = |brief: Value| -> App {
+            let mut app = App::default();
+            app.handle("generate", &json!({ "brief": brief, "struct": loads2(), "placement": sketch2(json!({ "x": 3000, "y": 0 })) })).unwrap();
+            app.handle("select", &json!({ "index": 0, "struct": loads2() })).unwrap();
+            app
+        };
+        let heights = |app: &App| -> std::collections::BTreeSet<i64> { ["Wall"].iter().flat_map(|k| (0..2).flat_map(move |l| of_level(app, l, k))).filter_map(|w| w.props["height"].as_i64()).collect() };
+        let default = built(brief2());
+        assert_eq!(heights(&default), std::collections::BTreeSet::from([3000]), "the engine's default without the field");
+        let mut b = brief2();
+        b["wall_height_mm"] = json!(3600);
+        let app = built(b);
+        assert_eq!(heights(&app), std::collections::BTreeSet::from([3600]), "every wall on both levels takes the given height");
+        // The upper level stands one storey (plus its slab) higher.
+        let z1 = |a: &App| nnx_core::model3d::build(&a.doc.as_ref().unwrap().model).levels.iter().find(|l| l.index == 1).map(|l| l.z0).unwrap();
+        assert!((z1(&app) - z1(&default) - 0.6).abs() < 1e-6, "{} vs {}", z1(&app), z1(&default));
+        // A height that is not positive is refused, not replaced by the default.
+        let mut bad = brief2();
+        bad["wall_height_mm"] = json!(0);
+        let err = App::default().handle("generate", &json!({ "brief": bad, "struct": loads2(), "placement": sketch2(json!({ "x": 3000, "y": 0 })) })).unwrap_err();
+        assert!(err.contains("wall height") && err.contains("positive"), "{err}");
+    }
+
+    #[test]
     fn construction_phases_are_set_on_rooms_walls_and_openings_and_split_the_quantities() {
         let mut app = generated_from(sketch2(json!({ "x": 3000, "y": 0 })));
         let wall_len = |app: &App, phase: &str| -> f64 { of_level(app, 0, "Wall").iter().filter(|w| w.props.get("phase").and_then(Value::as_str) == Some(phase)).map(|w| w.props["length"].as_f64().unwrap()).sum() };

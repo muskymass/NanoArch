@@ -20,6 +20,7 @@ fn brief() -> BriefIn {
         stair: None,
         wall_exterior_mm: None,
         wall_interior_mm: None,
+        wall_height_mm: None,
     }
 }
 

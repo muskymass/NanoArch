@@ -57,7 +57,16 @@ pub fn apply_wall_mm(wo: &mut walls::WallOpts, wall_mm: Option<(i64, i64)>) {
     }
 }
 
+pub fn apply_wall_height(wo: &mut walls::WallOpts, height_mm: Option<i64>) {
+    if let Some(h) = height_mm {
+        wo.height_mm = h;
+    }
+}
+
 pub fn plan_building(b: &BriefIn, n: u32) -> Result<BuildingPlan, String> {
+    if let Some(h) = b.wall_height_mm.filter(|h| *h <= 0) {
+        return Err(format!("wall height (storey height) must be positive, not {h} mm"));
+    }
     let n = n.max(1) as usize;
     let (envelope, entry) = envelope_and_entry(b)?;
     if let Some(r) = b.rooms.iter().find(|r| r.floor.unwrap_or(1) == 0 || r.floor.unwrap_or(1) as usize > n) {
@@ -127,7 +136,7 @@ pub fn plan_building(b: &BriefIn, n: u32) -> Result<BuildingPlan, String> {
                 labels.insert(pr.key.clone(), name.into());
             }
         }
-        levels.push(LevelPlan { brief: Brief { envelope: main_env, rooms: reqs, adjacency, entry, entry_at: None, wall_mm: wall_mm_of(b) }, block });
+        levels.push(LevelPlan { brief: Brief { envelope: main_env, rooms: reqs, adjacency, entry, entry_at: None, wall_mm: wall_mm_of(b), wall_height_mm: b.wall_height_mm }, block });
     }
     labels.insert("reserve".into(), "Hall".into());
     for l in 1..n {
@@ -140,7 +149,7 @@ pub fn plan_building(b: &BriefIn, n: u32) -> Result<BuildingPlan, String> {
             labels.insert(format!("reserve{i}@{l}"), "Hall".into());
         }
     }
-    Ok(BuildingPlan { levels, merged: Brief { envelope, rooms: merged_rooms, adjacency: merged_adj, entry, entry_at: None, wall_mm: wall_mm_of(b) }, labels, notes })
+    Ok(BuildingPlan { levels, merged: Brief { envelope, rooms: merged_rooms, adjacency: merged_adj, entry, entry_at: None, wall_mm: wall_mm_of(b), wall_height_mm: b.wall_height_mm }, labels, notes })
 }
 
 /// One level with some rooms locked at exact rectangles (the envelope's frame, millimetres). The locked rooms are kept as they
@@ -229,7 +238,7 @@ fn generate_level(lp: &LevelPlan, level: usize, seed: u64, locked: &BTreeMap<Str
             continue;
         }
         let names: std::collections::BTreeSet<&str> = rooms.iter().map(|q| q.key.as_str()).collect();
-        let sub = Brief { envelope: *region, rooms: rooms.iter().map(|q| (*q).clone()).collect(), adjacency: lp.brief.adjacency.iter().filter(|a| names.contains(a.a.as_str()) && names.contains(a.b.as_str())).cloned().collect(), entry: lp.brief.entry, entry_at: None, wall_mm: lp.brief.wall_mm };
+        let sub = Brief { envelope: *region, rooms: rooms.iter().map(|q| (*q).clone()).collect(), adjacency: lp.brief.adjacency.iter().filter(|a| names.contains(a.a.as_str()) && names.contains(a.b.as_str())).cloned().collect(), entry: lp.brief.entry, entry_at: None, wall_mm: lp.brief.wall_mm, wall_height_mm: lp.brief.wall_height_mm };
         let mut ls = layout::generate(&sub, &Options { seed: seed.wrapping_add(idx as u64 * 977), ..Options::default() }).map_err(|e| format!("the space left by the locked rooms ({:.1} m2): {e}", region.area_m2()))?;
         // Circulation filler rooms of the second and later pieces get their own keys.
         if idx > 0 {
@@ -616,6 +625,7 @@ pub fn assemble(b: &Building, plan: &BuildingPlan, base: &StructOpts, project: O
         wo.entry = l == 0;
         wo.entry_at = plan.merged.entry_at;
         apply_wall_mm(&mut wo, plan.merged.wall_mm);
+        apply_wall_height(&mut wo, plan.merged.wall_height_mm);
         let wplan = walls::build(layout, plan.merged.envelope, plan.merged.entry, &wo);
         let wp = walls::place_windows(layout, &wplan, &wo, &WindowOpts { target_ratio: nnx_core::sbc::daylight_targets(), ..WindowOpts::default() });
         let space_cmds = layout::to_commands(layout, lid);

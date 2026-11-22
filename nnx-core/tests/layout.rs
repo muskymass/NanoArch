@@ -33,6 +33,7 @@ fn villa() -> Brief {
         entry: Side::South,
         entry_at: None,
         wall_mm: None,
+        wall_height_mm: None,
     }
 }
 

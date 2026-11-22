@@ -148,6 +148,9 @@ pub struct BriefIn {
     pub wall_exterior_mm: Option<i64>,
     #[serde(default)]
     pub wall_interior_mm: Option<i64>,
+    /// Wall height = storey height (mm). None keeps the engine's default (3000); it must be positive.
+    #[serde(default)]
+    pub wall_height_mm: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

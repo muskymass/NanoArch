@@ -77,6 +77,8 @@ pub struct Brief {
     pub entry_at: Option<(i64, i64)>,
     /// Wall thickness the drawings use, `(exterior, interior)` in mm. `None` keeps the engine's defaults (300 / 150).
     pub wall_mm: Option<(i64, i64)>,
+    /// Wall height = storey height the drawings use (mm). `None` keeps the engine's default (3000), which the sheets may not share.
+    pub wall_height_mm: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
