@@ -498,6 +498,20 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
                         d.line("A-FEAT", (x0, y0), (x1, y1));
                         d.line("A-FEAT", (x0, y1), (x1, y0));
                     }
+                    // Stated steps: the riser lines divide the rectangle's long side into equal treads (the rectangle is the drawing's).
+                    if let Some(n) = f.risers.filter(|n| *n > 1) {
+                        let along_x = (x1 - x0) >= (y1 - y0);
+                        for i in 1..n {
+                            let t = i as f64 / n as f64;
+                            if along_x {
+                                let x = x0 + (x1 - x0) * t;
+                                d.line("A-FEAT", (x, y0), (x, y1));
+                            } else {
+                                let y = y0 + (y1 - y0) * t;
+                                d.line("A-FEAT", (x0, y), (x1, y));
+                            }
+                        }
+                    }
                     ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
                 }
                 _ => {
@@ -507,6 +521,9 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
             };
             if !label.is_empty() {
                 d.text("A-FEAT", (cx, cy + 150.0), 140.0, &label);
+            }
+            if let (Some(n), Some(h)) = (f.risers, f.riser_mm) {
+                d.text("A-FEAT", (cx, cy - 150.0), 120.0, &format!("{n} R x {h}"));
             }
         }
         d.phase = None;

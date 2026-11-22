@@ -239,3 +239,18 @@ fn named_features_are_drawn_on_the_feature_layer_with_their_label_and_phase() {
     assert_eq!(on("A-FEAT_NEW", "TEXT") + on("A-FEAT", "TEXT"), 3, "each carries its label");
     assert!(out.text.contains("\nEJ\n") && out.text.contains("\nSH1\n") && out.text.contains("\nFD\n"));
 }
+
+#[test]
+fn stated_entrance_steps_draw_riser_lines_across_the_long_side_and_a_note() {
+    use nnx_core::typed::Feature;
+    let mut g = golden();
+    let landing = Feature { role: "ENTRANCE_LANDING".into(), shape: "rect".into(), x1: 0, y1: -1500, x2: 1200, y2: 0, width: 0, name: Some("ST".into()), note: None, room: None, risers: Some(3), riser_mm: Some(150), extra: Default::default() };
+    let el = element_of(&landing, Source::User);
+    g.doc.commit("steps", Origin::User, vec![Command::Create(el)]).unwrap();
+    let out = dxf::export_dxf(&g.doc.model, &[None], &opts()).unwrap();
+    let ents = entities(&out.text);
+    let on = |layer: &str, kind: &str| ents.iter().filter(|e| e.1 == layer && e.0 == kind).count();
+    assert_eq!((on("A-FEAT", "POLYLINE"), on("A-FEAT", "LINE")), (1, 2), "the outline and 3 - 1 riser lines");
+    assert_eq!(on("A-FEAT", "TEXT"), 2, "the label and the 3 R x 150 note");
+    assert!(out.text.contains("\n3 R x 150\n"));
+}
