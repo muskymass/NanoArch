@@ -211,7 +211,7 @@ fn the_construction_phase_is_a_property_of_the_products_that_have_one() {
 fn named_features_become_building_element_proxies_with_their_role_and_phase() {
     use nnx_core::typed::Feature;
     let mut g = golden();
-    let feat = |role: &str, shape: &str, x1, y1, x2, y2, width| Feature { role: role.into(), shape: shape.into(), x1, y1, x2, y2, width, name: Some(role.to_lowercase()), note: Some("from the sheet".into()), extra: Default::default() };
+    let feat = |role: &str, shape: &str, x1, y1, x2, y2, width| Feature { role: role.into(), shape: shape.into(), x1, y1, x2, y2, width, name: Some(role.to_lowercase()), note: Some("from the sheet".into()), room: None, extra: Default::default() };
     let mut joint = element_of(&feat("EXPANSION_JOINT", "line", 2000, 0, 2000, 5000, 50), Source::User);
     joint.props.insert("phase".into(), serde_json::json!("NEW"));
     let well = element_of(&feat("LIGHTWELL", "rect", 500, 500, 1500, 1500, 0), Source::User);
@@ -228,4 +228,21 @@ fn named_features_become_building_element_proxies_with_their_role_and_phase() {
     // The point is approximated (a 200 mm square), the axis-aligned line and the rectangle are exact.
     assert_eq!(text.matches("IFCPROPERTYSINGLEVALUE('PlanGeometryApproximated',$,IFCBOOLEAN(.T.),$)").count(), 1);
     assert_eq!(text.matches("IFCPROPERTYSINGLEVALUE('WidthMm',$,IFCREAL(50.),$)").count(), 1);
+}
+
+#[test]
+fn a_feature_names_the_room_it_serves_and_a_missing_room_is_refused() {
+    use nnx_core::typed::{Feature, Typed};
+    let mut g = golden();
+    let shaft = |room: Option<&str>| Feature { role: "SHAFT".into(), shape: "rect".into(), x1: 500, y1: 500, x2: 900, y2: 900, width: 0, name: Some("SH1".into()), note: None, room: room.map(String::from), extra: Default::default() };
+    let good = element_of(&shaft(Some("r1")), Source::User);
+    assert!(Typed::validate(&shaft(Some("r1")), &g.doc.model, &good).is_ok());
+    let err = Typed::validate(&shaft(Some("zz")), &g.doc.model, &good).unwrap_err();
+    assert!(err.contains("SH1") && err.contains("zz"), "{err}");
+    assert!(Typed::validate(&shaft(None), &g.doc.model, &good).is_ok(), "the room is optional: nothing is inferred");
+    g.doc.commit("shaft", Origin::User, vec![Command::Create(good)]).unwrap();
+    let text = export(&g.doc);
+    assert!(text.contains("IFCPROPERTYSINGLEVALUE('Room',$,IFCLABEL('r1'),$)"));
+    let id = g.doc.model.elements.values().find(|e| e.kind == "Feature").unwrap().typed::<Feature>().unwrap();
+    assert_eq!(id.room.as_deref(), Some("r1"));
 }

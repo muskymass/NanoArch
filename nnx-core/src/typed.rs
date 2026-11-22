@@ -716,6 +716,10 @@ pub struct Feature {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "opt_is_none")]
     pub note: Option<String>,
+    /// The requirement key of the room this feature serves (a shaft's room, a lift's landing room), when the drawing states one. It must
+    /// name a room of the same level; nothing is inferred from position.
+    #[serde(default, skip_serializing_if = "opt_is_none")]
+    pub room: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -736,9 +740,15 @@ impl Feature {
 impl Typed for Feature {
     const KIND: &'static str = "Feature";
     const DISCIPLINE: Discipline = Discipline::Arc;
-    fn validate(&self, _m: &Model, _e: &Element) -> Result<(), String> {
+    fn validate(&self, m: &Model, e: &Element) -> Result<(), String> {
         if !FEATURE_ROLES.contains(&self.role.as_str()) {
             return Err(format!("'{}' is not a feature role: use one of {}", self.role, FEATURE_ROLES.join(", ")));
+        }
+        if let Some(key) = &self.room {
+            let on_level = m.elements.values().filter(|s| s.kind == Space::KIND && s.level_id == e.level_id).filter_map(|s| s.typed::<Space>().ok()).any(|s| &s.requirement_key == key);
+            if !on_level {
+                return Err(format!("feature '{}' names room '{key}', which is not a room of its level", self.name.as_deref().unwrap_or(&self.role)));
+            }
         }
         match self.shape.as_str() {
             "line" if (self.x1, self.y1) == (self.x2, self.y2) => Err("a line feature needs two different end points".into()),

@@ -401,6 +401,9 @@ pub fn export_ifc(model: &Model, opts: &IfcOpts) -> Result<IfcOut, String> {
         if let Some(n) = f.note.clone() {
             extra.push(("Note", Pv::Label(n)));
         }
+        if let Some(r) = f.room.clone() {
+            extra.push(("Room", Pv::Label(r)));
+        }
         trace(&mut w, e, id, extra);
         storeys.get_mut(&lvl).expect("storey").products.push(id);
     }

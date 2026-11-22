@@ -756,6 +756,7 @@ impl App {
             width: num("width").unwrap_or(0),
             name: text("name"),
             note: text("note"),
+            room: text("room").filter(|r| !r.is_empty()),
             extra: Default::default(),
         };
         let doc = self.doc.as_mut().ok_or("choose a layout first")?;
@@ -790,7 +791,7 @@ impl App {
                     return None;
                 }
                 let f = e.typed::<nnx_core::typed::Feature>().ok()?;
-                Some(json!({ "id": e.id.to_string(), "level": level, "role": f.role, "shape": f.shape, "name": f.name, "x1": f.x1, "y1": f.y1, "x2": f.x2, "y2": f.y2, "width": f.width, "phase": e.props.get("phase") }))
+                Some(json!({ "id": e.id.to_string(), "level": level, "role": f.role, "shape": f.shape, "name": f.name, "x1": f.x1, "y1": f.y1, "x2": f.x2, "y2": f.y2, "width": f.width, "room": f.room, "phase": e.props.get("phase") }))
             })
             .collect();
         Ok(json!({ "features": list }))
