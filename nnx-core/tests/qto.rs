@@ -388,7 +388,7 @@ fn a_wall_to_be_demolished_is_measured_whole_and_becomes_a_schedule_activity() {
 fn a_removed_wall_feature_is_scheduled_by_its_length() {
     use nnx_core::schedule::{self, Calendar, Date, RateLib};
     let mut g = golden();
-    let f = nnx_core::typed::Feature { role: "REMOVED_WALL".into(), shape: "line".into(), x1: 0, y1: 2000, x2: 5030, y2: 2000, width: 200, name: Some("RW".into()), note: None, room: None, extra: Default::default() };
+    let f = nnx_core::typed::Feature { role: "REMOVED_WALL".into(), shape: "line".into(), x1: 0, y1: 2000, x2: 5030, y2: 2000, width: 200, name: Some("RW".into()), note: None, room: None, risers: None, riser_mm: None, extra: Default::default() };
     let mut el = element_of(&f, Source::User);
     el.props.insert("phase".into(), serde_json::json!("TO_BE_DEMOLISHED"));
     g.doc.commit("feature", Origin::User, vec![Command::Create(el)]).unwrap();

@@ -211,7 +211,7 @@ fn the_construction_phase_is_a_property_of_the_products_that_have_one() {
 fn named_features_become_building_element_proxies_with_their_role_and_phase() {
     use nnx_core::typed::Feature;
     let mut g = golden();
-    let feat = |role: &str, shape: &str, x1, y1, x2, y2, width| Feature { role: role.into(), shape: shape.into(), x1, y1, x2, y2, width, name: Some(role.to_lowercase()), note: Some("from the sheet".into()), room: None, extra: Default::default() };
+    let feat = |role: &str, shape: &str, x1, y1, x2, y2, width| Feature { role: role.into(), shape: shape.into(), x1, y1, x2, y2, width, name: Some(role.to_lowercase()), note: Some("from the sheet".into()), room: None, risers: None, riser_mm: None, extra: Default::default() };
     let mut joint = element_of(&feat("EXPANSION_JOINT", "line", 2000, 0, 2000, 5000, 50), Source::User);
     joint.props.insert("phase".into(), serde_json::json!("NEW"));
     let well = element_of(&feat("LIGHTWELL", "rect", 500, 500, 1500, 1500, 0), Source::User);
@@ -234,7 +234,7 @@ fn named_features_become_building_element_proxies_with_their_role_and_phase() {
 fn a_feature_names_the_room_it_serves_and_a_missing_room_is_refused() {
     use nnx_core::typed::{Feature, Typed};
     let mut g = golden();
-    let shaft = |room: Option<&str>| Feature { role: "SHAFT".into(), shape: "rect".into(), x1: 500, y1: 500, x2: 900, y2: 900, width: 0, name: Some("SH1".into()), note: None, room: room.map(String::from), extra: Default::default() };
+    let shaft = |room: Option<&str>| Feature { role: "SHAFT".into(), shape: "rect".into(), x1: 500, y1: 500, x2: 900, y2: 900, width: 0, name: Some("SH1".into()), note: None, room: room.map(String::from), risers: None, riser_mm: None, extra: Default::default() };
     let good = element_of(&shaft(Some("r1")), Source::User);
     assert!(Typed::validate(&shaft(Some("r1")), &g.doc.model, &good).is_ok());
     let err = Typed::validate(&shaft(Some("zz")), &g.doc.model, &good).unwrap_err();
@@ -245,4 +245,22 @@ fn a_feature_names_the_room_it_serves_and_a_missing_room_is_refused() {
     assert!(text.contains("IFCPROPERTYSINGLEVALUE('Room',$,IFCLABEL('r1'),$)"));
     let id = g.doc.model.elements.values().find(|e| e.kind == "Feature").unwrap().typed::<Feature>().unwrap();
     assert_eq!(id.room.as_deref(), Some("r1"));
+}
+
+#[test]
+fn entrance_steps_need_both_numbers_and_an_entrance_role_and_keep_their_total_rise() {
+    use nnx_core::typed::{Feature, Typed};
+    let mut g = golden();
+    let f = |role: &str, n: Option<u32>, h: Option<i64>| Feature { role: role.into(), shape: "rect".into(), x1: 0, y1: -1500, x2: 1200, y2: 0, width: 0, name: Some("ST".into()), note: None, room: None, risers: n, riser_mm: h, extra: Default::default() };
+    let ok = f("ENTRANCE_LANDING", Some(3), Some(150));
+    assert_eq!(ok.rise_mm(), Some(450), "3 x 150 mm");
+    let el = element_of(&ok, Source::User);
+    assert!(Typed::validate(&ok, &g.doc.model, &el).is_ok());
+    assert!(Typed::validate(&f("ENTRANCE_LANDING", Some(3), None), &g.doc.model, &el).unwrap_err().contains("both"));
+    assert!(Typed::validate(&f("ENTRANCE_LANDING", Some(0), Some(150)), &g.doc.model, &el).is_err());
+    assert!(Typed::validate(&f("SHAFT", Some(3), Some(150)), &g.doc.model, &el).unwrap_err().contains("entrance"));
+    assert_eq!(f("ENTRANCE_PATH", None, None).rise_mm(), None, "no steps stated, no rise invented");
+    g.doc.commit("steps", Origin::User, vec![Command::Create(el)]).unwrap();
+    let text = export(&g.doc);
+    assert!(text.contains("IFCPROPERTYSINGLEVALUE('Risers',$,IFCREAL(3.),$)") && text.contains("IFCPROPERTYSINGLEVALUE('RiserHeightMm',$,IFCREAL(150.),$)"));
 }

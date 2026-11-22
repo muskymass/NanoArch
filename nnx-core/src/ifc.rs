@@ -401,6 +401,10 @@ pub fn export_ifc(model: &Model, opts: &IfcOpts) -> Result<IfcOut, String> {
         if let Some(n) = f.note.clone() {
             extra.push(("Note", Pv::Label(n)));
         }
+        if let (Some(n), Some(h)) = (f.risers, f.riser_mm) {
+            extra.push(("Risers", Pv::Real(n as f64)));
+            extra.push(("RiserHeightMm", Pv::Real(h as f64)));
+        }
         if let Some(r) = f.room.clone() {
             extra.push(("Room", Pv::Label(r)));
         }

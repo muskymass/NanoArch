@@ -224,7 +224,7 @@ fn an_element_with_a_phase_goes_on_its_phase_layer_and_one_without_stays_on_the_
 fn named_features_are_drawn_on_the_feature_layer_with_their_label_and_phase() {
     use nnx_core::typed::Feature;
     let mut g = golden();
-    let feat = |role: &str, shape: &str, x1, y1, x2, y2, width, name: &str| Feature { role: role.into(), shape: shape.into(), x1, y1, x2, y2, width, name: Some(name.into()), note: None, room: None, extra: Default::default() };
+    let feat = |role: &str, shape: &str, x1, y1, x2, y2, width, name: &str| Feature { role: role.into(), shape: shape.into(), x1, y1, x2, y2, width, name: Some(name.into()), note: None, room: None, risers: None, riser_mm: None, extra: Default::default() };
     let mut joint = element_of(&feat("EXPANSION_JOINT", "line", 2000, 0, 2000, 5000, 50, "EJ"), Source::User);
     joint.props.insert("phase".into(), serde_json::json!("NEW"));
     let shaft = element_of(&feat("SHAFT", "rect", 500, 500, 1050, 1050, 0, "SH1"), Source::User);

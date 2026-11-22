@@ -720,6 +720,11 @@ pub struct Feature {
     /// name a room of the same level; nothing is inferred from position.
     #[serde(default, skip_serializing_if = "opt_is_none")]
     pub room: Option<String>,
+    /// Steps the drawing states for an entrance landing or path: the number of risers and the height of one (mm). Both or neither.
+    #[serde(default, skip_serializing_if = "opt_is_none")]
+    pub risers: Option<u32>,
+    #[serde(default, skip_serializing_if = "opt_is_none")]
+    pub riser_mm: Option<i64>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -727,6 +732,11 @@ pub struct Feature {
 pub const FEATURE_ROLES: [&str; 11] = ["REMOVED_WALL", "EXPANSION_JOINT", "TRANSFER_BEAM", "LIGHTWELL", "SHAFT", "FLOOR_DRAIN", "SLIDING_DOOR", "LIFT", "LIFT_LANDING", "ENTRANCE_LANDING", "ENTRANCE_PATH"];
 
 impl Feature {
+    /// Total rise (mm) of the stated steps: risers x riser height. `None` when the drawing states no steps.
+    pub fn rise_mm(&self) -> Option<i64> {
+        Some(self.risers? as i64 * self.riser_mm?)
+    }
+
     /// Length (mm) of a line, area (mm2) of a rectangle; 0 for a point.
     pub fn size(&self) -> (f64, f64) {
         match self.shape.as_str() {
@@ -743,6 +753,15 @@ impl Typed for Feature {
     fn validate(&self, m: &Model, e: &Element) -> Result<(), String> {
         if !FEATURE_ROLES.contains(&self.role.as_str()) {
             return Err(format!("'{}' is not a feature role: use one of {}", self.role, FEATURE_ROLES.join(", ")));
+        }
+        match (self.risers, self.riser_mm) {
+            (None, None) => {}
+            (Some(n), Some(h)) if n > 0 && h > 0 => {
+                if !matches!(self.role.as_str(), "ENTRANCE_LANDING" | "ENTRANCE_PATH") {
+                    return Err(format!("steps (risers) are only stated for an entrance landing or path, not '{}'", self.role));
+                }
+            }
+            _ => return Err("steps need both the number of risers and the height of one riser, each above zero".into()),
         }
         if let Some(key) = &self.room {
             let on_level = m.elements.values().filter(|s| s.kind == Space::KIND && s.level_id == e.level_id).filter_map(|s| s.typed::<Space>().ok()).any(|s| &s.requirement_key == key);
