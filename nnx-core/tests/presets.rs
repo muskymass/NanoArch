@@ -162,7 +162,7 @@ fn a_footing_takes_the_larger_of_the_flexure_and_the_minimum_and_is_checked_for_
 
 #[test]
 fn beams_and_tie_beams_get_minimum_steel_only_and_say_so() {
-    let beams = [BeamIn { name: "BM-1", id: Some("b1"), b: 250.0, depth: 450.0, tie: false }, BeamIn { name: "TB-1", id: None, b: 250.0, depth: 500.0, tie: true }];
+    let beams = [BeamIn { name: "BM-1", id: Some("b1"), b: 250.0, depth: 450.0, tie: false, span_mm: None, slab_load_kn_m: None }, BeamIn { name: "TB-1", id: None, b: 250.0, depth: 500.0, tie: true, span_mm: None, slab_load_kn_m: None }];
     let out = rebar::design(&dsn(), None, &[], &[], &beams);
     // BM-1: cover 40, stirrup 8; Dia 12: d = 450 - 40 - 8 - 6 = 396; As_min = 0.004 x 250 x 396 = 396 mm2 -> 4 bars (452 mm2).
     let b = out.rows.iter().find(|r| r.element == "BM-1").unwrap();
@@ -273,4 +273,87 @@ fn design_parameters_that_are_missing_are_reported_under_design_and_the_other_ba
     assert!(rep.missing["design"].contains(&"design.fy_mpa".to_string()));
     assert!(rep.designs.is_empty());
     assert!(rep.bars.iter().any(|b| b.mark == "COL-1/V" && b.source == "template"), "the template columns still schedule");
+}
+
+// ------------------------------------------------------------------ beam bending
+
+fn bending_dsn() -> DesignIn {
+    let mut d = dsn();
+    let beam = d.beam.as_mut().unwrap();
+    beam.phi_flexure = Some(0.9);
+    beam.concrete_unit_weight_kn_m3 = Some(25.0);
+    d
+}
+
+/// Inputs are the synthetic test values of `dsn()` (fc 25, fy 420, factor 1.4, phi 0.9, concrete 25 kN/m3), not project values.
+#[test]
+fn beam_flexure_matches_the_rho_form_for_a_simply_supported_span() {
+    // Hand case: b 300, depth 500, span 6000 mm, slab strip 20 kN/m service. Self weight 25 x 0.3 x 0.5 = 3.75 kN/m;
+    // wu = 1.4 (20 + 3.75) = 33.25 kN/m; Mu = 33.25 x 6^2 / 8 = 149.625 kN.m.
+    // Dia 12 (cover 40, stirrup 8): d 446, As 954.9 -> 9 bars: clear gap 12 mm < 25, no fit.
+    // Dia 16: d = 500 - 40 - 8 - 8 = 444; Rn = 149.625e6 / (0.9 x 300 x 444^2) = 2.8111 MPa; rho = 0.85 x 25 / 420 (1 - sqrt(1 - 2 Rn / 21.25))
+    // = 0.007206; As = 959.9 mm2 -> 5 bars (1005 mm2); clear gap (300 - 96 - 80) / 4 = 31 mm >= 25: fits.
+    let beam = BeamIn { name: "BM-1", id: Some("b1"), b: 300.0, depth: 500.0, tie: false, span_mm: Some(6000.0), slab_load_kn_m: Some(20.0) };
+    let out = rebar::design(&bending_dsn(), None, &[], &[], &[beam]);
+    assert!(out.missing.is_empty(), "{:?}", out.missing);
+    let r = &out.rows[0];
+    near(r.required_mm2, 959.87, 0.05);
+    assert_eq!((r.status.as_str(), r.bars.as_str(), r.cover_mm), ("ok", "5 x Dia 16 bottom, 2 x Dia 16 top", 40.0));
+    assert!(r.notes.contains("simply supported") && r.notes.contains("shear"));
+    let (bars, _) = &out.beams["BM-1"];
+    assert_eq!((bars.bottom_count, bars.bottom_dia_mm), (5, 16.0));
+    // A light load leaves the minimum steel in charge (0.004 x 300 x 446 = 535 mm2, Dia 12: 5 bars) and the row still says "ok"
+    // because bending was designed.
+    let light = BeamIn { name: "BM-2", id: None, b: 300.0, depth: 500.0, tie: false, span_mm: Some(2000.0), slab_load_kn_m: Some(2.0) };
+    let l = rebar::design(&bending_dsn(), None, &[], &[], &[light]);
+    near(l.rows[0].required_mm2, 0.004 * 300.0 * 446.0, 0.05);
+    assert_eq!(l.rows[0].status, "ok");
+}
+
+#[test]
+fn a_beam_that_cannot_carry_its_moment_is_too_small_and_missing_inputs_are_named() {
+    // 400 kN/m on a 6 m span: Rn is far above 0.85 f'c / 2, so no steel makes the section work.
+    let heavy = BeamIn { name: "BM-1", id: None, b: 250.0, depth: 450.0, tie: false, span_mm: Some(6000.0), slab_load_kn_m: Some(400.0) };
+    let h = rebar::design(&bending_dsn(), None, &[], &[], &[heavy]);
+    assert_eq!(h.rows[0].status, "section too small");
+    // Bending needs the span and the floor load: without them the beam keeps its minimum steel and the missing input is named.
+    let bare = BeamIn { name: "BM-1", id: None, b: 250.0, depth: 450.0, tie: false, span_mm: Some(6000.0), slab_load_kn_m: None };
+    let m = rebar::design(&bending_dsn(), None, &[], &[], &[bare]);
+    assert_eq!(m.rows[0].status, "minimum steel only");
+    assert!(m.missing.iter().any(|x| x.contains("beam bending") && x.contains("floor service load")), "{:?}", m.missing);
+    // Giving phi without the unit weight (or the other way round) names the one that is missing and designs no bending.
+    let mut half = dsn();
+    half.beam.as_mut().unwrap().phi_flexure = Some(0.9);
+    let beam = BeamIn { name: "BM-1", id: None, b: 250.0, depth: 450.0, tie: false, span_mm: Some(6000.0), slab_load_kn_m: Some(20.0) };
+    let o = rebar::design(&half, None, &[], &[], &[beam]);
+    assert!(o.missing.contains(&"design.beam.concrete_unit_weight_kn_m3".to_string()), "{:?}", o.missing);
+    assert_eq!(o.rows[0].status, "minimum steel only");
+    // Tie beams are never designed for bending, whatever is given.
+    let tie = BeamIn { name: "TB-1", id: None, b: 250.0, depth: 500.0, tie: true, span_mm: Some(6000.0), slab_load_kn_m: Some(20.0) };
+    let t = rebar::design(&bending_dsn(), None, &[], &[], &[tie]);
+    assert_eq!(t.rows[0].status, "minimum steel only");
+}
+
+#[test]
+fn the_schedule_designs_a_beam_for_the_slab_strip_it_carries_from_the_projects_floor_load() {
+    use nnx_core::typed::{Beam, Slab};
+    // A 6 x 4 m slab with one beam along its south edge: that beam takes a strip of half the short side (4 m / 2 = 2 m) of the load.
+    let slab = Slab { x: 0, y: 0, w: 6000, h: 4000, thickness: 150, kind: "solid".into(), room: "a".into(), extra: Default::default() };
+    let beam = Beam { x1: 0, y1: 0, x2: 6000, y2: 0, b: 300, h: 500, length: 6000, extra: Default::default() };
+    let mut doc = Document::default();
+    doc.commit("slab and beam", Origin::User, vec![Command::Create(element_of(&slab, Source::User)), Command::Create(element_of(&beam, Source::User))]).unwrap();
+    let mut inp = inputs(false, true);
+    inp.rebar.as_mut().unwrap().design = Some(bending_dsn());
+    // Without a floor load: minimum steel only.
+    let without = sizing::compute(&doc.model, None, &inp);
+    assert!(without.designs.iter().any(|r| r.element == "BM-1" && r.status == "minimum steel only"), "{:?}", without.designs);
+    // 10 kPa over the 2 m strip is the 20 kN/m of the hand case above: the same 959.9 mm2 and 5 x Dia 16.
+    let structure = nnx_core::project::StructIn { dead_kpa: Some(8.0), live_kpa: Some(2.0), ..Default::default() };
+    let with = sizing::compute(&doc.model, None, &inp.with_floor_load(&structure));
+    let r = with.designs.iter().find(|r| r.element == "BM-1").unwrap();
+    near(r.required_mm2, 959.87, 0.05);
+    assert_eq!((r.status.as_str(), r.bars.as_str()), ("ok", "5 x Dia 16 bottom, 2 x Dia 16 top"));
+    // Only one of the two loads given: no floor load is set.
+    let half = nnx_core::project::StructIn { dead_kpa: Some(8.0), ..Default::default() };
+    assert_eq!(inp.with_floor_load(&half).floor_service_kpa, None);
 }

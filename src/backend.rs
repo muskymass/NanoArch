@@ -631,9 +631,10 @@ impl App {
         })?;
         let soil = self.project().and_then(|p| p.structure.bearing_kpa);
         // The tie beams become model elements (one undoable step), so the 3D view, quantities and schedule can cite them.
-        let first = nnx_core::sizing::compute(&self.doc()?.model, soil, &inputs);
+        let loaded = inputs.with_floor_load(&self.project().map(|p| p.structure).unwrap_or_default());
+        let first = nnx_core::sizing::compute(&self.doc()?.model, soil, &loaded);
         nnx_core::sizing::apply_tie_beams(self.doc.as_mut().ok_or("choose a layout first")?, &first)?;
-        let r = nnx_core::sizing::compute(&self.doc()?.model, soil, &inputs);
+        let r = nnx_core::sizing::compute(&self.doc()?.model, soil, &loaded);
         Ok(json!({ "report": r, "members_csv": r.members_csv(), "concrete_csv": r.concrete_csv(), "bbs_csv": r.bbs_csv(), "soil_kpa": soil }))
     }
 
@@ -826,7 +827,7 @@ impl App {
         if phase.is_some() {
             return Ok(q);
         }
-        if let Some(inputs) = self.project().and_then(|p| p.sizing.map(|s| (s, p.structure.bearing_kpa))) {
+        if let Some(inputs) = self.project().and_then(|p| p.sizing.as_ref().map(|s| (s.with_floor_load(&p.structure), p.structure.bearing_kpa))) {
             q.items.extend(nnx_core::sizing::schedule_items(&nnx_core::sizing::compute(&doc.model, inputs.1, &inputs.0)));
         }
         Ok(q)
@@ -1665,7 +1666,7 @@ impl App {
         let model = &self.doc()?.model;
         let p = self.project().ok_or("choose a layout first")?;
         let mep = p.mep.as_ref().map(|i| nnx_core::mep::compute(model, i));
-        let sizing = p.sizing.as_ref().map(|i| nnx_core::sizing::compute(model, p.structure.bearing_kpa, i));
+        let sizing = p.sizing.as_ref().map(|i| nnx_core::sizing::compute(model, p.structure.bearing_kpa, &i.with_floor_load(&p.structure)));
         if mep.is_none() && sizing.is_none() {
             return Err("enter the MEP inputs (MEP tab) or the structural schedule inputs (Structural tab) and compute them first".into());
         }
@@ -1774,7 +1775,7 @@ impl App {
         let thick = p.sizing.as_ref().and_then(|z| z.footing_thickness_mm);
         let tank_results: Vec<nnx_core::tanks::TankResult> = s.tanks.iter().map(|t| nnx_core::tanks::design(t, &s.tank_design)).collect();
         let mut pieces = Vec::new();
-        let schedule = p.sizing.as_ref().map(|z| nnx_core::sizing::compute(model, p.structure.bearing_kpa, z));
+        let schedule = p.sizing.as_ref().map(|z| nnx_core::sizing::compute(model, p.structure.bearing_kpa, &z.with_floor_load(&p.structure)));
         if let Some(r) = &schedule {
             pieces.extend(nnx_core::cutting::pieces_from_schedule(&r.bars));
         }

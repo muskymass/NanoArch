@@ -12,7 +12,10 @@
 //! - **Footings**: the cantilever from the column face under the factored soil pressure, flexure with `phi_flexure`, at least
 //!   `ratio_min * b * h`, spacing capped by your maximum and floored by the clear spacing. Punching shear and one-way shear are
 //!   NOT checked.
-//! - **Beams and tie beams**: the minimum steel `ratio_min * b * d` only: bending is not designed, and the row says so.
+//! - **Beams**: the minimum steel `ratio_min * b * d`; and, when you give `phi_flexure` and the concrete unit weight and the beam has
+//!   a span and a slab load, the flexure steel for a simply supported span, `Mu = wu L^2 / 8` under the factored slab strip and self
+//!   weight, with the `rho` form of the section equation (the larger of the two governs). Shear, deflection, continuity and the
+//!   ductility limit are NOT checked. **Tie beams**: the minimum steel only; their bending is not designed, and the row says so.
 //!
 //! Every row carries the element name and id, the required and provided steel area, the ratio, the cover used and a status.
 
@@ -51,6 +54,10 @@ pub struct FootingDesign {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct BeamDesign {
+    /// Strength-reduction factor for flexure and the unit weight of concrete (kN/m3, for the self weight). Giving either turns the
+    /// bending design on, and then both are required.
+    pub phi_flexure: Option<f64>,
+    pub concrete_unit_weight_kn_m3: Option<f64>,
     pub ratio_min: Option<f64>,
     pub min_top_bars: Option<u32>,
     pub stirrup_dia_mm: Option<f64>,
@@ -101,6 +108,9 @@ pub struct BeamIn<'a> {
     pub b: f64,
     pub depth: f64,
     pub tie: bool,
+    /// Span (mm) and the service load of the slab strip it carries (kN/m, without its own weight); both needed to design bending.
+    pub span_mm: Option<f64>,
+    pub slab_load_kn_m: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -363,11 +373,37 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                     miss.push("design.beam.min_top_bars".into());
                     None
                 });
+                let bending = if bd.phi_flexure.is_some() || bd.concrete_unit_weight_kn_m3.is_some() {
+                    let phi = pos("phi_flexure", bd.phi_flexure, &mut miss).filter(|p| {
+                        let ok = *p <= 1.0;
+                        if !ok {
+                            miss.push("design.beam.phi_flexure (above 0 and at most 1)".into());
+                        }
+                        ok
+                    });
+                    let gc = pos("concrete_unit_weight_kn_m3", bd.concrete_unit_weight_kn_m3, &mut miss);
+                    phi.zip(gc)
+                } else {
+                    None
+                };
                 let (eb, et) = (exposure_of(d, |e| e.beam, "beam", &mut miss), if beams.iter().any(|b| b.tie) { exposure_of(d, |e| e.tie_beam, "tie_beam", &mut miss) } else { None });
                 out.missing.extend(miss);
                 if let (Some(rmin), Some(sdia), Some(sspc), Some(top)) = (rmin, sdia, sspc, top) {
+                    let mut bending_inputs_missing = false;
                     for b in beams {
                         let Some(exp) = (if b.tie { et } else { eb }) else { continue };
+                        // The design moment of a simply supported span under the factored slab strip and the beam's own weight.
+                        let bend: Option<(f64, f64)> = bending.filter(|_| !b.tie).and_then(|(phi, gc)| match (b.span_mm, b.slab_load_kn_m) {
+                            (Some(l), Some(q)) if l > 0.0 && q >= 0.0 => {
+                                let wu = c.gamma * (q + gc * b.b * b.depth / 1e6);
+                                Some((phi, wu * (l / 1000.0) * (l / 1000.0) / 8.0 * 1e6))
+                            }
+                            _ => {
+                                bending_inputs_missing = true;
+                                None
+                            }
+                        });
+                        let mut any_too_small = false;
                         let mut chosen: Option<(f64, u32, f64, f64)> = None;
                         for &dia in &c.dias {
                             let Some(cover) = presets::cover_mm(exp, Member::Frame, dia) else { continue };
@@ -376,6 +412,18 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                                 continue;
                             }
                             let as_min = rmin * b.b * d_eff;
+                            let as_min = match bend {
+                                Some((phi, mu)) => {
+                                    let rn = mu / (phi * b.b * d_eff * d_eff);
+                                    let disc = 1.0 - 2.0 * rn / (0.85 * c.fc);
+                                    if disc < 0.0 {
+                                        any_too_small = true;
+                                        continue;
+                                    }
+                                    as_min.max(0.85 * c.fc / c.fy * (1.0 - disc.sqrt()) * b.b * d_eff)
+                                }
+                                None => as_min,
+                            };
                             let n = 2.max((as_min / area(dia)).ceil() as u32);
                             let gap = if n > 1 { (b.b - 2.0 * (cover + sdia) - n as f64 * dia) / (n as f64 - 1.0) } else { f64::MAX };
                             if gap >= c.clear {
@@ -384,7 +432,8 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                             }
                         }
                         let (status, dia, n, cover, as_min) = match chosen {
-                            Some((dia, n, cover, a)) => ("minimum steel only", dia, n, cover, a),
+                            Some((dia, n, cover, a)) => (if bend.is_some() { "ok" } else { "minimum steel only" }, dia, n, cover, a),
+                            None if any_too_small => ("section too small", *c.dias.last().unwrap_or(&0.0), 2, presets::cover_mm(exp, Member::Frame, *c.dias.last().unwrap_or(&20.0)).unwrap_or(40.0), 0.0),
                             None => ("no arrangement fits", *c.dias.last().unwrap_or(&0.0), 2, presets::cover_mm(exp, Member::Frame, *c.dias.last().unwrap_or(&20.0)).unwrap_or(40.0), 0.0),
                         };
                         out.beams.insert(b.name.to_string(), (BeamBars { top_dia_mm: dia, top_count: top, bottom_dia_mm: dia, bottom_count: n, stirrup_dia_mm: sdia, stirrup_spacing_mm: sspc }, cover));
@@ -398,8 +447,17 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                             bars: format!("{n} x Dia {dia} bottom, {top} x Dia {dia} top"),
                             cover_mm: cover,
                             status: status.into(),
-                            notes: "minimum steel only: bending is not designed".into(),
+                            notes: if bend.is_some() {
+                                "bending designed for a simply supported span (M = w L^2 / 8) under the factored slab strip and self weight; the tributary width is half the short side of each adjacent slab (conservative); shear, deflection, continuity and the ductility limit are not checked".into()
+                            } else if b.tie {
+                                "minimum steel only: bending is not designed".into()
+                            } else {
+                                "minimum steel only: bending is not designed (give phi_flexure, the concrete unit weight, a span and a floor load to design it)".into()
+                            },
                         });
+                    }
+                    if bending_inputs_missing {
+                        out.missing.push("beam bending: the span of the beam and the floor service load (dead + live kPa) of the structural inputs".into());
                     }
                 }
             }

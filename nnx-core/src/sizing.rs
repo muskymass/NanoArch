@@ -75,6 +75,10 @@ pub struct RebarIn {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct SizingInputs {
+    /// Service floor load (dead + live, kPa) for the beam bending design. Not an input of its own: the caller takes it from the
+    /// structural inputs of the project (the one owner of the floor loads) when it computes; without it beams get minimum steel only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floor_service_kpa: Option<f64>,
     /// Footing thickness, mm. Footings have no designed depth in this application, so the concrete of footings needs it.
     pub footing_thickness_mm: Option<f64>,
     pub tie_beam: Option<TieBeamIn>,
@@ -204,6 +208,41 @@ fn bars(rows: &mut Vec<BarRow>, who: (&str, Option<String>, &str), mark: &str, r
     }
     let total_m = number as f64 * cut_mm / 1000.0;
     rows.push(BarRow { element: element.into(), id, mark: mark.into(), role: role.into(), dia_mm: dia, number, cut_length_mm: (cut_mm * 10.0).round() / 10.0, total_m: round3(total_m), kg: round3(kg_of(dia, total_m)), source: source.into() });
+}
+
+impl SizingInputs {
+    /// The same inputs with the service floor load (dead + live) of the project's structural inputs, which own it. Both loads must be
+    /// given: with one missing no floor load is set and the beams keep their minimum steel.
+    pub fn with_floor_load(&self, structure: &crate::project::StructIn) -> SizingInputs {
+        let mut z = self.clone();
+        z.floor_service_kpa = structure.dead_kpa.zip(structure.live_kpa).map(|(d, l)| d + l);
+        z
+    }
+}
+
+/// Service load (kN/m) a beam takes from the slabs of its level: for each slab it lies along or inside, each side that has slab takes
+/// `kpa` over half the SHORT side of that slab panel (the panel of that side's depth and the slab's length along the beam). Half the
+/// short side is the conservative end of the trapezoid/triangle rule, so the load is not under-estimated; it is not an analysis.
+fn strip_load_kn_m(model: &Model, level: Option<Id>, beam: &Beam, kpa: f64) -> f64 {
+    let horizontal = beam.y1 == beam.y2;
+    let (a0, a1) = if horizontal { (beam.x1.min(beam.x2), beam.x1.max(beam.x2)) } else { (beam.y1.min(beam.y2), beam.y1.max(beam.y2)) };
+    let c = if horizontal { beam.y1 } else { beam.x1 };
+    let tol = 200;
+    let mut trib_mm = 0.0;
+    for s in model.elements.values().filter(|e| e.kind == Slab::KIND && e.level_id == level).filter_map(|e| e.typed::<Slab>().ok()) {
+        let ((s_a0, s_a1), (p0, p1)) = if horizontal { ((s.x, s.x + s.w), (s.y, s.y + s.h)) } else { ((s.y, s.y + s.h), (s.x, s.x + s.w)) };
+        let along = (a1.min(s_a1) - a0.max(s_a0)).max(0);
+        if along <= 0 || c < p0 - tol || c > p1 + tol {
+            continue;
+        }
+        let slab_along = (s_a1 - s_a0) as f64;
+        for side in [(c - p0) as f64, (p1 - c) as f64] {
+            if side > tol as f64 {
+                trib_mm += 0.5 * side.min(slab_along);
+            }
+        }
+    }
+    kpa * trib_mm / 1000.0
 }
 
 pub fn compute(model: &Model, soil_kpa: Option<f64>, inp: &SizingInputs) -> SizingReport {
@@ -357,7 +396,9 @@ pub fn compute(model: &Model, soil_kpa: Option<f64>, inp: &SizingInputs) -> Sizi
     beams.sort_by_key(|(e, b)| (level_index(model, e.level_id), b.y1.min(b.y2), b.x1.min(b.x2), b.x1 == b.x2));
     let slab_t = |level: Option<Id>| model.elements.values().filter(|e| e.kind == Slab::KIND && e.level_id == level).filter_map(|e| e.typed::<Slab>().ok()).map(|s| s.thickness).max().unwrap_or(0);
     let mut beam_rows: Vec<(String, String, Beam, i64)> = Vec::new();
+    let mut beam_loads: Vec<Option<f64>> = Vec::new();
     for (i, (e, b)) in beams.iter().enumerate() {
+        beam_loads.push(inp.floor_service_kpa.map(|kpa| strip_load_kn_m(model, e.level_id, b, kpa)));
         let name = format!("BM-{}", i + 1);
         let below = (b.h - slab_t(e.level_id)).max(0);
         add(&mut rep, name.clone(), Some(e.id.to_string()), "Beam", b.b as f64 * below as f64 * b.length as f64 / 1e9, format!("{} x {} x {} mm (depth below the slab)", b.b, below, b.length));
@@ -396,8 +437,9 @@ pub fn compute(model: &Model, soil_kpa: Option<f64>, inp: &SizingInputs) -> Sizi
                 .collect();
             let beam_in: Vec<crate::rebar::BeamIn> = beam_rows
                 .iter()
-                .map(|(n, id, b, below)| crate::rebar::BeamIn { name: n, id: Some(id), b: b.b as f64, depth: (*below).max(b.h) as f64, tie: false })
-                .chain(rep.tie_beams.iter().map(|t| crate::rebar::BeamIn { name: &t.name, id: t.id.as_deref(), b: t.width_mm as f64, depth: t.depth_mm as f64, tie: true }))
+                .zip(&beam_loads)
+                .map(|((n, id, b, below), q)| crate::rebar::BeamIn { name: n, id: Some(id), b: b.b as f64, depth: (*below).max(b.h) as f64, tie: false, span_mm: Some(b.length as f64), slab_load_kn_m: *q })
+                .chain(rep.tie_beams.iter().map(|t| crate::rebar::BeamIn { name: &t.name, id: t.id.as_deref(), b: t.width_mm as f64, depth: t.depth_mm as f64, tie: true, span_mm: None, slab_load_kn_m: None }))
                 .collect();
             crate::rebar::design(dsn, thick, &col_in, &fnd_in, &beam_in)
         });
