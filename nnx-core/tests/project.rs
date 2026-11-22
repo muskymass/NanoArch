@@ -15,7 +15,7 @@ fn brief() -> BriefIn {
         setback_back_m: 2.0,
         setback_side_m: 2.0,
         entry: "south".into(),
-        rooms: vec![RoomIn { key: "bed".into(), name: None, func: "bedroom".into(), area: 12.0, zone: "private".into(), light: true, min_width_mm: None, floor: None }],
+        rooms: vec![RoomIn { key: "bed".into(), name: None, func: "bedroom".into(), area: 12.0, zone: "private".into(), light: true, min_width_mm: None, floor: None, phase: None }],
         seed: None,
         stair: None,
         wall_exterior_mm: None,

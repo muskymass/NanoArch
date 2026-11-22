@@ -110,6 +110,9 @@ impl Qto {
     }
 }
 
+/// The construction phases an element can carry. Nothing is assumed: an element with no phase stays unset.
+pub const PHASES: [&str; 6] = ["EXISTING", "TO_BE_DEMOLISHED", "TO_BE_MODIFIED", "NEW", "TEMPORARY", "UNVERIFIED"];
+
 /// True when the element belongs to a requested construction-status phase.
 /// An unset phase is never silently treated as NEW or EXISTING.
 pub fn matches_phase(e: &Element, phase: Option<&str>) -> bool {

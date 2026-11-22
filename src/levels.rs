@@ -67,6 +67,9 @@ pub fn plan_building(b: &BriefIn, n: u32) -> Result<BuildingPlan, String> {
     if let Some(h) = b.wall_height_mm.filter(|h| *h <= 0) {
         return Err(format!("wall height (storey height) must be positive, not {h} mm"));
     }
+    if let Some(r) = b.rooms.iter().find(|r| r.phase.as_deref().is_some_and(|p| !p.is_empty() && !nnx_core::qto::PHASES.contains(&p))) {
+        return Err(format!("room '{}' has the phase '{}': use one of {}", r.key, r.phase.as_deref().unwrap_or_default(), nnx_core::qto::PHASES.join(", ")));
+    }
     let n = n.max(1) as usize;
     let (envelope, entry) = envelope_and_entry(b)?;
     if let Some(r) = b.rooms.iter().find(|r| r.floor.unwrap_or(1) == 0 || r.floor.unwrap_or(1) as usize > n) {

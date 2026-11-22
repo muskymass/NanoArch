@@ -812,7 +812,7 @@ $("generate").onclick = () => busy(async () => {
   if ($("plot-shape").value === "poly") polyRequireAnalysis();
   const w = num("width"), l = num("length");
   if (!w || !l) throw new Error(lang === "ar" ? "أدخل أبعاد الأرض" : "Enter the plot size");
-  const rooms = state.rooms.map((r, i) => ({ key: r.key || "r" + i, name: r.name, func: r.func, area: r.area, zone: r.zone, light: r.light, floor: r.floor || 1 }));
+  const rooms = state.rooms.map((r, i) => ({ key: r.key || "r" + i, name: r.name, func: r.func, area: r.area, zone: r.zone, light: r.light, floor: r.floor || 1, phase: r.phase || undefined }));
   const brief = { title: $("title").value, width_m: w, length_m: l, setback_front_m: num("sbf") || 0, setback_back_m: num("sbb") || 0, setback_side_m: num("sbs") || 0, entry: $("entry").value, rooms };
   if (num("wallext") > 0) brief.wall_exterior_mm = Math.round(num("wallext")); if (num("wallint") > 0) brief.wall_interior_mm = Math.round(num("wallint")); if (num("wallh") > 0) brief.wall_height_mm = Math.round(num("wallh"));
   if (num("stairw") && num("stairl")) brief.stair = { width_m: num("stairw"), length_m: num("stairl"), side: $("stairside").value };
@@ -2333,7 +2333,7 @@ function applySettings(s) {
   $("title").value = b.title ?? s.title ?? "";
   for (const [id, k] of [["width", "width_m"], ["length", "length_m"], ["sbf", "setback_front_m"], ["sbb", "setback_back_m"], ["sbs", "setback_side_m"]]) $(id).value = b[k] ?? "";
   $("entry").value = b.entry || "south";
-  if (Array.isArray(b.rooms)) { state.rooms = b.rooms.map(x => ({ key: x.key, name: x.name || "", func: x.func, area: x.area, zone: x.zone, light: !!x.light, floor: x.floor || 1 })); renderRooms(); }
+  if (Array.isArray(b.rooms)) { state.rooms = b.rooms.map(x => ({ key: x.key, name: x.name || "", func: x.func, area: x.area, zone: x.zone, light: !!x.light, floor: x.floor || 1, phase: x.phase || "" })); renderRooms(); }
   $("wallext").value = b.wall_exterior_mm ?? ""; $("wallint").value = b.wall_interior_mm ?? ""; $("wallh").value = b.wall_height_mm ?? "";
   $("stairw").value = (b.stair || {}).width_m ?? ""; $("stairl").value = (b.stair || {}).length_m ?? ""; $("stairside").value = (b.stair || {}).side || "west";
   for (const [id, k] of [["dead", "dead_kpa"], ["live", "live_kpa"], ["bearing", "bearing_kpa"], ["floors", "floors"], ["maxspan", "max_span_mm"]]) $(id).value = st[k] ?? "";

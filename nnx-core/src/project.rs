@@ -116,6 +116,9 @@ pub struct RoomIn {
     pub min_width_mm: Option<i64>,
     /// 1 is the ground floor. Absent means the ground floor.
     pub floor: Option<u32>,
+    /// Construction phase of the room (one of `qto::PHASES`); absent: none is assumed. Kept here so the phases survive a reopened project.
+    #[serde(default)]
+    pub phase: Option<String>,
 }
 
 /// The stair of a building with several floors. Nothing here is defaulted.

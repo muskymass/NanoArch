@@ -638,7 +638,7 @@ impl App {
     }
 
     /// The construction phases an element can carry. Nothing is assumed: an element with no phase stays unset.
-    const PHASES: [&'static str; 6] = ["EXISTING", "TO_BE_DEMOLISHED", "TO_BE_MODIFIED", "NEW", "TEMPORARY", "UNVERIFIED"];
+    const PHASES: [&'static str; 6] = nnx_core::qto::PHASES;
 
     /// Gives rooms a construction phase (`phases`: room key -> phase). Walls take it from the rooms on their sides (a wall between an
     /// existing and a new room is new; two different phases that are not that pair make it `UNVERIFIED`), doors and windows from their
@@ -2381,6 +2381,20 @@ impl App {
             "limits": p.limits,
         });
         v["brief"] = serde_json::to_value(&p.brief).unwrap_or(Value::Null);
+        // A project saved before the brief kept room phases has them only on the rooms of the model: hand them back to the room table
+        // (a room the brief already gives a phase keeps it; none is invented for a room whose elements have none).
+        if let (Some(doc), Some(rooms)) = (self.doc.as_ref(), v["brief"]["rooms"].as_array_mut()) {
+            for r in rooms.iter_mut().filter(|r| r["phase"].is_null()) {
+                let key = r["key"].as_str().unwrap_or_default().to_string();
+                let found = doc.model.elements.values().filter(|e| e.kind == "Space").find_map(|e| {
+                    let s = e.typed::<nnx_core::typed::Space>().ok()?;
+                    (s.requirement_key.split('@').next() == Some(key.as_str())).then(|| e.props.get("phase").and_then(Value::as_str).map(String::from)).flatten()
+                });
+                if let Some(p) = found {
+                    r["phase"] = json!(p);
+                }
+            }
+        }
         v["mep"] = serde_json::to_value(&p.mep).unwrap_or(Value::Null);
         v["boq"] = serde_json::to_value(&p.boq).unwrap_or(Value::Null);
         v["sizing"] = serde_json::to_value(&p.sizing).unwrap_or(Value::Null);
@@ -3127,6 +3141,33 @@ mod tests {
         b["wall_exterior_mm"] = json!(200);
         b["wall_interior_mm"] = json!(200);
         assert_eq!(thicknesses(b), std::collections::BTreeSet::from([200]), "every wall follows the given thickness");
+    }
+
+    #[test]
+    fn the_phase_of_a_room_is_kept_in_the_stored_brief_and_a_bad_phase_is_refused() {
+        let mut brief = brief2();
+        let key = brief["rooms"][0]["key"].as_str().unwrap().to_string();
+        brief["rooms"][0]["phase"] = json!("NEW");
+        let mut app = App::default();
+        app.handle("generate", &json!({ "brief": brief, "struct": loads2(), "placement": sketch2(json!({ "x": 3000, "y": 0 })) })).unwrap();
+        app.handle("select", &json!({ "index": 0, "struct": loads2() })).unwrap();
+        // The stored brief, which a reopened project loads into the room table, still has the phase; the other rooms have none.
+        let settings = app.handle("project", &json!({})).unwrap();
+        let rooms = settings["settings"]["brief"]["rooms"].as_array().unwrap();
+        let phase_of = |k: &str| rooms.iter().find(|r| r["key"] == k).and_then(|r| r["phase"].as_str().map(String::from));
+        assert_eq!(phase_of(&key).as_deref(), Some("NEW"), "{rooms:?}");
+        assert!(rooms.iter().filter(|r| r["key"] != key.as_str()).all(|r| r["phase"].is_null()), "no phase is invented for the other rooms");
+        // A room phased only on its model elements (a project saved before this field existed) is handed back to the room table too.
+        let other = rooms.iter().find(|r| r["key"] != key.as_str()).unwrap()["key"].as_str().unwrap().to_string();
+        app.handle("set_phase", &json!({ "phases": { other.clone(): "EXISTING" } })).unwrap();
+        let settings = app.handle("project", &json!({})).unwrap();
+        let back = settings["settings"]["brief"]["rooms"].as_array().unwrap().iter().find(|r| r["key"] == other.as_str()).unwrap()["phase"].as_str().map(String::from);
+        assert_eq!(back.as_deref(), Some("EXISTING"));
+        // An unknown phase is refused by name, not dropped.
+        let mut bad = brief2();
+        bad["rooms"][0]["phase"] = json!("BUILT");
+        let err = App::default().handle("generate", &json!({ "brief": bad, "struct": loads2(), "placement": sketch2(json!({ "x": 3000, "y": 0 })) })).unwrap_err();
+        assert!(err.contains("BUILT") && err.contains("use one of"), "{err}");
     }
 
     #[test]
