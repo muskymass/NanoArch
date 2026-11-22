@@ -298,8 +298,9 @@ pub fn snap_rects(r: &mut [layout::Rect], env: &layout::Rect, tol: i64) {
     let mut px: Vec<usize> = (0..2 * n + 2).collect();
     let mut py: Vec<usize> = (0..2 * n + 2).collect();
     let (env_l, env_r) = (2 * n, 2 * n + 1);
-    let xv = |i: usize, node: usize| if node == 2 * i { r[i].x } else { r[i].x + r[i].w };
-    let yv = |i: usize, node: usize| if node == 2 * i { r[i].y } else { r[i].y + r[i].h };
+    let base: Vec<layout::Rect> = r.to_vec();
+    let xv = |i: usize, node: usize| if node == 2 * i { base[i].x } else { base[i].x + base[i].w };
+    let yv = |i: usize, node: usize| if node == 2 * i { base[i].y } else { base[i].y + base[i].h };
     for i in 0..n {
         for j in 0..n {
             if i == j {
@@ -342,14 +343,42 @@ pub fn snap_rects(r: &mut [layout::Rect], env: &layout::Rect, tol: i64) {
             if g == gl && g != gr { lo } else if g == gr && g != gl { hi } else if cnt[g] > 0 { (((sum[g] as f64 / cnt[g] as f64) / 10.0).round() as i64) * 10 } else { 0 }
         }).collect()
     };
-    let xs = group_values(&mut px, &|node| xv(node / 2, node), env.x, env.x + env.w);
-    let ys = group_values(&mut py, &|node| yv(node / 2, node), env.y, env.y + env.h);
     let marked: Vec<layout::Rect> = r.to_vec();
-    for (i, q) in r.iter_mut().enumerate() {
-        let (l, rt, b, t) = (xs[2 * i], xs[2 * i + 1], ys[2 * i], ys[2 * i + 1]);
-        // A group so large that a room would collapse leaves that room as it was marked.
-        if rt - l >= 100 && t - b >= 100 {
-            *q = layout::Rect { x: l, y: b, w: rt - l, h: t - b };
+    let overlap_pair = |a: &layout::Rect, b: &layout::Rect| a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    // Two groups that settle a few millimetres apart can push a corner of one room into another. When that happens the
+    // two facing edges are joined into one group and the values are worked out again, so the neighbours stay joined.
+    for _ in 0..(4 * n + 4) {
+        let xs = group_values(&mut px, &|node| xv(node / 2, node), env.x, env.x + env.w);
+        let ys = group_values(&mut py, &|node| yv(node / 2, node), env.y, env.y + env.h);
+        for (i, q) in r.iter_mut().enumerate() {
+            let (l, rt, b, t) = (xs[2 * i], xs[2 * i + 1], ys[2 * i], ys[2 * i + 1]);
+            // A group so large that a room would collapse leaves that room as it was marked.
+            *q = if rt - l >= 100 && t - b >= 100 { layout::Rect { x: l, y: b, w: rt - l, h: t - b } } else { marked[i] };
+        }
+        let mut joined = false;
+        'scan: for i in 0..n {
+            for j in i + 1..n {
+                if !overlap_pair(&r[i], &r[j]) || overlap_pair(&marked[i], &marked[j]) {
+                    continue;
+                }
+                let pen_x = (r[i].x + r[i].w).min(r[j].x + r[j].w) - r[i].x.max(r[j].x);
+                let pen_y = (r[i].y + r[i].h).min(r[j].y + r[j].h) - r[i].y.max(r[j].y);
+                let (p, a, b) = if pen_x <= pen_y {
+                    if marked[i].x < marked[j].x { (&mut px, 2 * i + 1, 2 * j) } else { (&mut px, 2 * j + 1, 2 * i) }
+                } else if marked[i].y < marked[j].y {
+                    (&mut py, 2 * i + 1, 2 * j)
+                } else {
+                    (&mut py, 2 * j + 1, 2 * i)
+                };
+                if find(p, a) != find(p, b) {
+                    union(p, a, b);
+                    joined = true;
+                    break 'scan;
+                }
+            }
+        }
+        if !joined {
+            break;
         }
     }
     // Snapping must never turn a valid marking into an overlap: two rooms that overlap afterwards go back to what the user marked.
@@ -656,4 +685,30 @@ mod snap_tests {
         assert_eq!((v[0].x, v[0].y), (0, 0));
         assert_eq!((v[1].x + v[1].w, v[1].y + v[1].h), (10000, 8000));
     }
+    #[test]
+    fn groups_that_settle_apart_are_joined_instead_of_reverting_a_neighbour() {
+        // Marked from the Al-Andalus ground floor: the corner of the dressing room fell into the narrow corridor after snapping,
+        // which used to put the corridor back to its marked position and leave a gap that no door could cross.
+        let mut v = vec![
+            layout::Rect { x: 33330, y: 12380, w: 2870, h: 2150 },
+            layout::Rect { x: 36300, y: 12380, w: 5610, h: 3800 },
+            layout::Rect { x: 33220, y: 14520, w: 3020, h: 1710 },
+            layout::Rect { x: 33330, y: 16340, w: 2810, h: 1750 },
+            layout::Rect { x: 36270, y: 16240, w: 1220, h: 6300 },
+            layout::Rect { x: 33140, y: 18150, w: 3070, h: 4400 },
+            layout::Rect { x: 37520, y: 16240, w: 4390, h: 3730 },
+            layout::Rect { x: 37570, y: 21970, w: 4300, h: 4620 },
+            layout::Rect { x: 35740, y: 22610, w: 1720, h: 4060 },
+        ];
+        let env = layout::Rect { x: 0, y: 0, w: 60000, h: 60000 };
+        snap_rects(&mut v, &env, SNAP_MM);
+        for i in 0..v.len() {
+            for j in i + 1..v.len() {
+                let (a, b) = (v[i], v[j]);
+                assert!(!(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h), "rooms {i} and {j} overlap: {a:?} {b:?}");
+            }
+        }
+        assert_eq!(v[5].x + v[5].w, v[4].x, "the corridor shares the wall of the room beside it");
+    }
 }
+
