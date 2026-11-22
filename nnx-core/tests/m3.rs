@@ -229,6 +229,31 @@ fn punching_shear_is_checked_around_each_column_with_a_safety_factor_per_footing
 }
 
 #[test]
+fn punching_around_a_rectangular_column_matches_the_hand_calculation() {
+    // Hand case, not read from the engine: column 300 x 500 on a 2000 x 1600 footing, 600 kN service, thickness 600 mm,
+    // cover 50, bar 20 -> d = 530; critical rectangle (300 + 530) x (500 + 530) = 830 x 1030; bo = 2 (830 + 1030) = 3720 mm;
+    // Pu = 1.4 x 600 = 840 kN; Vu = 840 (1 - 830 x 1030 / (2000 x 1600)) = 615.58 kN; stress = Vu / (bo d) = 0.3122 MPa;
+    // capacity = 0.33 sqrt(25) 0.75 = 1.2375 MPa; safety = 3.963.
+    let column = Column { x: 0, y: 0, b: 300, h: 500, grid_ref: String::new(), axial_service_kn: Some(600.0), extra: Default::default() };
+    let (cid, cc) = create(&column);
+    let footing = Footing { x: 0, y: 0, length: 2000, width: 1600, service_load_kn: 600.0, bearing_kpa: 200.0, column: cid.to_string(), extra: Default::default() };
+    let (_, cf) = create(&footing);
+    let doc = doc_with(vec![cc, cf]);
+    let mut inp = punch_inputs();
+    inp.bar_dia_mm = Some(20.0);
+    let rep = punching::check(&doc.model, &inp, Some(600.0), None, None);
+    assert_eq!(rep.punching.len(), 1, "{:?}", rep.missing);
+    let r = &rep.punching[0];
+    near(r.d_mm, 530.0, 1e-9);
+    near(r.bo_mm, 3720.0, 1e-9);
+    near(r.vu_kn, 615.58, 0.01);
+    near(r.stress_mpa, 0.3122, 0.001);
+    near(r.capacity_mpa, 1.2375, 0.0006);
+    near(r.safety, 3.963, 0.01);
+    assert_eq!(r.status, "ok");
+}
+
+#[test]
 fn flat_slab_punching_uses_the_slab_thickness_and_the_floor_loads() {
     let f = frame();
     let mut inp = punch_inputs();
