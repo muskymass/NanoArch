@@ -657,12 +657,17 @@ impl App {
         let phase_of = |key: &str| by_room.get(key).or_else(|| by_room.get(key.split('@').next().unwrap_or(""))).cloned();
         let mut cmds: Vec<Command> = Vec::new();
         let mut wall_phase: BTreeMap<Id, String> = BTreeMap::new();
+        // (level, rectangle, phase) of every room that has a phase: structural members take theirs from the rooms they stand in or touch.
+        let mut space_phase: Vec<(Option<Id>, [i64; 4], String)> = Vec::new();
         let set = |id: Id, p: &str| Command::SetProp { id, key: "phase".into(), value: Some(json!(p)) };
         for e in doc.model.elements.values() {
             match e.kind.as_str() {
                 "Space" => {
-                    if let Some(p) = e.typed::<nnx_core::typed::Space>().ok().and_then(|s| phase_of(&s.requirement_key)) {
+                    if let Ok(s) = e.typed::<nnx_core::typed::Space>()
+                        && let Some(p) = phase_of(&s.requirement_key)
+                    {
                         cmds.push(set(e.id, &p));
+                        space_phase.push((e.level_id, [s.x, s.y, s.x + s.w, s.y + s.h], p));
                     }
                 }
                 "Wall" => {
@@ -688,6 +693,37 @@ impl App {
         for e in doc.model.elements.values().filter(|e| e.kind == "Door" || e.kind == "Window") {
             if let Some(p) = e.host_id.and_then(|h| wall_phase.get(&h)) {
                 cmds.push(set(e.id, p));
+            }
+        }
+        // Columns, footings, beams, tie beams and slabs. A point takes the phase of the rooms of its level that contain it or lie within
+        // 300 mm of it (the width of a wall): one phase gives that phase; new and existing together give NEW (as for walls); anything else
+        // UNVERIFIED; no room near it leaves the member without a phase. A slab takes the phase of its own room.
+        const NEAR_MM: i64 = 300;
+        let at = |level: Option<Id>, x: i64, y: i64| -> Option<String> {
+            let mut found: Vec<&str> = Vec::new();
+            for (l, r, p) in &space_phase {
+                if *l == level && x >= r[0] - NEAR_MM && x <= r[2] + NEAR_MM && y >= r[1] - NEAR_MM && y <= r[3] + NEAR_MM && !found.contains(&p.as_str()) {
+                    found.push(p);
+                }
+            }
+            match found.as_slice() {
+                [] => None,
+                [one] => Some((*one).to_string()),
+                two if two.len() == 2 && two.contains(&"NEW") && two.contains(&"EXISTING") => Some("NEW".to_string()),
+                _ => Some("UNVERIFIED".to_string()),
+            }
+        };
+        for e in doc.model.elements.values() {
+            let p = match e.kind.as_str() {
+                "Column" => e.typed::<nnx_core::typed::Column>().ok().and_then(|c| at(e.level_id, c.x, c.y)),
+                "Footing" => e.typed::<nnx_core::typed::Footing>().ok().and_then(|f| at(e.level_id, f.x, f.y)),
+                "Beam" => e.typed::<nnx_core::typed::Beam>().ok().and_then(|b| at(e.level_id, (b.x1 + b.x2) / 2, (b.y1 + b.y2) / 2)),
+                "TieBeam" => e.typed::<nnx_core::typed::TieBeam>().ok().and_then(|b| at(e.level_id, (b.x1 + b.x2) / 2, (b.y1 + b.y2) / 2)),
+                "Slab" => e.typed::<nnx_core::typed::Slab>().ok().and_then(|s| phase_of(&s.room)),
+                _ => None,
+            };
+            if let Some(p) = p {
+                cmds.push(set(e.id, &p));
             }
         }
         if cmds.is_empty() {
@@ -773,10 +809,19 @@ impl App {
     /// The take-off the schedule is built from: the model's quantities, insulation, MEP devices and runs, and the concrete and steel of
     /// the structural schedules. A finish has no productivity input, so it is a quantity and a BOQ row, not a scheduled activity.
     fn schedule_qto(&self) -> Result<qto::Qto, String> {
+        self.schedule_qto_for(None)
+    }
+
+    /// The same take-off restricted to one construction phase. The concrete and steel of the structural schedules are not split by phase
+    /// (structural members carry no phase), so they are left out of a phase take-off and the schedule says so.
+    fn schedule_qto_for(&self, phase: Option<&str>) -> Result<qto::Qto, String> {
         let doc = self.doc()?;
-        let mut q = qto::compute(&doc.model, &QtoOpts::default());
-        q.items.extend(self.extra_items(&doc.model));
+        let mut q = qto::compute(&doc.model, &QtoOpts { phase: phase.map(String::from), ..QtoOpts::default() });
+        q.items.extend(self.extra_items_for_phase(&doc.model, phase));
         q.items.retain(|i| !i.code.starts_with("FIN."));
+        if phase.is_some() {
+            return Ok(q);
+        }
         if let Some(inputs) = self.project().and_then(|p| p.sizing.map(|s| (s, p.structure.bearing_kpa))) {
             q.items.extend(nnx_core::sizing::schedule_items(&nnx_core::sizing::compute(&doc.model, inputs.1, &inputs.0)));
         }
@@ -790,7 +835,12 @@ impl App {
         if setup.start.trim().is_empty() {
             return Err("enter the start date as YYYY-MM-DD".into());
         }
-        let q = self.schedule_qto()?;
+        // `phase`: a schedule of the work of one construction phase only. It is a view: the stored setup is not touched.
+        let phase = args.get("phase").and_then(Value::as_str).filter(|p| !p.is_empty()).map(String::from);
+        if let Some(p) = phase.as_ref().filter(|p| *p != "UNSET" && !Self::PHASES.contains(&p.as_str())) {
+            return Err(format!("'{p}' is not a phase"));
+        }
+        let q = self.schedule_qto_for(phase.as_deref())?;
         let built = setup.build(&self.doc()?.model, &q);
         match built {
             Ok((s, cal)) => {
@@ -807,12 +857,16 @@ impl App {
                         })
                     })
                     .collect();
+                let mut warnings = s.warnings.clone();
+                if let Some(p) = &phase {
+                    warnings.push(format!("schedule of the {p} work only: the concrete and steel of the structural schedules are not split by phase (structural members carry no phase), so they are not in it"));
+                }
                 let out = json!({
-                    "ok": true, "project_days": s.project_days, "finish": s.finish.iso(), "tasks": tasks, "warnings": s.warnings,
+                    "ok": true, "phase": phase, "project_days": s.project_days, "finish": s.finish.iso(), "tasks": tasks, "warnings": warnings,
                     "svg": s.gantt_svg(&cal, &self.title()), "csv": s.to_csv(),
                     "calendar": (0..=s.project_days).map(|d| cal.nth_workday(d).iso()).collect::<Vec<_>>()
                 });
-                if self.project().is_some() {
+                if self.project().is_some() && phase.is_none() {
                     self.exec_update("Schedule setup", |e| {
                         e.schedule = Some(setup.clone());
                         Ok(())
@@ -3063,6 +3117,29 @@ mod tests {
     }
 
     #[test]
+    fn structural_members_take_the_phase_of_the_rooms_they_stand_in() {
+        let mut app = generated_from(sketch2(json!({ "x": 3000, "y": 0 })));
+        app.handle("set_phase", &json!({ "phases": { "majlis": "EXISTING", "living": "NEW" } })).unwrap();
+        let model = &app.doc.as_ref().unwrap().model;
+        let phase = |e: &nnx_core::model::Element| e.props.get("phase").and_then(Value::as_str).map(String::from);
+        let kinds = ["Column", "Footing", "Slab"];
+        let members: Vec<_> = model.elements.values().filter(|e| kinds.contains(&e.kind.as_str())).collect();
+        assert!(!members.is_empty());
+        let phased = members.iter().filter(|e| phase(e).is_some()).count();
+        assert!(phased > 0, "no column, footing or slab got a phase");
+        assert!(members.iter().filter_map(|e| phase(e)).all(|p| App::PHASES.contains(&p.as_str())));
+        // A slab carries the phase of its own room.
+        for e in model.elements.values().filter(|e| e.kind == "Slab") {
+            let s = e.typed::<nnx_core::typed::Slab>().unwrap();
+            let expect = match s.room.as_str() { "majlis" => Some("EXISTING"), "living" => Some("NEW"), _ => None };
+            assert_eq!(phase(e).as_deref(), expect, "slab of room {}", s.room);
+        }
+        // The columns are counted in some phase table, not only in UNSET.
+        let in_phase: f64 = ["EXISTING", "NEW", "UNVERIFIED"].iter().map(|p| app.handle_ro_qto(p)["items"].as_array().unwrap().iter().filter(|i| i["code"] == "COLUMN.COUNT").map(|i| i["quantity"].as_f64().unwrap()).sum::<f64>()).sum();
+        assert!(in_phase > 0.0, "every column is still UNSET");
+    }
+
+    #[test]
     fn phase_quantity_exports_reconcile_with_unfiltered_items() {
         let mut app = generated_from(sketch2(json!({ "x": 3000, "y": 0 })));
         app.handle("set_phase", &json!({ "phases": { "majlis": "EXISTING", "living": "NEW" } })).unwrap();
@@ -4434,6 +4511,30 @@ mod tests {
 
     fn schedule_args(rates: Value) -> Value {
         json!({ "rates": rates, "start": "2026-11-15", "workdays": [true, true, true, true, false, false, true], "zones": 1 })
+    }
+
+    #[test]
+    fn a_phase_schedule_is_a_view_that_leaves_the_stored_setup_alone() {
+        let mut app = complete_app();
+        let rates = all_rates(&mut app);
+        let full = app.handle("schedule", &schedule_args(rates.clone())).unwrap();
+        assert_eq!(full["phase"], Value::Null);
+        let stored = hash(&app);
+        let mut args = schedule_args(rates.clone());
+        args["phase"] = json!("UNSET");
+        let view = app.handle("schedule", &args).unwrap();
+        assert_eq!(view["ok"], true, "{view}");
+        assert_eq!(view["phase"], "UNSET");
+        assert_eq!(hash(&app), stored, "a phase schedule stores nothing");
+        assert!(view["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("not split by phase")));
+        // Nothing in the model has a phase, so the whole of the work is UNSET: the block-work quantity is the same as in the full schedule.
+        let qty = |r: &Value| r["tasks"].as_array().unwrap().iter().find(|t| t["name"] == "Blockwork").map(|t| t["quantity"].as_f64().unwrap());
+        assert_eq!(qty(&view), qty(&full));
+        args["phase"] = json!("NEW");
+        let none_new = app.handle("schedule", &args).unwrap();
+        assert!(none_new["ok"] == true || none_new["missing"].is_array());
+        args["phase"] = json!("DEMOLISHED");
+        assert!(app.handle("schedule", &args).unwrap_err().contains("not a phase"));
     }
 
     #[test]
