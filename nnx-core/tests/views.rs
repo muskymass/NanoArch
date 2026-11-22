@@ -250,3 +250,15 @@ fn an_elevation_of_a_stepped_plan_shows_the_set_back_walls_and_hides_what_a_near
         assert!(!north.contains(&format!("data-id=\"{id}\"")), "{id} is hidden behind the north wall");
     }
 }
+
+#[test]
+fn elevations_and_sections_carry_the_overall_width_and_height() {
+    let f = fixture();
+    // The room is 6.00 m wide (south) or 4.00 m deep (east); walls 3.00 m plus the 0.15 m roof slab: 3.15 m.
+    let south = elevation::elevation_svg(&f.doc.model, Side::South, &ViewOpts::default()).unwrap();
+    assert!(south.contains(">6.00</text>") && south.contains(">H 3.15</text>"), "south: width 6.00, height 3.15");
+    let east = elevation::elevation_svg(&f.doc.model, Side::East, &ViewOpts::default()).unwrap();
+    assert!(east.contains(">4.00</text>") && east.contains(">H 3.15</text>"), "east: width 4.00");
+    let section = elevation::section_svg(&f.doc.model, &Cut::AtY { name: "A-A".into(), at: 2.0 }, &ViewOpts::default()).unwrap();
+    assert!(section.contains(">H 3.15</text>") && section.contains("class=\"dimtxt\""));
+}

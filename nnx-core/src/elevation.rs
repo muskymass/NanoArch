@@ -256,6 +256,12 @@ fn finish(mut c: Canvas, scene: &Scene, title: &str, subtitle: &str, h_range: (f
         let (ya, yb) = (f.y(w[0]), f.y(w[1]));
         let _ = writeln!(o, r#"<path class="dim" d="M{dx:.1} {ya:.1} V{yb:.1} M{:.1} {ya:.1} H{:.1} M{:.1} {yb:.1} H{:.1}"/><text class="dimtxt" x="{:.1}" y="{:.1}" transform="rotate(-90 {:.1} {:.1})">{:.2}</text>"#, dx - 4.0, dx + 4.0, dx - 4.0, dx + 4.0, dx - 5.0, (ya + yb) / 2.0, dx - 5.0, (ya + yb) / 2.0, w[1] - w[0]);
     }
+    // Overall height (ground floor top to the highest point), outside the storey dimensions, and the overall width of the building
+    // (the extent of its rooms) under the ground line.
+    let (dx2, ya, yb) = (dx - 34.0, f.y(0.0), f.y(top));
+    let _ = writeln!(o, r#"<path class="dim" d="M{dx2:.1} {ya:.1} V{yb:.1} M{:.1} {ya:.1} H{:.1} M{:.1} {yb:.1} H{:.1}"/><text class="dimtxt" x="{:.1}" y="{:.1}" transform="rotate(-90 {:.1} {:.1})" text-anchor="middle">H {top:.2}</text>"#, dx2 - 5.0, dx2 + 5.0, dx2 - 5.0, dx2 + 5.0, dx2 - 4.0, (ya + yb) / 2.0, dx2 - 4.0, (ya + yb) / 2.0);
+    let (xa, xb, wy) = (f.x(h_range.0), f.x(h_range.1), f.y(bottom) + 16.0);
+    let _ = writeln!(o, r#"<path class="dim" d="M{xa:.1} {wy:.1} H{xb:.1} M{xa:.1} {:.1} V{:.1} M{xb:.1} {:.1} V{:.1}"/><text class="dimtxt" x="{:.1}" y="{:.1}" text-anchor="middle">{:.2}</text>"#, wy - 5.0, wy + 5.0, wy - 5.0, wy + 5.0, (xa + xb) / 2.0, wy - 4.0, h_range.1 - h_range.0);
     let ty = f.y(bottom) + 40.0;
     let _ = writeln!(o, r#"<text class="title" x="{:.1}" y="{ty:.1}">{}</text><text class="note" x="{:.1}" y="{:.1}">{}</text>"#, f.m, esc(title), f.m, ty + 18.0, esc(subtitle));
     let _ = writeln!(o, r#"<text class="note" x="{:.1}" y="{:.1}">Preliminary drawing: heights from the top of the ground floor slab, no site datum assumed. Metres.</text></svg>"#, f.m, ty + 34.0);
