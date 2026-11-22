@@ -71,7 +71,7 @@ pub struct QtoOpts {
     pub level: Option<Id>,
     /// Restrict to the elements of one construction phase (`EXISTING`, `NEW`, `TO_BE_DEMOLISHED`, `TO_BE_MODIFIED`, `TEMPORARY`,
     /// `UNVERIFIED`), or `UNSET` for those that carry no phase. `None` takes every element. Structural members (slabs, beams, columns,
-    /// footings) are not given a phase by the engine, so they only appear under `None` or `UNSET`.
+    /// footings, tie beams) and MEP points and runs take a phase from `set_phase` (by room or location); until it is set they appear under `None` or `UNSET`.
     pub phase: Option<String>,
 }
 

@@ -817,7 +817,7 @@ impl App {
     }
 
     /// The same take-off restricted to one construction phase. The concrete and steel of the structural schedules are not split by phase
-    /// (structural members carry no phase), so they are left out of a phase take-off and the schedule says so.
+    /// (the sizing schedules compute from the whole model and are not split by phase), so they are left out of a phase take-off and the schedule says so.
     fn schedule_qto_for(&self, phase: Option<&str>) -> Result<qto::Qto, String> {
         let doc = self.doc()?;
         let mut q = qto::compute(&doc.model, &QtoOpts { phase: phase.map(String::from), ..QtoOpts::default() });
@@ -863,7 +863,7 @@ impl App {
                     .collect();
                 let mut warnings = s.warnings.clone();
                 if let Some(p) = &phase {
-                    warnings.push(format!("schedule of the {p} work only: the concrete and steel of the structural schedules are not split by phase (structural members carry no phase), so they are not in it"));
+                    warnings.push(format!("schedule of the {p} work only: the concrete and steel of the structural schedules are not split by phase (they are computed from the whole model), so they are not in it"));
                 }
                 let out = json!({
                     "ok": true, "phase": phase, "project_days": s.project_days, "finish": s.finish.iso(), "tasks": tasks, "warnings": warnings,
