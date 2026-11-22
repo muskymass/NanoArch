@@ -4,3 +4,10 @@ dist/*.exe
 dist/*.msix
 dist/msix-stage/
 dist/msix-check/
+
+AL-ANDALUS-EXPANSION/
+AL-ANDALUS-MASTER-2026/
+NanoArch-BOQ-Fix-02/
+NanoArch-Fix-01/
+audit/
+*.zip
