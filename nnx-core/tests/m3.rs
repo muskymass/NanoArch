@@ -254,6 +254,29 @@ fn punching_around_a_rectangular_column_matches_the_hand_calculation() {
 }
 
 #[test]
+fn flat_slab_punching_matches_the_hand_calculation() {
+    // Hand case, not read from the engine: a 6 x 4 m slab of 150 mm on four equal corner columns of 300 x 300 mm, so by symmetry each
+    // column carries a quarter: 24 / 4 = 6.0 m2. cover 50, bar 16 -> d = 84 mm; critical square 300 + 84 = 384 mm; bo = 4 x 384 = 1536 mm;
+    // w = 1.4 (5 + 2) = 9.8 kPa; Vu = 9.8 x 6.0 - 9.8 x 0.384^2 = 58.800 - 1.445 = 57.355 kN; stress = 57355 / (1536 x 84) = 0.4445 MPa;
+    // capacity = 0.33 sqrt(25) 0.75 = 1.2375 MPa; safety = 1.2375 / 0.4445 = 2.784.
+    let f = frame();
+    let mut inp = punch_inputs();
+    inp.treat_slabs_as_flat = true;
+    let rep = punching::check(&f.doc.model, &inp, Some(500.0), Some(5.0), Some(2.0));
+    let slabs: Vec<_> = rep.punching.iter().filter(|p| p.kind == "slab").collect();
+    assert_eq!(slabs.len(), 4);
+    for r in slabs {
+        near(r.d_mm, 84.0, 1e-9);
+        near(r.bo_mm, 1536.0, 1e-9);
+        near(r.vu_kn, 57.355, 0.01);
+        near(r.stress_mpa, 0.4445, 0.001);
+        near(r.capacity_mpa, 1.2375, 0.0006);
+        near(r.safety, 2.784, 0.01);
+        assert_eq!(r.status, "ok");
+    }
+}
+
+#[test]
 fn flat_slab_punching_uses_the_slab_thickness_and_the_floor_loads() {
     let f = frame();
     let mut inp = punch_inputs();
