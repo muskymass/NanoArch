@@ -224,3 +224,29 @@ fn runs_appear_in_sections_and_the_parapet_height_must_be_positive() {
     let empty = Document::default();
     assert_eq!(elevation::elevation_svg(&empty.model, Side::South, &ViewOpts::default()).unwrap_err(), ViewError::Empty);
 }
+
+#[test]
+fn an_elevation_of_a_stepped_plan_shows_the_set_back_walls_and_hides_what_a_nearer_wall_covers() {
+    // Two wings: the west one reaches y = 0, the east one starts 3 m further north (its south wall is set back). Each south wall has
+    // a window. Before, only walls within 0.4 m of the bounding line were drawn, so the set-back wing had no facade at all.
+    let near = wall(0, 0, 4000, 0, "w");
+    let far = wall(4000, 3000, 8000, 3000, "e");
+    let (near_id, far_id) = (near.id, far.id);
+    let win = |host: Id, c: i64| element_of(&Window { width: 1200, height: 1200, sill_height: 900, offset_center: c, room: "x".into(), extra: Map::new() }, Source::User).hosted_by(host);
+    let (w_near, w_far) = (win(near_id, 2000), win(far_id, 2000));
+    let (wn, wf) = (w_near.id, w_far.id);
+    let mut doc = Document::default();
+    let slab = element_of(&nnx_core::typed::Slab { x: 0, y: 0, w: 8000, h: 4000, thickness: 150, kind: "roof".into(), room: "w".into(), extra: Map::new() }, Source::User);
+    let space = element_of(&Space { func: "living".into(), requirement_key: "w".into(), area: 32.0, target_area: 32.0, x: 0, y: 0, w: 8000, h: 4000, boundary: vec![[0, 0], [8000, 0], [8000, 4000], [0, 4000]], net_area: None, glazing_ratio: None, extra: Map::new() }, Source::User);
+    let cmds = vec![near, far, wall(4000, 0, 4000, 3000, "w"), wall(0, 4000, 8000, 4000, "e"), w_near, w_far, slab, space].into_iter().map(Command::Create).collect();
+    doc.commit("stepped", Origin::User, cmds).unwrap();
+    let south = elevation::elevation_svg(&doc.model, Side::South, &ViewOpts::default()).unwrap();
+    for id in [near_id, far_id, wn, wf] {
+        assert!(south.contains(&format!("data-id=\"{id}\"")), "{id} is drawn in the south elevation");
+    }
+    // Looking from the north the long north wall (x 0..8000) is nearest and covers both south walls and their windows.
+    let north = elevation::elevation_svg(&doc.model, Side::North, &ViewOpts::default()).unwrap();
+    for id in [near_id, far_id, wn, wf] {
+        assert!(!north.contains(&format!("data-id=\"{id}\"")), "{id} is hidden behind the north wall");
+    }
+}

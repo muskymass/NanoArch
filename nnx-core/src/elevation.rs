@@ -296,18 +296,6 @@ fn check_parapet(opts: &ViewOpts) -> Result<(), ViewError> {
     }
 }
 
-/// True when the box is a facade piece of `side`: thin across the facade and on its line.
-fn on_side(b: &Box3, side: Side, e: &[f64; 4]) -> bool {
-    let (dx, dy) = (b.max[0] - b.min[0], b.max[1] - b.min[1]);
-    let (cx, cy) = ((b.max[0] + b.min[0]) / 2.0, (b.max[1] + b.min[1]) / 2.0);
-    match side {
-        Side::South => dy <= dx && (cy - e[1]).abs() <= 0.4,
-        Side::North => dy <= dx && (cy - e[3]).abs() <= 0.4,
-        Side::West => dx <= dy && (cx - e[0]).abs() <= 0.4,
-        Side::East => dx <= dy && (cx - e[2]).abs() <= 0.4,
-    }
-}
-
 /// Screen-horizontal range of a box seen from `side`.
 fn h_range_side(b: &Box3, side: Side) -> (f64, f64) {
     match side {
@@ -342,18 +330,86 @@ fn elevation_build(model: &Model, side: Side, opts: &ViewOpts) -> Result<(String
         Side::East => view_grids(model, false, 1.0, hr),
         Side::West => view_grids(model, false, -1.0, hr),
     };
-    let facade: Vec<&Box3> = scene.boxes.iter().filter(|b| matches!(b.kind, "Wall" | "Window" | "Door") && (b.kind != "Wall" || b.class == "ext") && on_side(b, side, &e)).collect();
-    for b in facade.iter().filter(|b| b.kind == "Wall") {
+    // Every exterior wall parallel to the facade (not only those on the building's bounding line: a stepped plan has set-back walls),
+    // its openings, and the slabs, drawn from the farthest to the nearest so a nearer piece covers what lies behind it.
+    let parallel = |b: &Box3| {
+        let (dx, dy) = (b.max[0] - b.min[0], b.max[1] - b.min[1]);
+        match side {
+            Side::South | Side::North => dy <= dx,
+            Side::East | Side::West => dx <= dy,
+        }
+    };
+    let walls: Vec<&Box3> = scene.boxes.iter().filter(|b| b.kind == "Wall" && b.class == "ext" && parallel(b)).collect();
+    // The face of an exterior wall that looks outward is the one away from the rooms beside it: rooms on its north side make it a south
+    // facade. `Some(true)` when that outward face looks towards the viewer, `Some(false)` when it looks away, `None` when no room touches
+    // the wall (then nothing is known and the wall is kept; a nearer wall may still hide it).
+    const TOUCH_M: f64 = 0.35;
+    let rooms: Vec<&Box3> = scene.boxes.iter().filter(|b| b.kind == "Space").collect();
+    let faces_viewer = |w: &Box3| -> Option<bool> {
+        let (cx, cy) = ((w.max[0] + w.min[0]) / 2.0, (w.max[1] + w.min[1]) / 2.0);
+        // Rooms beside the wall on its low side (smaller coordinate) and on its high side, across the wall's extent along the facade.
+        let (mut low, mut high) = (false, false);
+        for r in &rooms {
+            match side {
+                Side::South | Side::North => {
+                    if r.min[0] < w.max[0] && r.max[0] > w.min[0] {
+                        high |= (r.min[1] - cy).abs() <= TOUCH_M;
+                        low |= (r.max[1] - cy).abs() <= TOUCH_M;
+                    }
+                }
+                Side::East | Side::West => {
+                    if r.min[1] < w.max[1] && r.max[1] > w.min[1] {
+                        high |= (r.min[0] - cx).abs() <= TOUCH_M;
+                        low |= (r.max[0] - cx).abs() <= TOUCH_M;
+                    }
+                }
+            }
+        }
+        match (low, high, side) {
+            (false, true, Side::South | Side::West) | (true, false, Side::North | Side::East) => Some(true),
+            (true, false, Side::South | Side::West) | (false, true, Side::North | Side::East) => Some(false),
+            _ => None,
+        }
+    };
+    let facade_walls: Vec<&Box3> = walls.iter().copied().filter(|w| faces_viewer(w) != Some(false)).collect();
+    // An opening belongs to the facade when it stands in a wall that shows (plan overlap with one of them).
+    let in_exterior_wall = |o: &Box3| facade_walls.iter().any(|w| o.min[0] < w.max[0] && o.max[0] > w.min[0] && o.min[1] < w.max[1] && o.max[1] > w.min[1]);
+    let near = |b: &Box3| -> f64 {
+        let (cx, cy) = ((b.max[0] + b.min[0]) / 2.0, (b.max[1] + b.min[1]) / 2.0);
+        match side {
+            Side::South => -cy,
+            Side::North => cy,
+            Side::East => cx,
+            Side::West => -cx,
+        }
+    };
+    // (distance towards the viewer, rank at equal depth: wall, slab, opening, the piece)
+    let mut pieces: Vec<(f64, u8, &Box3)> = Vec::new();
+    pieces.extend(facade_walls.iter().map(|b| (near(b), 0, *b)));
+    pieces.extend(scene.boxes.iter().filter(|b| b.kind == "Slab").map(|b| (near(b), 1, b)));
+    pieces.extend(scene.boxes.iter().filter(|b| matches!(b.kind, "Window" | "Door") && parallel(b) && in_exterior_wall(b)).map(|b| (near(b), 2, b)));
+    pieces.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    // A piece wholly behind a nearer wall is not seen: it is left out (the opening of the opposite facade, the far wall of a plain box).
+    const BEHIND_M: f64 = 0.15;
+    let hidden = |near_p: f64, b: &Box3| -> bool {
         let (h0, h1) = h_range_side(b, side);
-        c.rect("wall", Some(&b.id), h0, h1, b.min[2], b.max[2]);
-    }
-    for b in scene.boxes.iter().filter(|b| b.kind == "Slab") {
+        walls.iter().any(|w| {
+            let (w0, w1) = h_range_side(w, side);
+            near(w) > near_p + BEHIND_M && w0 <= h0 && w1 >= h1 && w.min[2] <= b.min[2] && w.max[2] >= b.max[2]
+        })
+    };
+    for (near_p, _, b) in pieces {
+        if hidden(near_p, b) {
+            continue;
+        }
         let (h0, h1) = h_range_side(b, side);
-        c.rect("slab", Some(&b.id), h0, h1, b.min[2], b.max[2]);
-    }
-    for b in facade.iter().filter(|b| b.kind != "Wall") {
-        let (h0, h1) = h_range_side(b, side);
-        c.rect(if b.kind == "Door" { "leaf" } else { "glass" }, Some(&b.id), h0, h1, b.min[2], b.max[2]);
+        let class = match b.kind {
+            "Wall" => "wall",
+            "Slab" => "slab",
+            "Door" => "leaf",
+            _ => "glass",
+        };
+        c.rect(class, Some(&b.id), h0, h1, b.min[2], b.max[2]);
     }
     // The style's solids of this side, in front of the walls and the openings.
     let name = match side {
