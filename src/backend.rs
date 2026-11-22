@@ -351,6 +351,8 @@ impl App {
             "assumptions" => Ok(assumptions()),
             "qto" => self.qto(args),
             "set_phase" => self.set_phase(args),
+            "add_feature" => self.add_feature(args),
+            "features" => self.features_json(args),
             "mep" => self.mep(args),
             "sizing" => self.sizing(args),
             "boq" => self.boq(args),
@@ -689,6 +691,63 @@ impl App {
         let n = cmds.len();
         doc.commit("Set construction phases", Origin::User, cmds).map_err(|e| e.to_string())?;
         Ok(json!({ "elements": n, "svg": self.render_or_null()? }))
+    }
+
+    /// Adds a named feature of the design (`role`: expansion joint, transfer beam, light well, shaft, lift, entrance landing or path ...)
+    /// at the geometry the drawing gives, on one level (`level`, 0 = ground). One undoable step. Only what is stated is stored.
+    fn add_feature(&mut self, args: &Value) -> Result<Value, String> {
+        let num = |k: &str| args.get(k).and_then(Value::as_f64).map(|v| v.round() as i64);
+        let text = |k: &str| args.get(k).and_then(Value::as_str).map(String::from);
+        let role = text("role").ok_or("role is required")?;
+        let shape = text("shape").ok_or("shape (line, rect or point) is required")?;
+        let f = nnx_core::typed::Feature {
+            role,
+            shape,
+            x1: num("x1").ok_or("x1 is required")?,
+            y1: num("y1").ok_or("y1 is required")?,
+            x2: num("x2").unwrap_or(0),
+            y2: num("y2").unwrap_or(0),
+            width: num("width").unwrap_or(0),
+            name: text("name"),
+            note: text("note"),
+            extra: Default::default(),
+        };
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let level = args.get("level").and_then(Value::as_u64).unwrap_or(0) as usize;
+        let lid = building::levels(&doc.model).get(level).map(|l| l.1).ok_or("there is no such level")?;
+        let mut el = nnx_core::typed::element_of(&f, nnx_core::Source::User);
+        el.level_id = Some(lid);
+        nnx_core::typed::Typed::validate(&f, &doc.model, &el)?;
+        if let Some(p) = text("phase") {
+            if !Self::PHASES.contains(&p.as_str()) {
+                return Err(format!("'{p}' is not a phase"));
+            }
+            el.props.insert("phase".into(), json!(p));
+        }
+        let id = el.id;
+        doc.commit("Add feature", Origin::User, vec![Command::Create(el)]).map_err(|e| e.to_string())?;
+        Ok(json!({ "id": id.to_string(), "svg": self.render_or_null()? }))
+    }
+
+    fn features_json(&self, args: &Value) -> Result<Value, String> {
+        let doc = self.doc()?;
+        let lv = building::levels(&doc.model);
+        let only = args.get("level").and_then(Value::as_u64).map(|l| l as usize);
+        let list: Vec<Value> = doc
+            .model
+            .elements
+            .values()
+            .filter(|e| e.kind == "Feature")
+            .filter_map(|e| {
+                let level = lv.iter().position(|(_, id)| Some(*id) == e.level_id)?;
+                if only.is_some_and(|o| o != level) {
+                    return None;
+                }
+                let f = e.typed::<nnx_core::typed::Feature>().ok()?;
+                Some(json!({ "id": e.id.to_string(), "level": level, "role": f.role, "shape": f.shape, "name": f.name, "x1": f.x1, "y1": f.y1, "x2": f.x2, "y2": f.y2, "width": f.width, "phase": e.props.get("phase") }))
+            })
+            .collect();
+        Ok(json!({ "features": list }))
     }
 
     fn qto(&self, args: &Value) -> Result<Value, String> {
@@ -2988,6 +3047,34 @@ mod tests {
         assert!(((e + n + u) - all).abs() < 0.01, "the phases add up to the whole: {e} + {n} + {u} vs {all}");
         app.doc.as_mut().unwrap().undo();
         assert_eq!(space(&app, "majlis"), None, "one undo takes the phases back");
+    }
+
+    #[test]
+    fn named_features_are_stored_drawn_quantified_and_undone_as_stated() {
+        let mut app = generated_from(sketch2(json!({ "x": 3000, "y": 0 })));
+        let svg0 = app.render().unwrap();
+        assert!(!svg0.contains("class=\"feat feat-"), "no features before any is added");
+        let err = app.handle("add_feature", &json!({ "role": "MOAT", "shape": "line", "x1": 0, "y1": 0, "x2": 0, "y2": 5000 })).unwrap_err();
+        assert!(err.contains("not a feature role"), "{err}");
+        let err = app.handle("add_feature", &json!({ "role": "EXPANSION_JOINT", "shape": "line", "x1": 100, "y1": 100, "x2": 100, "y2": 100, "width": 50 })).unwrap_err();
+        assert!(err.contains("two different end points"), "{err}");
+        let r = app.handle("add_feature", &json!({ "role": "EXPANSION_JOINT", "shape": "line", "x1": 6000, "y1": 0, "x2": 6000, "y2": 8000, "width": 50, "name": "EJ", "phase": "NEW" })).unwrap();
+        assert!(r["svg"].as_str().unwrap().contains("class=\"feat feat-EXPANSION_JOINT"), "drawn on the plan");
+        app.handle("add_feature", &json!({ "role": "SHAFT", "shape": "rect", "x1": 1000, "y1": 1000, "x2": 1552, "y2": 1552, "name": "SH1" })).unwrap();
+        app.handle("add_feature", &json!({ "role": "SHAFT", "shape": "rect", "x1": 3000, "y1": 1000, "x2": 3552, "y2": 1552, "name": "SH2" })).unwrap();
+        let q = app.handle("qto", &json!({})).unwrap();
+        let get = |code: &str| q["items"].as_array().unwrap().iter().find(|i| i["code"] == code).map(|i| i["quantity"].as_f64().unwrap());
+        assert_eq!(get("FEATURE.EXPANSION_JOINT.COUNT"), Some(1.0));
+        assert_eq!(get("FEATURE.EXPANSION_JOINT.LEN"), Some(8.0), "metres, from the stated end points");
+        assert_eq!(get("FEATURE.SHAFT.COUNT"), Some(2.0));
+        assert!((get("FEATURE.SHAFT.AREA").unwrap() - 2.0 * 0.552 * 0.552).abs() < 1e-3);
+        let only_new = app.handle("qto", &json!({ "phase": "NEW" })).unwrap();
+        assert!(only_new["items"].as_array().unwrap().iter().any(|i| i["code"] == "FEATURE.EXPANSION_JOINT.COUNT") && !only_new["items"].as_array().unwrap().iter().any(|i| i["code"] == "FEATURE.SHAFT.COUNT"), "the phase filter applies to features");
+        let list = app.handle("features", &json!({ "level": 0 })).unwrap();
+        assert_eq!(list["features"].as_array().unwrap().len(), 3);
+        assert_eq!(app.handle("features", &json!({ "level": 1 })).unwrap()["features"].as_array().unwrap().len(), 0, "a feature belongs to its level");
+        app.doc.as_mut().unwrap().undo();
+        assert_eq!(app.handle("features", &json!({})).unwrap()["features"].as_array().unwrap().len(), 2, "one undo removes the last feature");
     }
 
     #[test]

@@ -9,7 +9,7 @@
 //! North is up. Lengths in the model are millimetres.
 
 use crate::model::{Element, Id, Model};
-use crate::typed::{Beam, Column, Door, MepPoint, Space, Typed, Wall, Window};
+use crate::typed::{Beam, Column, Door, MepPoint, Space, Typed, Wall, Window, Feature};
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
@@ -148,6 +148,7 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
  .dimline,.dimext,.dimtick{{stroke:#1c5d99;stroke-width:.8;fill:none}} .dimtick{{stroke-width:1.2}} .dimtxt2{{font-size:10.5px;fill:#1c5d99;text-anchor:middle}}
  .room.ph-EXISTING{{fill:#dbe8f6}} .room.ph-NEW{{fill:#d3ece3}} .room.ph-TO_BE_DEMOLISHED{{fill:#f6d5d1}} .room.ph-TO_BE_MODIFIED{{fill:#fbe9c6}} .room.ph-TEMPORARY{{fill:#ece3f5}} .room.ph-UNVERIFIED{{fill:#eeeeee}}
  .wall.ph-EXISTING{{fill:#385f8c}} .wall.ph-NEW{{fill:#177360}} .wall.ph-TO_BE_DEMOLISHED{{fill:#b53a2e}} .wall.ph-TO_BE_MODIFIED{{fill:#b9801d}} .wall.ph-TEMPORARY{{fill:#7a4fa3}} .wall.ph-UNVERIFIED{{fill:#7a7a7a}}
+ .feat{{fill:none;stroke:#444;stroke-width:1}} .feat-REMOVED_WALL{{stroke:#b53a2e;stroke-opacity:.55;stroke-dasharray:2 2}} .feat-EXPANSION_JOINT{{stroke:#c0392b;stroke-dasharray:12 3 2 3}} .feat-TRANSFER_BEAM{{stroke:#7b3fa0;stroke-dasharray:8 4}} .feat-LIGHTWELL{{fill:#e8eef2;fill-opacity:.7;stroke:#4a6a8a;stroke-dasharray:3 2}} .feat-SHAFT{{fill:#fff;stroke:#c0392b}} .feat-SLIDING_DOOR{{stroke:#2a6f97;stroke-width:3}} .feat-LIFT,.feat-LIFT_LANDING{{fill:#d3ece3;stroke:#177360}} .feat-ENTRANCE_LANDING,.feat-ENTRANCE_PATH{{fill:#efe6d6;stroke:#9c7840}} .feat-FLOOR_DRAIN{{fill:none;stroke:#177360}} .feattxt{{font-size:9.5px;font-weight:600;fill:#7a2a20;text-anchor:middle}}
  .tagbox{{fill:#fff;fill-opacity:.9;stroke:#555;stroke-width:.8}} .tagname{{font-size:11px;font-weight:600;fill:#111;text-anchor:middle}} .tagtxt{{font-size:10px;fill:#444;text-anchor:middle}}
 </style>
 <rect class="bg" width="{w:.1}" height="{h:.1}"/>
@@ -188,6 +189,34 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
             rw * s,
             rh * s
         );
+    }
+
+
+    // Features the drawing names (expansion joint, transfer beam, light well, shafts, lift, entrance): drawn over the walls, as stated.
+    for (e, f) in collect::<Feature>(model, level) {
+        let cls = format!("feat feat-{}{}", f.role, phase_class(e));
+        let label = f.name.clone().unwrap_or_default();
+        match f.shape.as_str() {
+            "line" => {
+                let _ = writeln!(o, r#"<line class="{}" data-id="{}" x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" style="stroke-width:{:.1}px"/>"#, cls, e.id, tx(f.x1 as f64), ty(f.y1 as f64), tx(f.x2 as f64), ty(f.y2 as f64), (f.width as f64 * s).max(1.4));
+                if !label.is_empty() {
+                    let _ = writeln!(o, r#"<text class="feattxt" x="{:.1}" y="{:.1}">{}</text>"#, tx((f.x1 + f.x2) as f64 / 2.0) + 12.0, ty((f.y1 + f.y2) as f64 / 2.0), esc(&label));
+                }
+            }
+            "rect" => {
+                let (x0, x1, y0, y1) = (f.x1.min(f.x2) as f64, f.x1.max(f.x2) as f64, f.y1.min(f.y2) as f64, f.y1.max(f.y2) as f64);
+                let _ = writeln!(o, r#"<rect class="{}" data-id="{}" x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}"/>"#, cls, e.id, tx(x0), ty(y1), (x1 - x0) * s, (y1 - y0) * s);
+                if f.role == "SHAFT" {
+                    let _ = writeln!(o, r#"<path class="{}" d="M{:.1} {:.1} L{:.1} {:.1} M{:.1} {:.1} L{:.1} {:.1}"/>"#, cls, tx(x0), ty(y1), tx(x1), ty(y0), tx(x0), ty(y0), tx(x1), ty(y1));
+                }
+                if !label.is_empty() {
+                    let _ = writeln!(o, r#"<text class="feattxt" x="{:.1}" y="{:.1}">{}</text>"#, tx((x0 + x1) / 2.0), ty((y0 + y1) / 2.0), esc(&label));
+                }
+            }
+            _ => {
+                let _ = writeln!(o, r#"<circle class="{}" data-id="{}" cx="{:.1}" cy="{:.1}" r="4"/>"#, cls, e.id, tx(f.x1 as f64), ty(f.y1 as f64));
+            }
+        }
     }
 
     let host_of = |e: &Element| -> Option<Host> {

@@ -16,7 +16,7 @@
 //! - No prices. Rates belong to the project and are entered with their source and date.
 
 use crate::model::{Element, Id, Model};
-use crate::typed::{Beam, Column, Door, Footing, Slab, Space, Typed, Wall, Window};
+use crate::typed::{Beam, Column, Door, Feature, Footing, Slab, Space, Typed, Wall, Window};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -346,6 +346,26 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     let mut floor: BTreeMap<String, (f64, Vec<Id>)> = BTreeMap::new();
     let mut skirting: BTreeMap<String, (f64, Vec<Id>)> = BTreeMap::new();
     // A room separator is a line on the drawing, not a wall: no skirting runs along it.
+    // ---- features the drawing names: counted by role, with length (lines) and area (rectangles) ----
+    {
+        let mut by_role: BTreeMap<String, Vec<(Id, f64, f64)>> = BTreeMap::new();
+        for (e, f) in collect::<Feature>(model, opts) {
+            let (len, area) = f.size();
+            by_role.entry(f.role.clone()).or_default().push((e.id, len, area));
+        }
+        for (role, v) in by_role {
+            let ids: Vec<Id> = v.iter().map(|x| x.0).collect();
+            acc.add(&format!("FEATURE.{role}.COUNT"), &format!("{role}: number of features"), Unit::Nr, v.len() as f64, ids.clone());
+            let len: f64 = v.iter().map(|x| x.1).sum();
+            if len > 0.0 {
+                acc.add(&format!("FEATURE.{role}.LEN"), &format!("{role}: total length"), Unit::M, len / 1000.0, ids.clone());
+            }
+            let area: f64 = v.iter().map(|x| x.2).sum();
+            if area > 0.0 {
+                acc.add(&format!("FEATURE.{role}.AREA"), &format!("{role}: total area"), Unit::M2, area / MM2_PER_M2, ids);
+            }
+        }
+    }
     let separators = collect::<crate::typed::RoomSeparator>(model, opts);
     let mut open_edge_mm = 0.0;
     for (e, s) in &spaces {

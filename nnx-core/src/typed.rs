@@ -689,6 +689,67 @@ impl Typed for RoomSeparator {
     }
 }
 
+/// A named feature of the design that is not a room, wall or opening: an expansion joint, a transfer beam over a removed wall, an open light
+/// well, a ventilation shaft, a lift well, the landing and path of a separate entrance. It carries only what the drawing states (a line with a
+/// width, a rectangle or a point, a reference such as `EJ` or `SH1`, a note); nothing about its design is inferred. A transfer beam, for
+/// example, has no section here: that is the structural engineer's.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Feature {
+    /// One of `FEATURE_ROLES`.
+    pub role: String,
+    /// `line` (x1,y1 to x2,y2, `width` thick), `rect` (corners x1,y1 and x2,y2) or `point` (x1,y1).
+    pub shape: String,
+    #[serde(deserialize_with = "mm")]
+    pub x1: i64,
+    #[serde(deserialize_with = "mm")]
+    pub y1: i64,
+    #[serde(deserialize_with = "mm", default)]
+    pub x2: i64,
+    #[serde(deserialize_with = "mm", default)]
+    pub y2: i64,
+    /// Thickness of a line (mm); 0 for the other shapes.
+    #[serde(deserialize_with = "mm", default)]
+    pub width: i64,
+    /// The label the drawing gives it (`EJ`, `B1`, `SH1`, `LW`).
+    #[serde(default, skip_serializing_if = "opt_is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "opt_is_none")]
+    pub note: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+pub const FEATURE_ROLES: [&str; 11] = ["REMOVED_WALL", "EXPANSION_JOINT", "TRANSFER_BEAM", "LIGHTWELL", "SHAFT", "FLOOR_DRAIN", "SLIDING_DOOR", "LIFT", "LIFT_LANDING", "ENTRANCE_LANDING", "ENTRANCE_PATH"];
+
+impl Feature {
+    /// Length (mm) of a line, area (mm2) of a rectangle; 0 for a point.
+    pub fn size(&self) -> (f64, f64) {
+        match self.shape.as_str() {
+            "line" => (((self.x2 - self.x1) as f64).hypot((self.y2 - self.y1) as f64), 0.0),
+            "rect" => (0.0, ((self.x2 - self.x1).abs() as f64) * ((self.y2 - self.y1).abs() as f64)),
+            _ => (0.0, 0.0),
+        }
+    }
+}
+
+impl Typed for Feature {
+    const KIND: &'static str = "Feature";
+    const DISCIPLINE: Discipline = Discipline::Arc;
+    fn validate(&self, _m: &Model, _e: &Element) -> Result<(), String> {
+        if !FEATURE_ROLES.contains(&self.role.as_str()) {
+            return Err(format!("'{}' is not a feature role: use one of {}", self.role, FEATURE_ROLES.join(", ")));
+        }
+        match self.shape.as_str() {
+            "line" if (self.x1, self.y1) == (self.x2, self.y2) => Err("a line feature needs two different end points".into()),
+            "line" if self.width < 0 => Err("a line feature's width cannot be negative".into()),
+            "rect" if self.x1 == self.x2 || self.y1 == self.y2 => Err("a rectangle feature needs two opposite corners".into()),
+            "line" | "rect" | "point" => Ok(()),
+            other => Err(format!("shape '{other}' is not line, rect or point")),
+        }
+    }
+}
+
 /// A permanent linear dimension in plan: the distance along `axis` (`x` or `y`) between the positions `a` and `b`, drawn on the line at
 /// `at` across it, with extension lines from the measured points (`oa`, `ob` across). When it was taken from walls, grid lines, openings
 /// or columns it names them (`ref_a`, `ref_b`) and follows them when they move.
