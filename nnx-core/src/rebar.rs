@@ -64,6 +64,9 @@ pub struct BeamDesign {
     /// needs the bending design: the load), and then both are required. Neither comes from the code files.
     pub phi_shear: Option<f64>,
     pub concrete_shear_factor: Option<f64>,
+    /// Optional upper limit of the stirrup contribution: `Vs <= factor * sqrt(f'c) * b * d`. Beyond it more stirrups cannot help and the
+    /// section is too small for the shear. Needs the stirrup check; the factor is yours, not read from the code files.
+    pub shear_max_factor: Option<f64>,
     pub ratio_min: Option<f64>,
     pub min_top_bars: Option<u32>,
     pub stirrup_dia_mm: Option<f64>,
@@ -405,6 +408,14 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                 } else {
                     None
                 };
+                let vs_limit = match bd.shear_max_factor {
+                    Some(f) if shear.is_some() => pos("shear_max_factor", Some(f), &mut miss),
+                    Some(_) => {
+                        miss.push("design.beam.phi_shear and concrete_shear_factor (shear_max_factor limits the stirrup check)".into());
+                        None
+                    }
+                    None => None,
+                };
                 if shear.is_some() && bending.is_none() {
                     miss.push("design.beam.phi_flexure and concrete_unit_weight_kn_m3 (the stirrup check needs the beam load)".into());
                 }
@@ -469,8 +480,12 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                             let vs = 2.0 * area(sdia) * c.fy * d_eff / sspc / 1000.0;
                             let cap = phi_v * (vc + vs);
                             let pass = vu <= cap;
+                            let over = vs_limit.map(|f| (f * c.fc.sqrt() * b.b * d_eff / 1000.0, vs)).filter(|(lim, vs)| vs > lim);
                             shear_note = format!("; shear at d from the support: Vu {vu:.1} kN against phi (Vc + Vs) {cap:.1} kN (Vc {vc:.1}, Vs {vs:.1} for two legs of Dia {sdia} at {sspc}): {}", if pass { "stirrups sufficient" } else { "stirrups insufficient" });
-                            if !pass {
+                            if let Some((lim, vs)) = over {
+                                shear_note.push_str(&format!("; the stirrups entered give Vs {vs:.1} kN above the limit {lim:.1} kN: the section is too small for the shear"));
+                                status = "section too small for shear";
+                            } else if !pass {
                                 status = "stirrups insufficient";
                             }
                         }

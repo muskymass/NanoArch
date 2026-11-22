@@ -415,3 +415,25 @@ fn the_stirrup_check_names_what_it_needs() {
     assert_eq!(o.rows[0].status, "ok", "bending is still designed");
     assert!(!o.rows[0].notes.contains("shear at d"), "no shear check without both factors");
 }
+
+#[test]
+fn the_upper_limit_of_vs_marks_a_section_too_small_for_the_shear() {
+    // Case 2 of the stirrup test: d 539.5, Vs 151.86 kN with Dia 8 at 150. A limit factor of 0.15 gives 0.15 x 5 x 300 x 539.5 = 121.39 kN:
+    // the stirrups entered exceed it, so more stirrups would not be the answer. A factor of 0.66 gives 534.0 kN: no effect.
+    let b2 = || BeamIn { name: "BM-2", id: None, b: 300.0, depth: 600.0, tie: false, span_mm: Some(4000.0), slab_load_kn_m: Some(100.0) };
+    let mut tight = shear_dsn(150.0);
+    tight.beam.as_mut().unwrap().shear_max_factor = Some(0.15);
+    let o = rebar::design(&tight, None, &[], &[], &[b2()]);
+    assert_eq!(o.rows[0].status, "section too small for shear");
+    assert!(o.rows[0].notes.contains("151.9 kN above the limit 121.4 kN"), "{}", o.rows[0].notes);
+    let mut loose = shear_dsn(150.0);
+    loose.beam.as_mut().unwrap().shear_max_factor = Some(0.66);
+    assert_eq!(rebar::design(&loose, None, &[], &[], &[b2()]).rows[0].status, "ok");
+    // The limit without the stirrup check is named, not applied.
+    let mut orphan = bending_dsn();
+    orphan.beam.as_mut().unwrap().shear_max_factor = Some(0.66);
+    let b1 = BeamIn { name: "BM-1", id: None, b: 300.0, depth: 500.0, tie: false, span_mm: Some(6000.0), slab_load_kn_m: Some(20.0) };
+    let o = rebar::design(&orphan, None, &[], &[], &[b1]);
+    assert!(o.missing.iter().any(|m| m.contains("shear_max_factor")), "{:?}", o.missing);
+    assert_eq!(o.rows[0].status, "ok");
+}
