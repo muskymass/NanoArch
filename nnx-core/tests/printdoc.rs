@@ -75,3 +75,21 @@ fn arabic_headings_are_right_to_left_and_each_level_gets_its_own_sheet() {
 fn an_empty_model_is_refused() {
     assert!(print_html(&Model::default(), &opts(false)).unwrap_err().contains("nothing to print"));
 }
+
+#[test]
+fn a_long_room_schedule_is_split_in_two_so_the_level_stays_on_one_sheet() {
+    // 20 rooms of 4 x 5 m = 20.0 m2 each: above 16 rows the schedule becomes two tables of 10 rows, the total only in the last.
+    let mut doc = Document::default();
+    let cmds: Vec<Command> = (0..20).map(|i| room(&format!("r{i}"), 4000, None)).collect();
+    doc.commit("many rooms", Origin::User, cmds).unwrap();
+    let html = print_html(&doc.model, &opts(false)).unwrap();
+    assert_eq!(html.matches("<section class=\"sheet\">").count(), 1);
+    assert_eq!(html.matches("<table>").count(), 2);
+    assert_eq!(html.matches("<td>bedroom</td>").count(), 20, "every room appears once");
+    assert_eq!(html.matches("class=\"tot\"").count(), 1);
+    assert!(html.contains("<td class=\"n\">400.0</td></tr></table>"), "the total is the sum of all 20 rooms, in the last table");
+    // 16 rooms or fewer stay in a single table.
+    let mut small = Document::default();
+    small.commit("few", Origin::User, (0..16).map(|i| room(&format!("r{i}"), 4000, None)).collect()).unwrap();
+    assert_eq!(print_html(&small.model, &opts(false)).unwrap().matches("<table>").count(), 1);
+}
