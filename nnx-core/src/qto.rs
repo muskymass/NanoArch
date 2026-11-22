@@ -240,6 +240,19 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
             int_ids.push(e.id);
         }
     }
+    // Walls marked TO_BE_DEMOLISHED: the whole wall comes down, openings included, so the gross face area and the volume are measured.
+    // They are in the wall items above as well (every wall is); this is the work of taking them down.
+    let (mut dem_a, mut dem_v, mut dem_ids) = (0.0, 0.0, Vec::new());
+    for (e, w) in &walls {
+        if e.props.get("phase").and_then(|v| v.as_str()) == Some("TO_BE_DEMOLISHED") {
+            let gross = w.length as f64 * w.height as f64;
+            dem_a += gross / MM2_PER_M2;
+            dem_v += gross * w.thickness as f64 / MM3_PER_M3;
+            dem_ids.push(e.id);
+        }
+    }
+    acc.add("DEMOLISH.WALL.AREA", "Walls to be demolished, gross face area", Unit::M2, dem_a, dem_ids.clone());
+    acc.add("DEMOLISH.WALL.VOL", "Walls to be demolished, volume", Unit::M3, dem_v, dem_ids);
     acc.add("WALL.EXT.AREA", "Exterior walls, area net of openings", Unit::M2, ext_a, ext_ids.clone());
     acc.add("WALL.INT.AREA", "Interior walls, area net of openings", Unit::M2, int_a, int_ids.clone());
     acc.add("WALL.EXT.VOL", "Exterior walls, volume net of openings", Unit::M3, ext_v, ext_ids.clone());

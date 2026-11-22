@@ -346,3 +346,62 @@ fn phased_skirting_keeps_cross_phase_door_deductions() {
     let total = qto::compute(&g.doc.model, &QtoOpts::default());
     close(q(&new, "SKIRTING.bedroom"), q(&total, "SKIRTING.bedroom"));
 }
+
+#[test]
+fn a_wall_to_be_demolished_is_measured_whole_and_becomes_a_schedule_activity() {
+    use nnx_core::schedule::{self, Calendar, Date, RateLib};
+    let mut g = golden();
+    let ext = g.doc.model.elements.values().find(|e| e.kind == "Wall" && e.typed::<Wall>().unwrap().is_exterior).unwrap().id;
+    let items = |doc: &Document, phase: Option<&str>| qto::compute(&doc.model, &QtoOpts { phase: phase.map(String::from), ..QtoOpts::default() });
+    let get = |q: &qto::Qto, code: &str| q.items.iter().find(|i| i.code == code).map(|i| i.quantity);
+    // Nothing is demolished until a wall is marked: no item, no activity.
+    assert_eq!(get(&items(&g.doc, None), "DEMOLISH.WALL.AREA"), None);
+    g.doc.commit("demolish", Origin::User, vec![Command::SetProp { id: ext, key: "phase".into(), value: Some(serde_json::json!("TO_BE_DEMOLISHED")) }]).unwrap();
+    // The exterior wall is 4000 x 3000 mm: 12.0 m2 gross (its door and window are part of what comes down) and 12.0 x 0.2 = 2.4 m3.
+    let all = items(&g.doc, None);
+    assert_eq!((get(&all, "DEMOLISH.WALL.AREA"), get(&all, "DEMOLISH.WALL.VOL")), (Some(12.0), Some(2.4)));
+    // It belongs to the TO_BE_DEMOLISHED phase table only, so the phase tables still add up to the whole.
+    assert_eq!(get(&items(&g.doc, Some("TO_BE_DEMOLISHED")), "DEMOLISH.WALL.AREA"), Some(12.0));
+    for phase in ["NEW", "EXISTING", "UNSET", "UNVERIFIED"] {
+        assert_eq!(get(&items(&g.doc, Some(phase)), "DEMOLISH.WALL.AREA"), None, "{phase}");
+    }
+    // The schedule gets a demolition task after setting out and before the excavation.
+    let mut lib = RateLib::default();
+    for (key, fixed) in schedule::template_keys() {
+        let r = if fixed { schedule::Rate { fixed_days: Some(3.0), crews: 1, source: "synthetic".into(), ..Default::default() } } else { schedule::Rate { per_crew_day: Some(10.0), crews: 1, source: "synthetic".into(), ..Default::default() } };
+        lib.rates.insert(key.to_string(), r);
+    }
+    let cal = Calendar::new(Date::parse("2026-11-15").unwrap(), [false, false, false, false, false, true, true].map(|w| !w)).unwrap();
+    let s = schedule::build(&all, &lib, &cal, 1).unwrap();
+    let pos = |k: &str| s.tasks.iter().position(|t| t.key == k);
+    let (d, so, ex) = (pos("demolish").expect("a demolition task"), pos("set_out").unwrap(), pos("excavate").unwrap());
+    assert!(so < d && d < ex);
+    assert_eq!(s.tasks[d].quantity, Some(12.0));
+    assert!(s.tasks[ex].preds.iter().any(|(p, _)| *p == d), "the excavation waits for the demolition");
+    // Without a demolished wall the task is left out, and the excavation follows the setting out.
+    g.doc.commit("keep", Origin::User, vec![Command::SetProp { id: ext, key: "phase".into(), value: Some(serde_json::json!("EXISTING")) }]).unwrap();
+    let s2 = schedule::build(&items(&g.doc, None), &lib, &cal, 1).unwrap();
+    assert!(s2.tasks.iter().all(|t| t.key != "demolish"));
+}
+
+#[test]
+fn a_removed_wall_feature_is_scheduled_by_its_length() {
+    use nnx_core::schedule::{self, Calendar, Date, RateLib};
+    let mut g = golden();
+    let f = nnx_core::typed::Feature { role: "REMOVED_WALL".into(), shape: "line".into(), x1: 0, y1: 2000, x2: 5030, y2: 2000, width: 200, name: Some("RW".into()), note: None, extra: Default::default() };
+    let mut el = element_of(&f, Source::User);
+    el.props.insert("phase".into(), serde_json::json!("TO_BE_DEMOLISHED"));
+    g.doc.commit("feature", Origin::User, vec![Command::Create(el)]).unwrap();
+    let q = qto::compute(&g.doc.model, &QtoOpts::default());
+    assert_eq!(q.items.iter().find(|i| i.code == "FEATURE.REMOVED_WALL.LEN").map(|i| i.quantity), Some(5.03));
+    let mut lib = RateLib::default();
+    for (key, fixed) in schedule::template_keys() {
+        let r = if fixed { schedule::Rate { fixed_days: Some(3.0), crews: 1, source: "synthetic".into(), ..Default::default() } } else { schedule::Rate { per_crew_day: Some(10.0), crews: 1, source: "synthetic".into(), ..Default::default() } };
+        lib.rates.insert(key.to_string(), r);
+    }
+    let cal = Calendar::new(Date::parse("2026-11-15").unwrap(), [true, true, true, true, true, false, false]).unwrap();
+    let s = schedule::build(&q, &lib, &cal, 1).unwrap();
+    let t = s.tasks.iter().find(|t| t.key == "demolish_features").expect("a task for the removed wall");
+    assert_eq!((t.quantity, t.unit.map(|u| u.label())), (Some(5.03), Some("m")));
+    assert!(s.tasks.iter().all(|t| t.key != "demolish"), "no wall element is marked, so no area task");
+}

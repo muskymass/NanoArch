@@ -11,6 +11,16 @@
                                   "crews":  1,
                                   "source":  ""
                               },
+                  "demolish":  {
+                                   "per_crew_day":  null,
+                                   "crews":  1,
+                                   "source":  ""
+                               },
+                  "demolish_features":  {
+                                   "per_crew_day":  null,
+                                   "crews":  1,
+                                   "source":  ""
+                               },
                   "excavate":  {
                                    "per_crew_day":  null,
                                    "crews":  1,

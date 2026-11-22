@@ -236,7 +236,10 @@ const POINTS: &[&str] = &["MEP.light", "MEP.socket", "MEP.panel", "MEP.fixture.*
 static TEMPLATES: &[Tpl] = &[
     tpl("mobilise", "Site mobilisation", Fixed, &[], 0),
     tpl("set_out", "Setting out", Fixed, &["mobilise"], 0),
-    tpl("excavate", "Excavation for footings", Qty(&["FOOTING.AREA"]), &["set_out"], 0),
+    Tpl { optional: true, ..tpl("demolish", "Demolition of existing walls", Qty(&["DEMOLISH.WALL.AREA"]), &["set_out"], 0) },
+    // A removed wall drawn as a feature has a length and no height: its length is measured, no area is invented.
+    Tpl { optional: true, ..tpl("demolish_features", "Demolition of removed-wall features", Qty(&["FEATURE.REMOVED_WALL.LEN"]), &["set_out"], 0) },
+    tpl("excavate", "Excavation for footings", Qty(&["FOOTING.AREA"]), &["set_out", "demolish", "demolish_features"], 0),
     tpl("footing_form", "Footing formwork", Qty(&["FOOTING.AREA"]), &["excavate"], 0),
     Tpl { also: &[("steel", &["FND.STEEL"])], ..tpl("footing_steel", "Footing reinforcement", Qty(&["FOOTING.COUNT"]), &["footing_form"], 0) },
     Tpl { also: &[("concrete", &["FND.CONC"])], ..tpl("footing_pour", "Footing concrete pour", Qty(&["FOOTING.AREA"]), &["footing_steel"], 0) },
