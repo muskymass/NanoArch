@@ -219,3 +219,23 @@ fn an_element_with_a_phase_goes_on_its_phase_layer_and_one_without_stays_on_the_
     let declared: usize = p.iter().skip_while(|(c, v)| !(*c == 2 && v == "LAYER")).nth(1).unwrap().1.parse().unwrap();
     assert_eq!(declared, table_layers);
 }
+
+#[test]
+fn named_features_are_drawn_on_the_feature_layer_with_their_label_and_phase() {
+    use nnx_core::typed::Feature;
+    let mut g = golden();
+    let feat = |role: &str, shape: &str, x1, y1, x2, y2, width, name: &str| Feature { role: role.into(), shape: shape.into(), x1, y1, x2, y2, width, name: Some(name.into()), note: None, extra: Default::default() };
+    let mut joint = element_of(&feat("EXPANSION_JOINT", "line", 2000, 0, 2000, 5000, 50, "EJ"), Source::User);
+    joint.props.insert("phase".into(), serde_json::json!("NEW"));
+    let shaft = element_of(&feat("SHAFT", "rect", 500, 500, 1050, 1050, 0, "SH1"), Source::User);
+    let drain = element_of(&feat("FLOOR_DRAIN", "point", 3000, 3000, 0, 0, 0, "FD"), Source::User);
+    g.doc.commit("features", Origin::User, vec![Command::Create(joint), Command::Create(shaft), Command::Create(drain)]).unwrap();
+    let out = dxf::export_dxf(&g.doc.model, &[None], &opts()).unwrap();
+    let ents = entities(&out.text);
+    let on = |layer: &str, kind: &str| ents.iter().filter(|e| e.1 == layer && e.0 == kind).count();
+    // The joint: a 50 mm band (closed polyline) and its centre line, on the NEW layer; the shaft: a rectangle and two diagonals; the drain: a circle.
+    assert_eq!((on("A-FEAT_NEW", "POLYLINE"), on("A-FEAT_NEW", "LINE")), (1, 1));
+    assert_eq!((on("A-FEAT", "POLYLINE"), on("A-FEAT", "LINE"), on("A-FEAT", "CIRCLE")), (1, 2, 1));
+    assert_eq!(on("A-FEAT_NEW", "TEXT") + on("A-FEAT", "TEXT"), 3, "each carries its label");
+    assert!(out.text.contains("\nEJ\n") && out.text.contains("\nSH1\n") && out.text.contains("\nFD\n"));
+}

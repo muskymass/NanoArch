@@ -18,6 +18,7 @@
 //! | `S-TIEB` | tie beams between footings (hidden line) |
 //! | `V-WALL`, `V-CUT`, `V-FAR`, `V-OPEN`, `V-SLAB`, `V-STRUC`, `V-MEP`, `V-LEVEL`, `V-TEXT` | elevations and sections, drawn to the right of the plans: walls, what a section cuts, what lies beyond it, openings, slab edges, structure, MEP runs, ground and level lines, titles |
 //! | `A-ROOM-SEP` | room separators (virtual lines that divide an open space; no wall) |
+//! | `A-FEAT` | named design features as stated by the drawing: expansion joint, transfer beam, removed wall, light well, shafts, drain, lift, landings; each with its label |
 //! | `A-DIMS` | overall dimensions, title and the preliminary note |
 //!
 //! An element that has a construction phase is drawn on the layer `<layer>_<PHASE>` (`A-WALL-EXT_NEW`, `S-COLS_EXISTING`, ...),
@@ -29,7 +30,7 @@
 
 use crate::elevation::{self, Shape, ViewOpts, ViewShapes, ViewSpec};
 use crate::model::{Id, Model};
-use crate::typed::{Beam, Column, Door, Footing, Level, MepPoint, MepRun, Space, TieBeam, Typed, Wall, Window};
+use crate::typed::{Beam, Column, Door, Feature, Footing, Level, MepPoint, MepRun, Space, TieBeam, Typed, Wall, Window};
 use std::collections::BTreeMap;
 
 pub struct DxfOpts {
@@ -49,7 +50,7 @@ pub struct DxfOut {
 }
 
 /// Layer name, AutoCAD colour index, line type.
-const LAYERS: [(&str, i32, &str); 32] = [
+const LAYERS: [(&str, i32, &str); 33] = [
     ("A-WALL-EXT", 7, "CONTINUOUS"),
     ("A-WALL-INT", 8, "CONTINUOUS"),
     ("A-DOOR", 3, "CONTINUOUS"),
@@ -82,6 +83,7 @@ const LAYERS: [(&str, i32, &str); 32] = [
     ("V-FACADE", 6, "CONTINUOUS"),
     ("A-GRID", 1, "DASHED"),
     ("A-ROOM-SEP", 8, "DASHED"),
+    ("A-FEAT", 6, "CONTINUOUS"),
 ];
 const DIMS_LAYER: (&str, i32, &str) = ("A-DIMS", 2, "CONTINUOUS");
 
@@ -472,6 +474,42 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
                 }
             }
         }
+
+        // Named design features, as the drawing states them: a line at its width, a rectangle, or a point marker; with their label.
+        for e in model.elements.values().filter(|e| e.kind == Feature::KIND && on_level(e, sh.level)) {
+            let Ok(f) = e.typed::<Feature>() else { continue };
+            d.phase = phase_of(e);
+            let label = f.name.clone().unwrap_or_default();
+            let (cx, cy) = match f.shape.as_str() {
+                "line" => {
+                    let hw = f.width as f64 / 2.0;
+                    if hw > 0.0 && f.y1 == f.y2 {
+                        d.rect("A-FEAT", px(f.x1.min(f.x2)), py(f.y1) - hw, px(f.x1.max(f.x2)), py(f.y1) + hw);
+                    } else if hw > 0.0 && f.x1 == f.x2 {
+                        d.rect("A-FEAT", px(f.x1) - hw, py(f.y1.min(f.y2)), px(f.x1) + hw, py(f.y1.max(f.y2)));
+                    }
+                    d.line("A-FEAT", (px(f.x1), py(f.y1)), (px(f.x2), py(f.y2)));
+                    ((px(f.x1) + px(f.x2)) / 2.0, (py(f.y1) + py(f.y2)) / 2.0)
+                }
+                "rect" => {
+                    let (x0, x1, y0, y1) = (px(f.x1.min(f.x2)), px(f.x1.max(f.x2)), py(f.y1.min(f.y2)), py(f.y1.max(f.y2)));
+                    d.rect("A-FEAT", x0, y0, x1, y1);
+                    if f.role == "SHAFT" {
+                        d.line("A-FEAT", (x0, y0), (x1, y1));
+                        d.line("A-FEAT", (x0, y1), (x1, y0));
+                    }
+                    ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+                }
+                _ => {
+                    d.circle("A-FEAT", (px(f.x1), py(f.y1)), 100.0);
+                    (px(f.x1), py(f.y1))
+                }
+            };
+            if !label.is_empty() {
+                d.text("A-FEAT", (cx, cy + 150.0), 140.0, &label);
+            }
+        }
+        d.phase = None;
 
         // Ducts, pipes, drains and cable trays at their plan width, with their section as text.
         if opts.mep {

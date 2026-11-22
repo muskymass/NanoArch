@@ -17,7 +17,7 @@
 
 use crate::model::{Element, Id, Model, Source};
 use crate::model3d;
-use crate::typed::{Column, Door, Footing, MepPoint, Slab, Space, Typed, Wall, Window};
+use crate::typed::{Column, Door, Feature, Footing, MepPoint, Slab, Space, Typed, Wall, Window};
 use std::collections::BTreeMap;
 
 pub struct IfcOpts {
@@ -372,6 +372,36 @@ pub fn export_ifc(model: &Model, opts: &IfcOpts) -> Result<IfcOut, String> {
             }
         };
         *counts.entry(class.into()).or_default() += 1;
+        storeys.get_mut(&lvl).expect("storey").products.push(id);
+    }
+
+    // Named design features (joint, transfer beam, light well, shafts, lift, landings ...) as building element proxies on their
+    // storey. The drawing gives their plan geometry only, so each is a footprint of a nominal 100 mm height, flagged visual only.
+    // A line is the band of its width when it is axis-aligned, else its bounding box; a point is a 200 mm square (also flagged).
+    for e in model.elements.values().filter(|e| e.kind == Feature::KIND) {
+        let Ok(f) = e.typed::<Feature>() else { continue };
+        let lvl = level_of(e);
+        let st_pl = storeys[&lvl].placement;
+        let (x0, y0, dx, dy, approx) = match f.shape.as_str() {
+            "rect" => (f.x1.min(f.x2), f.y1.min(f.y2), (f.x2 - f.x1).abs(), (f.y2 - f.y1).abs(), false),
+            "line" if f.y1 == f.y2 && f.width > 0 => (f.x1.min(f.x2), f.y1 - f.width / 2, (f.x2 - f.x1).abs(), f.width, false),
+            "line" if f.x1 == f.x2 && f.width > 0 => (f.x1 - f.width / 2, f.y1.min(f.y2), f.width, (f.y2 - f.y1).abs(), false),
+            "line" => (f.x1.min(f.x2), f.y1.min(f.y2), (f.x2 - f.x1).abs().max(1), (f.y2 - f.y1).abs().max(1), true),
+            _ => (f.x1 - 100, f.y1 - 100, 200, 200, true),
+        };
+        let pl = w.place(Some(st_pl), x0 as f64, y0 as f64, 0.0);
+        let shape = w.body(dx.max(1) as f64, dy.max(1) as f64, 100.0);
+        let label = f.name.clone().unwrap_or_else(|| f.role.clone());
+        let id = w.add(format!("IFCBUILDINGELEMENTPROXY('{}',$,{},$,{},#{pl},#{shape},$,.NOTDEFINED.)", guid_of_id(&e.id), step_str(&label), step_str(&f.role)));
+        *counts.entry("IfcBuildingElementProxy".into()).or_default() += 1;
+        let mut extra = vec![("Role", Pv::Label(f.role.clone())), ("PlanShape", Pv::Label(f.shape.clone())), ("HeightIsVisualOnly", Pv::Bool(true)), ("PlanGeometryApproximated", Pv::Bool(approx))];
+        if f.width > 0 {
+            extra.push(("WidthMm", Pv::Real(f.width as f64)));
+        }
+        if let Some(n) = f.note.clone() {
+            extra.push(("Note", Pv::Label(n)));
+        }
+        trace(&mut w, e, id, extra);
         storeys.get_mut(&lvl).expect("storey").products.push(id);
     }
 

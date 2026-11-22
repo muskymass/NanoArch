@@ -206,3 +206,26 @@ fn the_construction_phase_is_a_property_of_the_products_that_have_one() {
     assert_eq!(text.matches("IFCPROPERTYSINGLEVALUE('Phase',$,IFCLABEL('TO_BE_DEMOLISHED'),$)").count(), 1, "one product has a phase");
     assert_eq!(text.matches("'Phase'").count(), 1, "the others get none: an unset phase is not written");
 }
+
+#[test]
+fn named_features_become_building_element_proxies_with_their_role_and_phase() {
+    use nnx_core::typed::Feature;
+    let mut g = golden();
+    let feat = |role: &str, shape: &str, x1, y1, x2, y2, width| Feature { role: role.into(), shape: shape.into(), x1, y1, x2, y2, width, name: Some(role.to_lowercase()), note: Some("from the sheet".into()), extra: Default::default() };
+    let mut joint = element_of(&feat("EXPANSION_JOINT", "line", 2000, 0, 2000, 5000, 50), Source::User);
+    joint.props.insert("phase".into(), serde_json::json!("NEW"));
+    let well = element_of(&feat("LIGHTWELL", "rect", 500, 500, 1500, 1500, 0), Source::User);
+    let drain = element_of(&feat("FLOOR_DRAIN", "point", 3000, 3000, 0, 0, 0), Source::User);
+    g.doc.commit("features", Origin::User, vec![Command::Create(joint), Command::Create(well), Command::Create(drain)]).unwrap();
+    let out = ifc::export_ifc(&g.doc.model, &opts()).unwrap();
+    assert_eq!(out.counts.get("IfcBuildingElementProxy"), Some(&3));
+    let text = out.text;
+    assert_eq!(count(&text, "IFCBUILDINGELEMENTPROXY"), 3);
+    assert!(text.contains("IFCBUILDINGELEMENTPROXY(") && text.contains("'expansion_joint',$,'EXPANSION_JOINT'"));
+    assert_eq!(text.matches("IFCPROPERTYSINGLEVALUE('Role',$,IFCLABEL('LIGHTWELL'),$)").count(), 1);
+    assert_eq!(text.matches("IFCPROPERTYSINGLEVALUE('Phase',$,IFCLABEL('NEW'),$)").count(), 1, "only the joint has a phase");
+    assert_eq!(text.matches("IFCPROPERTYSINGLEVALUE('HeightIsVisualOnly',$,IFCBOOLEAN(.T.),$)").count(), 3);
+    // The point is approximated (a 200 mm square), the axis-aligned line and the rectangle are exact.
+    assert_eq!(text.matches("IFCPROPERTYSINGLEVALUE('PlanGeometryApproximated',$,IFCBOOLEAN(.T.),$)").count(), 1);
+    assert_eq!(text.matches("IFCPROPERTYSINGLEVALUE('WidthMm',$,IFCREAL(50.),$)").count(), 1);
+}
