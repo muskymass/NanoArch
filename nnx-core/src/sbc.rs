@@ -107,7 +107,7 @@ pub fn sourced_pack_json() -> String {
         if let Some(d) = code_value(&format!("daylight_min_ratio.{func}")) {
             rules.push(json!({
                 "id": format!("sbc.daylight.{func}"), "clause": d.clause, "applies_to": applies,
-                "check": "glazing_ratio >= param.min", "params": { "min": { "value": d.value, "source": src(d) } },
+                "check": "glazingRatio >= param.min", "params": { "min": { "value": d.value, "source": src(d) } },
                 "severity": "warning", "message": format!("{func}: glazing is below {} of the floor area", d.value),
             }));
         }

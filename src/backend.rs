@@ -2627,6 +2627,7 @@ mod tests {
         assert!(r["checked"].as_u64().unwrap() > 0, "the sourced rules ran on the model's rooms");
         assert_eq!(r["layers"][0].as_str().unwrap().split('@').next(), Some("SBC-SOURCED"));
         assert!(r["skipped"].as_array().unwrap().is_empty(), "every value in the pack is set");
+        assert!(!r["findings"].to_string().contains("could not be evaluated"), "the generated windows give every room a glazing ratio: {}", r["findings"]);
         let pack: Value = serde_json::from_str(&nnx_core::sbc::sourced_pack_json()).unwrap();
         for rule in pack["rules"].as_array().unwrap() {
             let src = rule["params"]["min"]["source"].as_str().unwrap();
