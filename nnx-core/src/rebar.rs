@@ -14,8 +14,10 @@
 //!   NOT checked.
 //! - **Beams**: the minimum steel `ratio_min * b * d`; and, when you give `phi_flexure` and the concrete unit weight and the beam has
 //!   a span and a slab load, the flexure steel for a simply supported span, `Mu = wu L^2 / 8` under the factored slab strip and self
-//!   weight, with the `rho` form of the section equation (the larger of the two governs). Shear, deflection, continuity and the
-//!   ductility limit are NOT checked. **Tie beams**: the minimum steel only; their bending is not designed, and the row says so.
+//!   weight, with the `rho` form of the section equation (the larger of the two governs). With `phi_shear` and
+//!   `concrete_shear_factor` it also checks the stirrups you entered against the shear at `d` from the support:
+//!   `Vu = wu (L/2 - d)`, `Vc = factor sqrt(f'c) b d`, `Vs = Av fy d / s` (two legs, `fy` of the design), `Vu <= phi (Vc + Vs)`.
+//!   Deflection, continuity, the ductility limit and the upper limit of `Vs` are NOT checked. **Tie beams**: the minimum steel only; their bending is not designed, and the row says so.
 //!
 //! Every row carries the element name and id, the required and provided steel area, the ratio, the cover used and a status.
 
@@ -58,6 +60,10 @@ pub struct BeamDesign {
     /// bending design on, and then both are required.
     pub phi_flexure: Option<f64>,
     pub concrete_unit_weight_kn_m3: Option<f64>,
+    /// Shear: the reduction factor and the factor of `Vc = factor * sqrt(f'c) * b * d` (MPa). Giving either turns the stirrup check on (it
+    /// needs the bending design: the load), and then both are required. Neither comes from the code files.
+    pub phi_shear: Option<f64>,
+    pub concrete_shear_factor: Option<f64>,
     pub ratio_min: Option<f64>,
     pub min_top_bars: Option<u32>,
     pub stirrup_dia_mm: Option<f64>,
@@ -386,6 +392,22 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                 } else {
                     None
                 };
+                let shear = if bd.phi_shear.is_some() || bd.concrete_shear_factor.is_some() {
+                    let phi = pos("phi_shear", bd.phi_shear, &mut miss).filter(|p| {
+                        let ok = *p <= 1.0;
+                        if !ok {
+                            miss.push("design.beam.phi_shear (above 0 and at most 1)".into());
+                        }
+                        ok
+                    });
+                    let k = pos("concrete_shear_factor", bd.concrete_shear_factor, &mut miss);
+                    phi.zip(k)
+                } else {
+                    None
+                };
+                if shear.is_some() && bending.is_none() {
+                    miss.push("design.beam.phi_flexure and concrete_unit_weight_kn_m3 (the stirrup check needs the beam load)".into());
+                }
                 let (eb, et) = (exposure_of(d, |e| e.beam, "beam", &mut miss), if beams.iter().any(|b| b.tie) { exposure_of(d, |e| e.tie_beam, "tie_beam", &mut miss) } else { None });
                 out.missing.extend(miss);
                 if let (Some(rmin), Some(sdia), Some(sspc), Some(top)) = (rmin, sdia, sspc, top) {
@@ -393,9 +415,11 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                     for b in beams {
                         let Some(exp) = (if b.tie { et } else { eb }) else { continue };
                         // The design moment of a simply supported span under the factored slab strip and the beam's own weight.
+                        let mut wu_l: Option<(f64, f64)> = None; // factored load kN/m and span m, for the shear
                         let bend: Option<(f64, f64)> = bending.filter(|_| !b.tie).and_then(|(phi, gc)| match (b.span_mm, b.slab_load_kn_m) {
                             (Some(l), Some(q)) if l > 0.0 && q >= 0.0 => {
                                 let wu = c.gamma * (q + gc * b.b * b.depth / 1e6);
+                                wu_l = Some((wu, l / 1000.0));
                                 Some((phi, wu * (l / 1000.0) * (l / 1000.0) / 8.0 * 1e6))
                             }
                             _ => {
@@ -431,11 +455,25 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                                 break;
                             }
                         }
-                        let (status, dia, n, cover, as_min) = match chosen {
+                        let (mut status, dia, n, cover, as_min) = match chosen {
                             Some((dia, n, cover, a)) => (if bend.is_some() { "ok" } else { "minimum steel only" }, dia, n, cover, a),
                             None if any_too_small => ("section too small", *c.dias.last().unwrap_or(&0.0), 2, presets::cover_mm(exp, Member::Frame, *c.dias.last().unwrap_or(&20.0)).unwrap_or(40.0), 0.0),
                             None => ("no arrangement fits", *c.dias.last().unwrap_or(&0.0), 2, presets::cover_mm(exp, Member::Frame, *c.dias.last().unwrap_or(&20.0)).unwrap_or(40.0), 0.0),
                         };
+                        // The stirrups as entered against the shear at d from the support (only for a beam whose bending was designed).
+                        let mut shear_note = String::new();
+                        if let (Some((phi_v, k)), Some((wu, l_m)), "ok") = (shear, wu_l, status) {
+                            let d_eff = b.depth - cover - sdia - dia / 2.0;
+                            let vu = (wu * (l_m / 2.0 - d_eff / 1000.0)).max(0.0);
+                            let vc = k * c.fc.sqrt() * b.b * d_eff / 1000.0;
+                            let vs = 2.0 * area(sdia) * c.fy * d_eff / sspc / 1000.0;
+                            let cap = phi_v * (vc + vs);
+                            let pass = vu <= cap;
+                            shear_note = format!("; shear at d from the support: Vu {vu:.1} kN against phi (Vc + Vs) {cap:.1} kN (Vc {vc:.1}, Vs {vs:.1} for two legs of Dia {sdia} at {sspc}): {}", if pass { "stirrups sufficient" } else { "stirrups insufficient" });
+                            if !pass {
+                                status = "stirrups insufficient";
+                            }
+                        }
                         out.beams.insert(b.name.to_string(), (BeamBars { top_dia_mm: dia, top_count: top, bottom_dia_mm: dia, bottom_count: n, stirrup_dia_mm: sdia, stirrup_spacing_mm: sspc }, cover));
                         out.rows.push(DesignRow {
                             element: b.name.into(),
@@ -447,8 +485,10 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                             bars: format!("{n} x Dia {dia} bottom, {top} x Dia {dia} top"),
                             cover_mm: cover,
                             status: status.into(),
-                            notes: if bend.is_some() {
+                            notes: if bend.is_some() && shear_note.is_empty() {
                                 "bending designed for a simply supported span (M = w L^2 / 8) under the factored slab strip and self weight; the tributary width is half the short side of each adjacent slab (conservative); shear, deflection, continuity and the ductility limit are not checked".into()
+                            } else if bend.is_some() {
+                                format!("bending designed for a simply supported span (M = w L^2 / 8) under the factored slab strip and self weight; the tributary width is half the short side of each adjacent slab (conservative){shear_note}; deflection, continuity, the ductility limit and the upper limit of Vs are not checked")
                             } else if b.tie {
                                 "minimum steel only: bending is not designed".into()
                             } else {

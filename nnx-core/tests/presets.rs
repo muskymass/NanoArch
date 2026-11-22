@@ -357,3 +357,61 @@ fn the_schedule_designs_a_beam_for_the_slab_strip_it_carries_from_the_projects_f
     let half = nnx_core::project::StructIn { dead_kpa: Some(8.0), ..Default::default() };
     assert_eq!(inp.with_floor_load(&half).floor_service_kpa, None);
 }
+
+// ------------------------------------------------------------------ beam shear
+
+fn shear_dsn(stirrup_spacing_mm: f64) -> DesignIn {
+    let mut d = bending_dsn();
+    d.bar_dias_mm.push(25.0); // case 2 of the shear test needs Dia 25
+    let beam = d.beam.as_mut().unwrap();
+    beam.phi_shear = Some(0.75);
+    beam.concrete_shear_factor = Some(0.17);
+    beam.stirrup_spacing_mm = Some(stirrup_spacing_mm);
+    d
+}
+
+/// Inputs are the synthetic test values of `dsn()` plus phi_shear 0.75 and factor 0.17, not project values and not code values.
+#[test]
+fn beam_stirrups_are_checked_against_the_shear_at_d_from_the_support() {
+    // Case 1: the bending case (b 300, depth 500, 6 m, 20 kN/m): 5 x Dia 16, d 444; wu 33.25 kN/m.
+    // Vu = 33.25 (3 - 0.444) = 84.99 kN; Vc = 0.17 x 5 x 300 x 444 = 113.22 kN; Av = 2 x 50.27 = 100.53 mm2 (Dia 8, two legs);
+    // Vs = 100.53 x 420 x 444 / 150 = 124.98 kN; phi (Vc + Vs) = 0.75 x 238.20 = 178.65 kN >= 84.99: sufficient.
+    let beam = BeamIn { name: "BM-1", id: None, b: 300.0, depth: 500.0, tie: false, span_mm: Some(6000.0), slab_load_kn_m: Some(20.0) };
+    let ok = rebar::design(&shear_dsn(150.0), None, &[], &[], &[beam]);
+    assert!(ok.missing.is_empty(), "{:?}", ok.missing);
+    let r = &ok.rows[0];
+    assert_eq!(r.status, "ok");
+    assert!(r.notes.contains("Vu 85.0 kN") && r.notes.contains("178.7 kN") && r.notes.contains("stirrups sufficient"), "{}", r.notes);
+    // Case 2: b 300, depth 600, 4 m, 100 kN/m: bending gives 4 x Dia 25 (d 539.5, As 1588.96); wu 146.3 kN/m; Vu = 146.3 (2 - 0.5395) = 213.67 kN;
+    // Vc = 137.57 kN; Dia 8 at 150: Vs = 151.86 kN, phi (Vc + Vs) = 217.08 kN >= 213.67: sufficient (a narrow margin).
+    let b2 = || BeamIn { name: "BM-2", id: None, b: 300.0, depth: 600.0, tie: false, span_mm: Some(4000.0), slab_load_kn_m: Some(100.0) };
+    let tight = rebar::design(&shear_dsn(150.0), None, &[], &[], &[b2()]);
+    near(tight.rows[0].required_mm2, 1588.96, 0.05);
+    assert_eq!((tight.rows[0].status.as_str(), tight.rows[0].bars.as_str()), ("ok", "4 x Dia 25 bottom, 2 x Dia 25 top"));
+    assert!(tight.rows[0].notes.contains("Vu 213.7 kN") && tight.rows[0].notes.contains("217.1 kN"), "{}", tight.rows[0].notes);
+    // The same beam with the stirrups at 300: Vs = 75.93 kN, phi (Vc + Vs) = 160.13 kN < 213.67: insufficient.
+    let wide = rebar::design(&shear_dsn(300.0), None, &[], &[], &[b2()]);
+    assert_eq!(wide.rows[0].status, "stirrups insufficient");
+    assert!(wide.rows[0].notes.contains("160.1 kN") && wide.rows[0].notes.contains("stirrups insufficient"), "{}", wide.rows[0].notes);
+}
+
+#[test]
+fn the_stirrup_check_names_what_it_needs() {
+    // Shear parameters without the bending ones: the load is missing, so the check is named, not run.
+    let mut d = dsn();
+    let beam = d.beam.as_mut().unwrap();
+    beam.phi_shear = Some(0.75);
+    beam.concrete_shear_factor = Some(0.17);
+    let b = BeamIn { name: "BM-1", id: None, b: 300.0, depth: 500.0, tie: false, span_mm: Some(6000.0), slab_load_kn_m: Some(20.0) };
+    let out = rebar::design(&d, None, &[], &[], &[b]);
+    assert!(out.missing.iter().any(|m| m.contains("the stirrup check needs the beam load")), "{:?}", out.missing);
+    assert_eq!(out.rows[0].status, "minimum steel only");
+    // Only one of the two shear parameters: the other is named.
+    let mut half = bending_dsn();
+    half.beam.as_mut().unwrap().phi_shear = Some(0.75);
+    let b = BeamIn { name: "BM-1", id: None, b: 300.0, depth: 500.0, tie: false, span_mm: Some(6000.0), slab_load_kn_m: Some(20.0) };
+    let o = rebar::design(&half, None, &[], &[], &[b]);
+    assert!(o.missing.contains(&"design.beam.concrete_shear_factor".to_string()), "{:?}", o.missing);
+    assert_eq!(o.rows[0].status, "ok", "bending is still designed");
+    assert!(!o.rows[0].notes.contains("shear at d"), "no shear check without both factors");
+}

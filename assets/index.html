@@ -1053,7 +1053,7 @@ const STR_EXAMPLE = () => ({
       exposure: { column: "protected", footing: "ground", beam: "protected", tie_beam: "ground" },
       column: { ratio_min: 0.01, ratio_max: 0.04, min_bars: 4, phi: 0.65, alpha: 0.8, tie_dia_mm: 8, tie_spacing_mm: 200 },
       footing: { ratio_min: 0.0018, phi_flexure: 0.9, max_spacing_mm: 300 },
-      beam: { ratio_min: 0.004, min_top_bars: 2, stirrup_dia_mm: 8, stirrup_spacing_mm: 150, phi_flexure: 0.9, concrete_unit_weight_kn_m3: 25 } } }
+      beam: { ratio_min: 0.004, min_top_bars: 2, stirrup_dia_mm: 8, stirrup_spacing_mm: 150, phi_flexure: 0.9, concrete_unit_weight_kn_m3: 25, phi_shear: 0.75, concrete_shear_factor: 0.17 } } }
 });
 $("str-example").onclick = () => { $("strin").value = JSON.stringify(STR_EXAMPLE(), null, 2); };
 const readStr = () => { const txt = $("strin").value.trim(); if (!txt) return {}; try { return JSON.parse(txt); } catch (e) { throw new Error("JSON: " + e.message); } };
