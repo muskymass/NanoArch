@@ -437,3 +437,13 @@ fn the_upper_limit_of_vs_marks_a_section_too_small_for_the_shear() {
     assert!(o.missing.iter().any(|m| m.contains("shear_max_factor")), "{:?}", o.missing);
     assert_eq!(o.rows[0].status, "ok");
 }
+
+#[test]
+fn a_beam_with_no_arrangement_says_why() {
+    // A 150 mm wide beam asking for 959.9 mm2 of steel (the bending case but narrow): the bars do not fit side by side.
+    let b = BeamIn { name: "BM-N", id: None, b: 150.0, depth: 500.0, tie: false, span_mm: Some(6000.0), slab_load_kn_m: Some(20.0) };
+    let o = rebar::design(&bending_dsn(), None, &[], &[], &[b]);
+    let r = &o.rows[0];
+    assert_eq!(r.status, "no arrangement fits");
+    assert!(r.notes.contains("clear gap") && r.notes.contains("150 mm wide") && r.notes.contains("mm2"), "{}", r.notes);
+}

@@ -440,10 +440,14 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                         });
                         let mut any_too_small = false;
                         let mut chosen: Option<(f64, u32, f64, f64)> = None;
+                        // Why nothing fitted, from the last diameter tried that reached the spacing check: (dia, bars, clear gap, steel needed).
+                        let mut last_try: Option<(f64, u32, f64, f64)> = None;
+                        let mut no_depth = false;
                         for &dia in &c.dias {
                             let Some(cover) = presets::cover_mm(exp, Member::Frame, dia) else { continue };
                             let d_eff = b.depth - cover - sdia - dia / 2.0;
                             if d_eff <= 0.0 {
+                                no_depth = true;
                                 continue;
                             }
                             let as_min = rmin * b.b * d_eff;
@@ -465,6 +469,7 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                                 chosen = Some((dia, n, cover, as_min));
                                 break;
                             }
+                            last_try = Some((dia, n, gap, as_min));
                         }
                         let (mut status, dia, n, cover, as_min) = match chosen {
                             Some((dia, n, cover, a)) => (if bend.is_some() { "ok" } else { "minimum steel only" }, dia, n, cover, a),
@@ -489,6 +494,12 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                                 status = "stirrups insufficient";
                             }
                         }
+                        let why = match (status, last_try) {
+                            ("no arrangement fits", Some((d, n, gap, need))) => format!("no arrangement fits: the steel needed is {need:.0} mm2; with the largest diameter that reached the spacing check (Dia {d}) it takes {n} bars in a {} mm wide beam, leaving a clear gap of {gap:.0} mm against the {:.0} mm required: widen the beam, allow a larger diameter or a second layer (not designed here)", b.b, c.clear),
+                            ("no arrangement fits", None) if no_depth => format!("no arrangement fits: the effective depth is zero or negative for every diameter (depth {} mm, cover and stirrup)", b.depth),
+                            ("no arrangement fits", None) => "no arrangement fits: no cover is defined for these diameters and this exposure".to_string(),
+                            _ => String::new(),
+                        };
                         out.beams.insert(b.name.to_string(), (BeamBars { top_dia_mm: dia, top_count: top, bottom_dia_mm: dia, bottom_count: n, stirrup_dia_mm: sdia, stirrup_spacing_mm: sspc }, cover));
                         out.rows.push(DesignRow {
                             element: b.name.into(),
@@ -500,7 +511,9 @@ pub fn design(d: &DesignIn, footing_thickness_mm: Option<f64>, cols: &[ColIn], f
                             bars: format!("{n} x Dia {dia} bottom, {top} x Dia {dia} top"),
                             cover_mm: cover,
                             status: status.into(),
-                            notes: if bend.is_some() && shear_note.is_empty() {
+                            notes: if !why.is_empty() {
+                                why
+                            } else if bend.is_some() && shear_note.is_empty() {
                                 "bending designed for a simply supported span (M = w L^2 / 8) under the factored slab strip and self weight; the tributary width is half the short side of each adjacent slab (conservative); shear, deflection, continuity and the ductility limit are not checked".into()
                             } else if bend.is_some() {
                                 format!("bending designed for a simply supported span (M = w L^2 / 8) under the factored slab strip and self weight; the tributary width is half the short side of each adjacent slab (conservative){shear_note}; deflection, continuity, the ductility limit and the upper limit of Vs are not checked")
