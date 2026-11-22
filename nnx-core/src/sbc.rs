@@ -112,6 +112,16 @@ pub fn sourced_pack_json() -> String {
             }));
         }
     }
+    // Spaces the guidelines give no daylight ratio for stay in the check with an unset limit: the engine reports the rule as
+    // not run until the user enters a value with its source. No ratio is assumed.
+    for func in ["other", "stair"] {
+        rules.push(json!({
+            "id": format!("sbc.daylight.{func}"), "clause": "none read", "applies_to": { "kind": "Space", "where": format!("func == \"{func}\"") },
+            "check": "glazingRatio >= param.min",
+            "params": { "min": { "value": null, "source": "no daylight ratio for this function was read from the code files; enter it with its source" } },
+            "severity": "warning", "message": format!("{func}: glazing is below the limit you entered"),
+        }));
+    }
     json!({ "id": "SBC-SOURCED", "edition": "values read from the files in the code folder", "version": "1", "rules": rules }).to_string()
 }
 
