@@ -377,10 +377,10 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     // A room separator is a line on the drawing, not a wall: no skirting runs along it.
     // ---- features the drawing names: counted by role, with length (lines) and area (rectangles) ----
     {
-        let mut by_role: BTreeMap<String, Vec<(Id, f64, f64)>> = BTreeMap::new();
+        let mut by_role: BTreeMap<String, Vec<(Id, f64, f64, u32)>> = BTreeMap::new();
         for (e, f) in collect::<Feature>(model, opts) {
             let (len, area) = f.size();
-            by_role.entry(f.role.clone()).or_default().push((e.id, len, area));
+            by_role.entry(f.role.clone()).or_default().push((e.id, len, area, f.risers.unwrap_or(0)));
         }
         for (role, v) in by_role {
             let ids: Vec<Id> = v.iter().map(|x| x.0).collect();
@@ -391,7 +391,12 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
             }
             let area: f64 = v.iter().map(|x| x.2).sum();
             if area > 0.0 {
-                acc.add(&format!("FEATURE.{role}.AREA"), &format!("{role}: total area"), Unit::M2, area / MM2_PER_M2, ids);
+                acc.add(&format!("FEATURE.{role}.AREA"), &format!("{role}: total area"), Unit::M2, area / MM2_PER_M2, ids.clone());
+            }
+            // Steps the drawing states: the riser count only. Treads, concrete and finishes need a tread depth the drawing has not given.
+            let risers: u32 = v.iter().map(|x| x.3).sum();
+            if risers > 0 {
+                acc.add(&format!("FEATURE.{role}.RISERS"), &format!("{role}: number of risers"), Unit::Nr, risers as f64, ids);
             }
         }
     }

@@ -405,3 +405,17 @@ fn a_removed_wall_feature_is_scheduled_by_its_length() {
     assert_eq!((t.quantity, t.unit.map(|u| u.label())), (Some(5.03), Some("m")));
     assert!(s.tasks.iter().all(|t| t.key != "demolish"), "no wall element is marked, so no area task");
 }
+
+#[test]
+fn entrance_steps_are_counted_by_risers_and_nothing_else_is_invented() {
+    let mut g = golden();
+    let f = |n: Option<u32>, h: Option<i64>, role: &str| nnx_core::typed::Feature { role: role.into(), shape: "rect".into(), x1: 0, y1: -1500, x2: 1200, y2: 0, width: 0, name: None, note: None, room: None, risers: n, riser_mm: h, extra: Default::default() };
+    let a = element_of(&f(Some(3), Some(150), "ENTRANCE_LANDING"), Source::User);
+    let b = element_of(&f(None, None, "ENTRANCE_PATH"), Source::User);
+    g.doc.commit("steps", Origin::User, vec![Command::Create(a), Command::Create(b)]).unwrap();
+    let q = qto::compute(&g.doc.model, &QtoOpts::default());
+    let get = |c: &str| q.items.iter().find(|i| i.code == c).map(|i| i.quantity);
+    assert_eq!(get("FEATURE.ENTRANCE_LANDING.RISERS"), Some(3.0));
+    assert_eq!(get("FEATURE.ENTRANCE_PATH.RISERS"), None, "no steps stated, no item");
+    assert!(q.items.iter().all(|i| !i.code.contains("STEP.CONCRETE")), "no concrete volume without a tread depth");
+}
