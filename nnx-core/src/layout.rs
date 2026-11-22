@@ -72,6 +72,9 @@ pub struct Brief {
     pub adjacency: Vec<Adjacency>,
     /// Side of the envelope facing the street entrance.
     pub entry: Side,
+    /// Where the user marked the front door (mm, envelope frame), if they did: the entry door goes on the outside wall nearest to
+    /// it. `None` keeps the street-side rule.
+    pub entry_at: Option<(i64, i64)>,
 }
 
 #[derive(Debug, Clone)]

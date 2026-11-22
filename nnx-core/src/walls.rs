@@ -46,7 +46,14 @@ pub struct WallOpts {
     pub forbidden: Vec<(String, String)>,
     /// False for an upper level: no door to the street. Reachability is then checked from the first circulation room.
     pub entry: bool,
+    /// Where the user marked the front door, in the envelope's own frame (mm). The entry door goes on the outside wall nearest to
+    /// it instead of on the street side. Nothing is invented: a point farther than `ENTRY_POINT_REACH_MM` from every outside wall is
+    /// reported and the street-side rule is used.
+    pub entry_at: Option<(i64, i64)>,
 }
+
+/// Farthest the marked entry point may lie from an outside wall and still be taken to mean that wall.
+pub const ENTRY_POINT_REACH_MM: i64 = 1500;
 
 impl Default for WallOpts {
     fn default() -> Self {
@@ -65,6 +72,7 @@ impl Default for WallOpts {
             wanted: vec![],
             forbidden: vec![],
             entry: true,
+            entry_at: None,
         }
     }
 }
@@ -403,14 +411,36 @@ pub fn build(layout: &Layout, envelope: Rect, entry: Side, opts: &WallOpts) -> P
             entry_pick = Some(cand);
         }
     }
+    // A marked entry point wins over the street-side rule: the outside wall nearest to it, the door centred on its projection.
+    let mut marked_entry: Option<(usize, i64)> = None;
+    if let (true, Some((px, py))) = (opts.entry, opts.entry_at) {
+        let mut best: Option<(i64, usize, i64)> = None;
+        for (wi, w) in plan.walls.iter().enumerate() {
+            if !w.exterior || w.length() < opts.entry_door_mm + 2 * opts.door_margin_mm || is_wet(w.rooms.0) {
+                continue;
+            }
+            let (along, across) = if w.horizontal { (px, py) } else { (py, px) };
+            let beyond = (w.start - along).max(along - w.end).max(0);
+            let d2 = beyond * beyond + (across - w.edge_line) * (across - w.edge_line);
+            let lo = opts.door_margin_mm + opts.entry_door_mm / 2;
+            let hi = (w.length() - lo).max(lo);
+            if best.is_none_or(|b| d2 < b.0) {
+                best = Some((d2, wi, (along - w.start).clamp(lo, hi)));
+            }
+        }
+        match best {
+            Some((d2, wi, off)) if d2 <= ENTRY_POINT_REACH_MM * ENTRY_POINT_REACH_MM => marked_entry = Some((wi, off)),
+            _ => plan.warnings.push("the marked entry point is not within 1.5 m of an outside wall: the street-side rule was used".into()),
+        }
+    }
     let mut entry_room = None;
-    match entry_pick {
-        Some((_, _, _, wi)) => {
+    let chosen: Option<(usize, i64)> = marked_entry.or(entry_pick.map(|(_, _, _, wi)| (wi, plan.walls[wi].length() / 2)));
+    match chosen {
+        Some((wi, off)) => {
             let room = plan.walls[wi].rooms.0;
-            let len = plan.walls[wi].length();
             plan.doors.push(DoorSpec {
                 wall: wi,
-                offset: len / 2,
+                offset: off,
                 width: opts.entry_door_mm,
                 height: opts.door_height_mm,
                 entry: true,

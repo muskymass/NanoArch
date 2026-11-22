@@ -427,12 +427,17 @@ impl App {
     fn generate(&mut self, args: &Value) -> Result<Value, String> {
         let b: BriefIn = serde_json::from_value(args.get("brief").cloned().unwrap_or(Value::Null)).map_err(|e| format!("brief: {e}"))?;
         let s: StructIn = serde_json::from_value(args.get("struct").cloned().unwrap_or(json!({}))).map_err(|e| format!("structure inputs: {e}"))?;
-        let plan = levels::plan_building(&b, s.floors.unwrap_or(1))?;
+        let mut plan = levels::plan_building(&b, s.floors.unwrap_or(1))?;
         let locked = parse_locked(args.get("locked"))?;
         let mut alts = levels::generate_building_locked(&plan, b.seed.unwrap_or(1), &locked)?;
         // Rooms marked on a sketch become the first alternative; the generated ones follow for comparison.
         let from_sketch = match args.get("placement").filter(|p| p.as_object().is_some_and(|o| !o.is_empty())) {
             Some(p) => {
+                // The front door marked on the sketch (`_entry`, envelope frame in mm) goes into the brief, so every rebuild of the walls keeps it.
+                if let Some(e) = p.get("_entry") {
+                    let f = |k: &str| e.get(k).and_then(Value::as_f64).ok_or_else(|| format!("the marked entry point has no '{k}'"));
+                    plan.merged.entry_at = Some((f("x")?.round() as i64, f("y")?.round() as i64));
+                }
                 let placed = levels::placed_building(&plan, p, &alts[0])?;
                 alts.insert(0, placed);
                 true
@@ -2818,6 +2823,66 @@ mod tests {
         assert!(nnx_core::typed::validate_model(&app.doc.as_ref().unwrap().model).is_empty());
         let s = app.handle("sync", &json!({})).unwrap();
         assert_eq!((s["created"].as_u64(), s["removed"].as_u64()), (Some(0), Some(0)));
+    }
+
+    /// Both floors of `brief2` marked on a sketch in a 14 x 18 m envelope, with the stair in the middle of the plan and the front
+    /// door marked at `entry`. SYNTHETIC sizes.
+    fn sketch2(entry: Value) -> Value {
+        let r = |x: i64, y: i64, w: i64, h: i64| json!({ "x": x, "y": y, "w": w, "h": h });
+        json!({
+            "majlis": r(0, 0, 6000, 6000), "living": r(6000, 0, 5000, 6000), "dining": r(0, 6000, 6000, 5000),
+            "kitchen": r(8500, 6000, 5500, 5000), "bath1": r(0, 11000, 3000, 2500),
+            "master": r(0, 0, 6000, 6000), "bed1": r(6000, 0, 5000, 5000), "bed2": r(0, 6000, 6000, 5000),
+            "bath2": r(8500, 6000, 3000, 3000), "bath3": r(0, 11000, 3000, 2500),
+            "_stair": r(6000, 6000, 2500, 5000), "_entry": entry
+        })
+    }
+
+    fn generated_from(sketch: Value) -> App {
+        let mut app = App::default();
+        let g = app.handle("generate", &json!({ "brief": brief2(), "struct": loads2(), "placement": sketch })).unwrap();
+        assert_eq!(g["alternatives"][0]["from_sketch"], json!(true));
+        app.handle("select", &json!({ "index": 0, "struct": loads2() })).unwrap();
+        app
+    }
+
+    #[test]
+    fn a_stair_marked_on_the_sketch_stands_where_it_was_marked_on_every_level() {
+        let app = generated_from(sketch2(json!({ "x": 3000, "y": 0 })));
+        let rect = |level: usize, key: &str| -> Option<[i64; 4]> {
+            let e = of_level(&app, level, "Space").into_iter().find(|e| e.props["requirementKey"] == key)?;
+            Some([e.props["x"].as_i64()?, e.props["y"].as_i64()?, e.props["w"].as_i64()?, e.props["h"].as_i64()?])
+        };
+        assert_eq!(rect(0, "stair"), Some([6000, 6000, 2500, 5000]), "where it was marked, not along the west side");
+        assert_eq!(rect(1, "stair@1"), rect(0, "stair"), "stacked on the next level");
+        assert_eq!(rect(0, "stairhall"), None, "no strip hall is added: the hall is a room the user marks");
+    }
+
+    #[test]
+    fn the_front_door_goes_on_the_outside_wall_nearest_to_the_marked_point() {
+        let opens_into = |entry: Value| -> String {
+            let app = generated_from(sketch2(entry));
+            let d = of_level(&app, 0, "Door").into_iter().find(|d| d.props["isEgress"] == json!(true)).expect("an entry door");
+            d.props["opensInto"].as_str().unwrap().to_string()
+        };
+        assert_eq!(opens_into(json!({ "x": 3000, "y": 0 })), "majlis", "on the south wall of the majlis");
+        assert_eq!(opens_into(json!({ "x": 14000, "y": 8500 })), "kitchen", "on the east wall of the kitchen, not on the street side");
+    }
+
+    #[test]
+    fn an_entry_point_far_from_any_outside_wall_is_reported_and_the_street_rule_is_used() {
+        let mut app = App::default();
+        app.handle("generate", &json!({ "brief": brief2(), "struct": loads2(), "placement": sketch2(json!({ "x": 7000, "y": 9000 })) })).unwrap();
+        let sel = app.handle("select", &json!({ "index": 0, "struct": loads2() })).unwrap();
+        assert!(sel["warnings"].to_string().contains("not within 1.5 m of an outside wall"), "{}", sel["warnings"]);
+    }
+
+    #[test]
+    fn a_stair_on_the_sketch_needs_every_level_marked() {
+        let mut sketch = sketch2(json!({ "x": 3000, "y": 0 }));
+        sketch.as_object_mut().unwrap().remove("bath3");
+        let err = App::default().handle("generate", &json!({ "brief": brief2(), "struct": loads2(), "placement": sketch })).unwrap_err();
+        assert!(err.contains("every room of every level must be marked"), "{err}");
     }
 
     #[test]

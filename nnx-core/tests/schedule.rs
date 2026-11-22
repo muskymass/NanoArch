@@ -129,6 +129,7 @@ fn house() -> Document {
         ],
         adjacency: vec![],
         entry: Side::South,
+        entry_at: None,
     };
     let layout = generate(&b, &Options { seed: 7, ..Options::default() }).unwrap().remove(0);
     let plan = walls::build(&layout, b.envelope, b.entry, &WallOpts::default());

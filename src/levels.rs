@@ -111,7 +111,7 @@ pub fn plan_building(b: &BriefIn, n: u32) -> Result<BuildingPlan, String> {
                 labels.insert(pr.key.clone(), name.into());
             }
         }
-        levels.push(LevelPlan { brief: Brief { envelope: main_env, rooms: reqs, adjacency, entry }, block });
+        levels.push(LevelPlan { brief: Brief { envelope: main_env, rooms: reqs, adjacency, entry, entry_at: None }, block });
     }
     labels.insert("reserve".into(), "Hall".into());
     for l in 1..n {
@@ -124,7 +124,7 @@ pub fn plan_building(b: &BriefIn, n: u32) -> Result<BuildingPlan, String> {
             labels.insert(format!("reserve{i}@{l}"), "Hall".into());
         }
     }
-    Ok(BuildingPlan { levels, merged: Brief { envelope, rooms: merged_rooms, adjacency: merged_adj, entry }, labels, notes })
+    Ok(BuildingPlan { levels, merged: Brief { envelope, rooms: merged_rooms, adjacency: merged_adj, entry, entry_at: None }, labels, notes })
 }
 
 /// One level with some rooms locked at exact rectangles (the envelope's frame, millimetres). The locked rooms are kept as they
@@ -213,7 +213,7 @@ fn generate_level(lp: &LevelPlan, level: usize, seed: u64, locked: &BTreeMap<Str
             continue;
         }
         let names: std::collections::BTreeSet<&str> = rooms.iter().map(|q| q.key.as_str()).collect();
-        let sub = Brief { envelope: *region, rooms: rooms.iter().map(|q| (*q).clone()).collect(), adjacency: lp.brief.adjacency.iter().filter(|a| names.contains(a.a.as_str()) && names.contains(a.b.as_str())).cloned().collect(), entry: lp.brief.entry };
+        let sub = Brief { envelope: *region, rooms: rooms.iter().map(|q| (*q).clone()).collect(), adjacency: lp.brief.adjacency.iter().filter(|a| names.contains(a.a.as_str()) && names.contains(a.b.as_str())).cloned().collect(), entry: lp.brief.entry, entry_at: None };
         let mut ls = layout::generate(&sub, &Options { seed: seed.wrapping_add(idx as u64 * 977), ..Options::default() }).map_err(|e| format!("the space left by the locked rooms ({:.1} m2): {e}", region.area_m2()))?;
         // Circulation filler rooms of the second and later pieces get their own keys.
         if idx > 0 {
@@ -384,17 +384,27 @@ pub fn placed_building(plan: &BuildingPlan, placement: &serde_json::Value, other
         Some(layout::Rect { x: round10(f("x")?), y: round10(f("y")?), w: round10(f("w")?), h: round10(f("h")?) })
     };
     let overlap = |a: &layout::Rect, b: &layout::Rect| a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    // A stair marked on the sketch (`_stair`) replaces the generator's strip along the west or east side: the shaft sits where it
+    // was marked, on every level, and the rooms around it are the ones the user marked (the hall beside it is just another room).
+    let stair_free = get("_stair");
     let mut used = 0;
     let mut out = Vec::new();
     for (l, lp) in plan.levels.iter().enumerate() {
         let rects: Vec<Option<layout::Rect>> = lp.brief.rooms.iter().map(|r| get(&r.key)).collect();
         if rects.is_empty() || rects.iter().any(Option::is_none) {
+            if stair_free.is_some() {
+                return Err(format!("the stair is placed on the sketch, so every room of every level must be marked: level {} is not", l + 1));
+            }
             out.push(other.levels[l.min(other.levels.len() - 1)].clone());
             continue;
         }
-        let env = lp.brief.envelope;
+        let env = if stair_free.is_some() { plan.merged.envelope } else { lp.brief.envelope };
         let mut marked: Vec<layout::Rect> = rects.into_iter().flatten().collect();
+        let n_rooms = marked.len();
+        marked.extend(stair_free);
         snap_rects(&mut marked, &env, SNAP_MM);
+        let shaft = if stair_free.is_some() { marked.pop() } else { None };
+        debug_assert_eq!(marked.len(), n_rooms);
         let mut rooms: Vec<layout::PlacedRoom> = Vec::new();
         for (req, rect) in lp.brief.rooms.iter().zip(marked) {
             if rect.w < 500 || rect.h < 500 {
@@ -406,7 +416,16 @@ pub fn placed_building(plan: &BuildingPlan, placement: &serde_json::Value, other
             let area = rect.area_m2();
             rooms.push(layout::PlacedRoom { key: req.key.clone(), func: req.func.clone(), zone: req.zone, needs_light: req.needs_light, rect, area_m2: area, target_m2: req.target_area_m2, deviation_pct: (area - req.target_area_m2) / req.target_area_m2 * 100.0 });
         }
-        if let Some(blk) = &lp.block {
+        if let Some(rect) = shaft {
+            if rect.w < 500 || rect.h < 500 {
+                return Err("the stair marked on the sketch is smaller than 0.5 m in one side".into());
+            }
+            if rect.x < env.x || rect.y < env.y || rect.x + rect.w > env.x + env.w || rect.y + rect.h > env.y + env.h {
+                return Err("the stair marked on the sketch lies outside the buildable area".into());
+            }
+            let suffix = if l == 0 { String::new() } else { format!("@{l}") };
+            rooms.push(layout::PlacedRoom { key: format!("stair{suffix}"), func: "stair".into(), zone: layout::Zone::Service, needs_light: false, rect, area_m2: rect.area_m2(), target_m2: rect.area_m2(), deviation_pct: 0.0 });
+        } else if let Some(blk) = &lp.block {
             rooms.extend(blk.rooms.iter().cloned());
         }
         for i in 0..rooms.len() {
@@ -550,6 +569,7 @@ pub fn assemble(b: &Building, plan: &BuildingPlan, base: &StructOpts, project: O
         };
         let mut wo = walls::opts_from_adjacency(&plan.levels[l].brief.adjacency);
         wo.entry = l == 0;
+        wo.entry_at = plan.merged.entry_at;
         let wplan = walls::build(layout, plan.merged.envelope, plan.merged.entry, &wo);
         let wp = walls::place_windows(layout, &wplan, &wo, &WindowOpts { target_ratio: nnx_core::sbc::daylight_targets(), ..WindowOpts::default() });
         let space_cmds = layout::to_commands(layout, lid);

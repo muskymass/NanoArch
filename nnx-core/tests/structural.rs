@@ -30,6 +30,7 @@ fn brief() -> Brief {
         ],
         adjacency: vec![],
         entry: Side::South,
+        entry_at: None,
     }
 }
 

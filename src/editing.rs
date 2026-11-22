@@ -179,6 +179,7 @@ fn rebuild(doc: &mut Document, brief: &Brief, so: &StructOpts, level: Option<Id>
     let mut wall_opts = walls::opts_from_adjacency(&brief.adjacency);
     // Only the lowest level has the street entrance.
     wall_opts.entry = level.is_none_or(|l| building::levels(&doc.model).first().is_some_and(|(_, id)| *id == l));
+    wall_opts.entry_at = brief.entry_at;
     let plan = walls::build(&layout, brief.envelope, brief.entry, &wall_opts);
     let wp = walls::place_windows(&layout, &plan, &wall_opts, &WindowOpts { target_ratio: nnx_core::sbc::daylight_targets(), ..WindowOpts::default() });
     let ids: BTreeMap<String, Id> = rooms.iter().map(|r| (r.key.clone(), r.id)).collect();

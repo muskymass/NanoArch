@@ -31,6 +31,7 @@ fn villa() -> Brief {
         ],
         adjacency: vec![adj("kitchen", "dining", 2), adj("master", "bath1", 2), adj("majlis", "bed1", -2)],
         entry: Side::South,
+        entry_at: None,
     }
 }
 
