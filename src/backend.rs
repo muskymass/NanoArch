@@ -720,6 +720,10 @@ impl App {
                 "Beam" => e.typed::<nnx_core::typed::Beam>().ok().and_then(|b| at(e.level_id, (b.x1 + b.x2) / 2, (b.y1 + b.y2) / 2)),
                 "TieBeam" => e.typed::<nnx_core::typed::TieBeam>().ok().and_then(|b| at(e.level_id, (b.x1 + b.x2) / 2, (b.y1 + b.y2) / 2)),
                 "Slab" => e.typed::<nnx_core::typed::Slab>().ok().and_then(|s| phase_of(&s.room)),
+                // A MEP point or run takes the phase of the room it names, else of the rooms around its position (a run: its midpoint;
+                // between new and existing rooms it is NEW, as for walls).
+                "MepPoint" => e.typed::<nnx_core::typed::MepPoint>().ok().and_then(|m| phase_of(&m.room).or_else(|| at(e.level_id, m.x, m.y))),
+                "MepRun" => e.typed::<nnx_core::typed::MepRun>().ok().and_then(|r| r.room.as_deref().and_then(phase_of).or_else(|| at(e.level_id, (r.x1 + r.x2) / 2, (r.y1 + r.y2) / 2))),
                 _ => None,
             };
             if let Some(p) = p {
@@ -3137,6 +3141,46 @@ mod tests {
         // The columns are counted in some phase table, not only in UNSET.
         let in_phase: f64 = ["EXISTING", "NEW", "UNVERIFIED"].iter().map(|p| app.handle_ro_qto(p)["items"].as_array().unwrap().iter().filter(|i| i["code"] == "COLUMN.COUNT").map(|i| i["quantity"].as_f64().unwrap()).sum::<f64>()).sum();
         assert!(in_phase > 0.0, "every column is still UNSET");
+    }
+
+    #[test]
+    fn mep_points_and_runs_take_the_phase_of_their_room_or_position_and_are_counted_by_phase() {
+        use nnx_core::typed::{MepPoint, MepRun, element_of};
+        let mut app = generated_from(sketch2(json!({ "x": 3000, "y": 0 })));
+        let (centre, lid) = {
+            let m = &app.doc.as_ref().unwrap().model;
+            let sp = m.elements.values().filter(|e| e.kind == "Space").filter_map(|e| e.typed::<nnx_core::typed::Space>().ok().map(|s| (s, e.level_id))).collect::<Vec<_>>();
+            let centre = |k: &str| sp.iter().find(|(s, _)| s.requirement_key == k).map(|(s, _)| (s.x + s.w / 2, s.y + s.h / 2)).unwrap();
+            ((centre("majlis"), centre("living"), centre("dining")), sp[0].1)
+        };
+        let ((mx, my), (lx, _ly), (dx, dy)) = centre;
+        let point = |room: &str, x: i64, y: i64| MepPoint { role: "light".into(), x, y, room: room.into(), watts: Some(10.0), circuit: None, label: None, extra: Default::default() };
+        let run = |room: Option<&str>, x: i64, y: i64| MepRun { system: "cable".into(), x1: x, y1: y, z1: 2500, x2: x + 1000, y2: y, z2: 2500, width: 50, height: 50, room: room.map(String::from), role: None, label: None, extra: Default::default() };
+        let mut cmds = Vec::new();
+        // One light in the existing room, one in the new room, one in a room that was not given a phase.
+        for p in [point("majlis", mx, my), point("living", lx, _ly), point("dining", dx, dy)] {
+            let mut el = element_of(&p, nnx_core::Source::User);
+            el.level_id = lid;
+            cmds.push(Command::Create(el));
+        }
+        // A run that names a room, and a run with no room whose midpoint lies in the existing room.
+        for r in [run(Some("living"), mx, my), run(None, mx - 500, my)] {
+            cmds.push(Command::Create(nnx_core::typed::run_element(&r, lid, nnx_core::Source::User).unwrap()));
+        }
+        app.doc.as_mut().unwrap().commit("mep", nnx_core::Origin::User, cmds).unwrap();
+        app.handle("set_phase", &json!({ "phases": { "majlis": "EXISTING", "living": "NEW" } })).unwrap();
+        let phase = |e: &nnx_core::Element| e.props.get("phase").and_then(Value::as_str).map(String::from);
+        let model = &app.doc.as_ref().unwrap().model;
+        let by_room = |room: &str| model.elements.values().filter(|e| e.kind == "MepPoint").find(|e| e.typed::<MepPoint>().unwrap().room == room).and_then(phase);
+        assert_eq!(by_room("majlis").as_deref(), Some("EXISTING"));
+        assert_eq!(by_room("living").as_deref(), Some("NEW"));
+        assert_eq!(by_room("dining"), None, "a room with no phase gives its point no phase: none is invented");
+        let mut runs: Vec<(Option<String>, Option<String>)> = model.elements.values().filter(|e| e.kind == "MepRun").map(|e| (e.typed::<MepRun>().unwrap().room, phase(e))).collect();
+        runs.sort();
+        assert_eq!(runs, vec![(None, Some("EXISTING".to_string())), (Some("living".to_string()), Some("NEW".to_string()))], "by the named room, else by position");
+        // The counts are split by phase and add up to the whole.
+        let count = |p: &str| -> f64 { app.handle_ro_qto(p)["items"].as_array().unwrap().iter().filter(|i| i["code"] == "MEP.light").map(|i| i["quantity"].as_f64().unwrap()).sum() };
+        assert_eq!((count("EXISTING"), count("NEW"), count("UNSET"), count("")), (1.0, 1.0, 1.0, 3.0));
     }
 
     #[test]
