@@ -333,6 +333,7 @@ impl App {
             "elevation" => self.elevation(args),
             "section" => self.section(args),
             "clashes" => Ok(self.clash_json()),
+            "clash_classes" => Ok(self.clash_classes(args)),
             "runs" => Ok(json!(self.runs_json())),
             "add_run" => self.add_run(args),
             "delete_run" => {
@@ -2198,6 +2199,16 @@ impl App {
     fn clash_json(&self) -> Value {
         match &self.doc {
             Some(d) => serde_json::to_value(nnx_core::clash::detect(&nnx_core::model3d::build(&d.model), &nnx_core::clash::ClashOpts::default())).unwrap_or(Value::Null),
+            None => Value::Null,
+        }
+    }
+
+    /// Every conflict class (hard, clearance, routing, penetration) with what was not assessed. `clearance_mm` is the gap the user requires around structure;
+    /// without it clearance is reported as not assessed.
+    fn clash_classes(&self, args: &Value) -> Value {
+        let gap_m = args.get("clearance_mm").and_then(Value::as_f64).map(|mm| mm / 1000.0);
+        match &self.doc {
+            Some(d) => serde_json::to_value(nnx_core::clash::classify(&nnx_core::model3d::build(&d.model), &nnx_core::clash::ClashOpts::default(), gap_m)).unwrap_or(Value::Null),
             None => Value::Null,
         }
     }
@@ -4221,6 +4232,27 @@ mod tests {
         let mut two = two;
         let svg = two.handle("elevation", &json!({ "side": "south" })).unwrap()["svg"].as_str().unwrap().to_string();
         assert!(svg.contains("Floor 1 +") && svg.contains("Ground floor ±0.00"), "{}", &svg[..svg.len().min(200)]);
+    }
+
+    #[test]
+    fn clash_classes_separate_hard_routing_and_clearance_and_state_what_is_not_assessed() {
+        let mut app = started_with_project();
+        let model = &app.doc.as_ref().unwrap().model;
+        let col = model.elements.values().find(|e| e.kind == "Column").expect("the generated plan has columns");
+        let c = col.typed::<nnx_core::typed::Column>().unwrap();
+        let (cx, cy) = (c.x, c.y);
+        let none = app.handle("clash_classes", &json!({})).unwrap();
+        assert_eq!((none["hard"].as_array().unwrap().len(), none["routing"].as_array().unwrap().len()), (0, 0), "no runs, no conflicts");
+        // A pipe through the column (hard) and a duct across that pipe (routing).
+        app.handle("add_run", &json!({ "system": "pipe", "x1": cx - 600, "y1": cy, "z1": 1000, "x2": cx + 600, "y2": cy, "z2": 1000, "width": 100, "height": 100 })).unwrap();
+        app.handle("add_run", &json!({ "system": "duct", "x1": cx - 300, "y1": cy - 600, "z1": 1000, "x2": cx - 300, "y2": cy + 600, "z2": 1000, "width": 100, "height": 100 })).unwrap();
+        let r = app.handle("clash_classes", &json!({})).unwrap();
+        assert!(r["hard"].as_array().unwrap().iter().any(|k| k["struct_kind"] == "Column"));
+        assert_eq!(r["routing"].as_array().unwrap().len(), 1, "{r}");
+        assert!(r["not_assessed"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().starts_with("clearance")), "no gap entered: clearance is not assessed");
+        assert!(r["not_assessed"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().starts_with("maintenance access")));
+        let with_gap = app.handle("clash_classes", &json!({ "clearance_mm": 100 })).unwrap();
+        assert!(!with_gap["not_assessed"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().starts_with("clearance")));
     }
 
     #[test]

@@ -89,3 +89,98 @@ pub fn detect(scene: &Scene, opts: &ClashOpts) -> ClashReport {
     clashes.sort_by(|a, b| (&a.run_id, &a.struct_id).cmp(&(&b.run_id, &b.struct_id)));
     ClashReport { clashes, runs: runs.len(), structural: structural.len() }
 }
+
+/// A conflict of a class other than the hard clash: the two elements, the overlap box and the class.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Conflict {
+    /// `clearance`, `routing` or `penetration`.
+    pub class: &'static str,
+    pub a_id: String,
+    pub a_kind: &'static str,
+    /// System of the run (`duct`, `pipe`, `drain`, `cable`).
+    pub a_system: String,
+    pub b_id: String,
+    pub b_kind: &'static str,
+    pub b_system: String,
+    pub min: [f64; 3],
+    pub max: [f64; 3],
+    pub volume_m3: f64,
+    pub level: Option<i64>,
+}
+
+/// The conflict classes of the 3D scene. `hard` is exactly `detect`; the other classes are listed apart so a report can state each count.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ClassifiedReport {
+    /// Run overlapping a beam, column or footing.
+    pub hard: Vec<Clash>,
+    /// Run inside the entered clearance of a beam, column or footing without touching it. Empty when no clearance was entered.
+    pub clearance: Vec<Conflict>,
+    /// Two runs of different systems (duct, pipe, drain, cable) occupying the same space.
+    pub routing: Vec<Conflict>,
+    /// Run crossing a slab or a wall: a sleeve or an opening is needed, a design decision, so it is listed, not called a clash.
+    pub penetrations: Vec<Conflict>,
+    pub runs: usize,
+    pub structural: usize,
+    /// What was not assessed and why.
+    pub not_assessed: Vec<String>,
+}
+
+fn inflate(b: &Box3, c: f64) -> Box3 {
+    let mut o = b.clone();
+    for i in 0..3 {
+        o.min[i] -= c;
+        o.max[i] += c;
+    }
+    o
+}
+
+fn conflict(class: &'static str, a: &Box3, b: &Box3, lo: [f64; 3], hi: [f64; 3]) -> Conflict {
+    Conflict { class, a_id: a.id.clone(), a_kind: a.kind, a_system: a.class.clone(), b_id: b.id.clone(), b_kind: b.kind, b_system: b.class.clone(), volume_m3: (0..3).map(|i| hi[i] - lo[i]).product(), min: lo, max: hi, level: a.level }
+}
+
+/// Every conflict class the scene can show. `clearance_m` is the gap the user requires around structure (None: not assessed, nothing is assumed).
+pub fn classify(scene: &Scene, opts: &ClashOpts, clearance_m: Option<f64>) -> ClassifiedReport {
+    let base = detect(scene, opts);
+    let runs: Vec<&Box3> = scene.boxes.iter().filter(|b| b.kind == "MepRun").collect();
+    let structural: Vec<&Box3> = scene.boxes.iter().filter(|b| matches!(b.kind, "Beam" | "Column" | "Footing")).collect();
+    let gap = clearance_m.filter(|c| c.is_finite() && *c > 0.0);
+    let mut clearance = Vec::new();
+    if let Some(c) = gap {
+        for r in &runs {
+            for s in &structural {
+                if overlap(r, s, opts.tolerance).is_some() {
+                    continue;
+                }
+                if let Some((lo, hi)) = overlap(r, &inflate(s, c), opts.tolerance) {
+                    clearance.push(conflict("clearance", r, s, lo, hi));
+                }
+            }
+        }
+    }
+    let mut routing = Vec::new();
+    for (i, a) in runs.iter().enumerate() {
+        for b in &runs[i + 1..] {
+            if a.class == b.class {
+                continue;
+            }
+            if let Some((lo, hi)) = overlap(a, b, opts.tolerance) {
+                routing.push(conflict("routing", a, b, lo, hi));
+            }
+        }
+    }
+    let mut penetrations = Vec::new();
+    for r in &runs {
+        for s in scene.boxes.iter().filter(|b| matches!(b.kind, "Slab" | "Wall")) {
+            if let Some((lo, hi)) = overlap(r, s, opts.tolerance) {
+                penetrations.push(conflict("penetration", r, s, lo, hi));
+            }
+        }
+    }
+    let mut not_assessed = vec!["maintenance access: the model has no service-clearance input for equipment, so no access zone is tested".to_string()];
+    if gap.is_none() {
+        not_assessed.push("clearance: no required gap was entered, so only overlaps are reported".into());
+    }
+    routing.sort_by(|x, y| (&x.a_id, &x.b_id).cmp(&(&y.a_id, &y.b_id)));
+    penetrations.sort_by(|x, y| (&x.a_id, &x.b_id).cmp(&(&y.a_id, &y.b_id)));
+    ClassifiedReport { hard: base.clashes, clearance, routing, penetrations, runs: base.runs, structural: base.structural, not_assessed }
+}
