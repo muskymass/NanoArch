@@ -891,8 +891,13 @@ pub fn apply_with_runs(doc: &mut Document, points: &[PointSpec], runs: &[crate::
 
 /// Counts of MEP points by role and label, as quantity items that cite the points.
 pub fn point_items(model: &Model) -> Vec<QtoItem> {
+    point_items_for_phase(model, None)
+}
+
+/// Phase-aware MEP takeoff; totals and phase tables use the same calculations.
+pub fn point_items_for_phase(model: &Model, phase: Option<&str>) -> Vec<QtoItem> {
     let mut groups: BTreeMap<String, Vec<Id>> = BTreeMap::new();
-    for e in model.elements.values().filter(|e| e.kind == MepPoint::KIND) {
+    for e in model.elements.values().filter(|e| e.kind == MepPoint::KIND && crate::qto::matches_phase(e, phase)) {
         if let Ok(p) = e.typed::<MepPoint>() {
             let code = match (&p.role[..], &p.label) {
                 ("fixture", Some(l)) => format!("MEP.fixture.{l}"),
@@ -907,7 +912,7 @@ pub fn point_items(model: &Model) -> Vec<QtoItem> {
         .collect();
     // Runs by system and section, as lengths.
     let mut runs: BTreeMap<String, (f64, Vec<Id>)> = BTreeMap::new();
-    for e in model.elements.values().filter(|e| e.kind == crate::typed::MepRun::KIND) {
+    for e in model.elements.values().filter(|e| e.kind == crate::typed::MepRun::KIND && crate::qto::matches_phase(e, phase)) {
         if let Ok(r) = e.typed::<crate::typed::MepRun>() {
             let d = [(r.x2 - r.x1) as f64, (r.y2 - r.y1) as f64, (r.z2 - r.z1) as f64];
             let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() / 1000.0;

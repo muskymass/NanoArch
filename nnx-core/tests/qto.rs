@@ -293,3 +293,55 @@ fn write_villa_quantities_when_requested() {
     let (doc, _, _, _) = house();
     std::fs::write(path, qto::compute(&doc.model, &QtoOpts::default()).to_csv()).unwrap();
 }
+
+// Regression: tie-beam quantities used to appear in *every* phase export,
+// making the sum of the phase CSVs five times the unfiltered total.
+#[test]
+fn tie_beams_are_counted_once_across_construction_phases() {
+    use nnx_core::typed::TieBeam;
+    let mut g = golden();
+    for phase in [Some("NEW"), None] {
+        let tie = TieBeam {
+            x1: 0, y1: 0, x2: 4000, y2: 0,
+            width: 250, depth: 400,
+            from: "unused".into(), to: "unused".into(),
+            extra: Default::default(),
+        };
+        // QTO reads geometry only; no fictitious footing design is asserted.
+        let mut el = element_of(&tie, Source::Generated);
+        if let Some(p) = phase {
+            el.props.insert("phase".into(), serde_json::json!(p));
+        }
+        g.doc.model.elements.insert(el.id, el);
+    }
+    let total = qto::compute(&g.doc.model, &QtoOpts::default());
+    close(q(&total, "TIEBEAM.COUNT"), 2.0);
+    close(q(&total, "TIEBEAM.VOL"), 0.8);
+    let mut count = 0.0;
+    let mut vol = 0.0;
+    for phase in ["NEW", "EXISTING", "TO_BE_DEMOLISHED", "TO_BE_MODIFIED", "TEMPORARY", "UNVERIFIED", "UNSET"] {
+        let takeoff = qto::compute(&g.doc.model, &QtoOpts { phase: Some(phase.into()), ..QtoOpts::default() });
+        count += takeoff.get("TIEBEAM.COUNT").map_or(0.0, |i| i.quantity);
+        vol += takeoff.get("TIEBEAM.VOL").map_or(0.0, |i| i.quantity);
+    }
+    close(count, q(&total, "TIEBEAM.COUNT"));
+    close(vol, q(&total, "TIEBEAM.VOL"));
+}
+
+// Regression: a phase-filtered space must still deduct a door of a different
+// construction status; the door does not cease to exist geometrically.
+#[test]
+fn phased_skirting_keeps_cross_phase_door_deductions() {
+    let mut g = golden();
+    for element in g.doc.model.elements.values_mut() {
+        match element.kind.as_str() {
+            "Space" => { element.props.insert("phase".into(), serde_json::json!("NEW")); }
+            "Door" => { element.props.insert("phase".into(), serde_json::json!("EXISTING")); }
+            _ => (),
+        }
+    }
+    let new = qto::compute(&g.doc.model, &QtoOpts { phase: Some("NEW".into()), ..QtoOpts::default() });
+    close(q(&new, "SKIRTING.bedroom"), 17.1);
+    let total = qto::compute(&g.doc.model, &QtoOpts::default());
+    close(q(&new, "SKIRTING.bedroom"), q(&total, "SKIRTING.bedroom"));
+}

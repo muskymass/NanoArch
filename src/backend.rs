@@ -601,15 +601,19 @@ impl App {
 
     /// Insulation and MEP-point items for the quantity table, from the saved inputs and the model's points.
     fn extra_items(&self, model: &nnx_core::Model) -> Vec<nnx_core::qto::QtoItem> {
+        self.extra_items_for_phase(model, None)
+    }
+
+    fn extra_items_for_phase(&self, model: &nnx_core::Model, phase: Option<&str>) -> Vec<nnx_core::qto::QtoItem> {
         let mut v = Vec::new();
         if let Some(inp) = self.project().and_then(|p| p.mep)
             && let Some(lib) = inp.insulation
         {
-            v.extend(nnx_core::insulation::analyze(model, &lib).items);
+            v.extend(nnx_core::insulation::analyze_for_phase(model, &lib, phase).items);
         }
-        v.extend(nnx_core::mep::point_items(model));
+        v.extend(nnx_core::mep::point_items_for_phase(model, phase));
         if let Some(p) = self.project() {
-            v.extend(nnx_core::finishes::items(model, &p.meta.finishes));
+            v.extend(nnx_core::finishes::items_for_phase(model, &p.meta.finishes, phase));
         }
         v
     }
@@ -756,9 +760,7 @@ impl App {
             return Err(format!("'{p}' is not a phase"));
         }
         let mut q = qto::compute(&self.doc()?.model, &QtoOpts { phase: phase.clone(), ..QtoOpts::default() });
-        if phase.is_none() {
-            q.items.extend(self.extra_items(&self.doc()?.model));
-        }
+        q.items.extend(self.extra_items_for_phase(&self.doc()?.model, phase.as_deref()));
         let items: Vec<Value> = q
             .items
             .iter()
@@ -3047,6 +3049,26 @@ mod tests {
         assert!(((e + n + u) - all).abs() < 0.01, "the phases add up to the whole: {e} + {n} + {u} vs {all}");
         app.doc.as_mut().unwrap().undo();
         assert_eq!(space(&app, "majlis"), None, "one undo takes the phases back");
+    }
+
+    #[test]
+    fn phase_quantity_exports_reconcile_with_unfiltered_items() {
+        let mut app = generated_from(sketch2(json!({ "x": 3000, "y": 0 })));
+        app.handle("set_phase", &json!({ "phases": { "majlis": "EXISTING", "living": "NEW" } })).unwrap();
+        let full = app.handle_ro_qto("");
+        let mut per_phase: BTreeMap<String, f64> = BTreeMap::new();
+        for phase in ["EXISTING", "NEW", "UNSET", "TO_BE_DEMOLISHED", "TO_BE_MODIFIED", "TEMPORARY", "UNVERIFIED"] {
+            let q = app.handle_ro_qto(phase);
+            for item in q["items"].as_array().unwrap() {
+                *per_phase.entry(item["code"].as_str().unwrap().to_string()).or_default() += item["quantity"].as_f64().unwrap();
+            }
+        }
+        for item in full["items"].as_array().unwrap() {
+            let code = item["code"].as_str().unwrap();
+            let total = item["quantity"].as_f64().unwrap();
+            let allocated = per_phase.get(code).copied().unwrap_or_default();
+            assert!((total - allocated).abs() < 0.015, "{code}: whole={total}, phases={allocated}");
+        }
     }
 
     #[test]

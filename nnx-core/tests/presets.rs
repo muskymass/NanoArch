@@ -113,6 +113,31 @@ fn a_column_that_carries_load_beyond_the_minimum_gets_steel_from_the_capacity_fo
     assert!(r.ratio_pct <= 4.0);
 }
 
+/// Reference case for the flexure branch of the footing design. The engine solves a quadratic in As; this test uses the other
+/// textbook form (Rn, then rho = 0.85 f'c / fy x (1 - sqrt(1 - 2 Rn / (0.85 f'c)))), so the two cannot share an error.
+/// Inputs are the synthetic test values of `dsn()` (fc 25, fy 420, phi 0.9, factor 1.4), not project values.
+#[test]
+fn footing_flexure_matches_the_rho_form_when_the_moment_governs() {
+    let (fc, fy, phi, gamma) = (25.0_f64, 420.0_f64, 0.9_f64, 1.4_f64);
+    let (side, col, load_kn, thick, cover, dia) = (2400.0_f64, 400.0_f64, 2000.0_f64, 500.0_f64, 75.0_f64, 12.0_f64);
+    let qu_kpa = gamma * load_kn / (side * side / 1e6);
+    let a_m = (side - col) / 2.0 / 1000.0;
+    let mu_nmm = qu_kpa * a_m * a_m / 2.0 * 1e6; // N.mm per metre width
+    let d = thick - cover - dia / 2.0;
+    let rn = mu_nmm / (phi * 1000.0 * d * d);
+    let rho = 0.85 * fc / fy * (1.0 - (1.0 - 2.0 * rn / (0.85 * fc)).sqrt());
+    let as_ref = rho * 1000.0 * d;
+    assert!(as_ref > 0.0018 * 1000.0 * thick, "the case must be governed by flexure, not by the minimum: {as_ref}");
+    near(as_ref, 1594.6, 0.5); // hand value: qu 486.11 kPa, Mu 243.06 kN.m/m, Rn 1.538 MPa, rho 0.003806
+    let f = FndIn { name: "FND-F", id: "ff", length: side, width: side, load_kn, col_b: col, col_h: col };
+    let out = rebar::design(&dsn(), Some(thick), &[], &[f], &[]);
+    let r = &out.rows[0];
+    near(r.required_mm2, as_ref, 0.05);
+    assert_eq!((r.status.as_str(), r.cover_mm), ("ok", 75.0));
+    // Dia 12: 113.097 x 1000 / 1594.6 = 70.9 mm, rounded down to 70 mm.
+    assert_eq!(r.bars, "Dia 12 @ 70 each way");
+}
+
 #[test]
 fn a_footing_takes_the_larger_of_the_flexure_and_the_minimum_and_is_checked_for_spacing() {
     let f = FndIn { name: "FND-1", id: "f1", length: 1800.0, width: 1800.0, load_kn: 400.0, col_b: 300.0, col_h: 300.0 };

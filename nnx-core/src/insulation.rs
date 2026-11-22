@@ -147,13 +147,29 @@ pub(crate) fn scope_area(model: &Model, scope: &str, upturn_mm: Option<f64>) -> 
 }
 
 pub fn analyze(model: &Model, lib: &InsulationLib) -> InsulationReport {
+    analyze_for_phase(model, lib, None)
+}
+
+/// Phase-filtered insulation quantity calculation. The original, unfiltered model
+/// determines roof level and hosted openings to prevent false extra quantities.
+pub fn analyze_for_phase(model: &Model, lib: &InsulationLib, phase: Option<&str>) -> InsulationReport {
     let mut rep = InsulationReport::default();
     for (scope, asm) in &lib.assemblies {
         if !SCOPES.contains(&scope.as_str()) {
             rep.warnings.push(format!("assembly '{scope}' is not a known scope (known: {})", SCOPES.join(", ")));
             continue;
         }
-        let (area, ids) = scope_area(model, scope, lib.wet_upturn_mm);
+        let (full_area, full_ids) = scope_area(model, scope, lib.wet_upturn_mm);
+        let (area, ids) = if let Some(phase) = phase {
+            let included: Vec<Id> = full_ids.into_iter().filter(|id| model.elements.get(id).is_some_and(|e| crate::qto::matches_phase(e, Some(phase)))).collect();
+            let area = match scope.as_str() {
+                "wall" => exterior_wall_areas(model).into_iter().filter(|(id, _)| included.contains(id)).map(|(_, a)| a).sum(),
+                "roof" => model.elements.values().filter(|e| included.contains(&e.id)).filter_map(|e| e.typed::<Slab>().ok()).map(|s| (s.w * s.h) as f64 / 1e6).sum(),
+                "wet_floor" => model.elements.values().filter(|e| included.contains(&e.id)).filter_map(|e| e.typed::<Space>().ok()).map(|s| s.area + lib.wet_upturn_mm.unwrap_or(0.0) / 1e6 * 2.0 * (s.w + s.h) as f64).sum(),
+                _ => 0.0,
+            };
+            (area, included)
+        } else { (full_area, full_ids) };
         if ids.is_empty() {
             rep.warnings.push(format!("no {scope} elements in the model: '{scope}' has no area"));
         }

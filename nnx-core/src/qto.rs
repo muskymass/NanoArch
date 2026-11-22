@@ -110,17 +110,23 @@ impl Qto {
     }
 }
 
+/// True when the element belongs to a requested construction-status phase.
+/// An unset phase is never silently treated as NEW or EXISTING.
+pub fn matches_phase(e: &Element, phase: Option<&str>) -> bool {
+    match phase {
+        None => true,
+        Some("UNSET") => e.props.get("phase").and_then(|v| v.as_str()).is_none(),
+        Some(p) => e.props.get("phase").and_then(|v| v.as_str()) == Some(p),
+    }
+}
+
 fn collect<'a, T: Typed>(model: &'a Model, opts: &QtoOpts) -> Vec<(&'a Element, T)> {
     let (level, phase) = (opts.level, opts.phase.as_deref());
     model
         .elements
         .values()
         .filter(|e| e.kind == T::KIND && (level.is_none() || e.level_id == level))
-        .filter(|e| match phase {
-            None => true,
-            Some("UNSET") => e.props.get("phase").and_then(|v| v.as_str()).is_none(),
-            Some(p) => e.props.get("phase").and_then(|v| v.as_str()) == Some(p),
-        })
+        .filter(|e| matches_phase(e, phase))
         .filter_map(|e| e.typed::<T>().ok().map(|t| (e, t)))
         .collect()
 }
@@ -185,7 +191,13 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     let walls = collect::<Wall>(model, opts);
     let doors = collect::<Door>(model, opts);
     let windows = collect::<Window>(model, opts);
+    // Physical openings remain in their host wall even if a phase was set only
+    // on the opening or the host. The phase controls which item is billed, not
+    // the net geometry of a wall/room.
+    let all_doors = collect::<Door>(model, &QtoOpts::default());
+    let all_windows = collect::<Window>(model, &QtoOpts::default());
     let slabs = collect::<Slab>(model, opts);
+    let all_slabs = collect::<Slab>(model, &QtoOpts::default());
     let beams = collect::<Beam>(model, opts);
     let columns = collect::<Column>(model, opts);
     let footings = collect::<Footing>(model, opts);
@@ -193,12 +205,12 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
 
     // ---- walls: area net of hosted openings, then volume ----
     let mut open_by_wall: BTreeMap<Id, f64> = BTreeMap::new();
-    for (e, d) in &doors {
+    for (e, d) in &all_doors {
         if let Some(h) = e.host_id {
             *open_by_wall.entry(h).or_default() += d.width as f64 * d.height as f64;
         }
     }
-    for (e, w) in &windows {
+    for (e, w) in &all_windows {
         if let Some(h) = e.host_id {
             *open_by_wall.entry(h).or_default() += w.width as f64 * w.height as f64;
         }
@@ -283,7 +295,7 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     for (e, b) in &beams {
         let (mx, my) = ((b.x1 + b.x2) as f64 / 2.0, (b.y1 + b.y2) as f64 / 2.0);
         let tol = b.b as f64;
-        let slab_t = slabs
+        let slab_t = all_slabs
             .iter()
             .filter(|(_, s)| {
                 mx >= s.x as f64 - tol && mx <= (s.x + s.w) as f64 + tol && my >= s.y as f64 - tol && my <= (s.y + s.h) as f64 + tol
@@ -299,7 +311,7 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     acc.add_parts("BEAM.FORM", "Beam formwork (soffit and two sides, below the slab)", Unit::M2, beam_form);
 
     // ---- columns ----
-    let storey = walls.iter().map(|(_, w)| w.height).max();
+    let storey = collect::<Wall>(model, &QtoOpts::default()).iter().map(|(_, w)| w.height).max();
     if !columns.is_empty() {
         match storey {
             Some(h) => {
@@ -328,6 +340,7 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
         .elements
         .values()
         .filter(|e| e.kind == crate::typed::TieBeam::KIND && (opts.level.is_none() || e.level_id == opts.level))
+        .filter(|e| matches_phase(e, opts.phase.as_deref()))
         .filter_map(|e| {
             let t = e.typed::<crate::typed::TieBeam>().ok()?;
             let len = ((t.x2 - t.x1).abs() + (t.y2 - t.y1).abs()) as f64;
@@ -366,7 +379,7 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
             }
         }
     }
-    let separators = collect::<crate::typed::RoomSeparator>(model, opts);
+    let separators = collect::<crate::typed::RoomSeparator>(model, &QtoOpts::default());
     let mut open_edge_mm = 0.0;
     for (e, s) in &spaces {
         let area = s.net_area.unwrap_or(s.area);
@@ -374,7 +387,7 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
         f.0 += area;
         f.1.push(e.id);
 
-        let door_widths: f64 = doors.iter().filter(|(_, d)| d.from == s.requirement_key || d.to == s.requirement_key).map(|(_, d)| d.width as f64).sum();
+        let door_widths: f64 = all_doors.iter().filter(|(_, d)| d.from == s.requirement_key || d.to == s.requirement_key).map(|(_, d)| d.width as f64).sum();
         let open: f64 = separators.iter().map(|(_, sep)| along_edges(sep, s)).sum();
         open_edge_mm += open;
         let perimeter = 2.0 * (s.w + s.h) as f64 - open;

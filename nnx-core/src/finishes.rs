@@ -73,16 +73,30 @@ fn floor_spaces(model: &Model) -> (f64, Vec<Id>) {
 
 /// The take-off items of the chosen finishes.
 pub fn items(model: &Model, f: &Finishes) -> Vec<QtoItem> {
+    items_for_phase(model, f, None)
+}
+
+pub fn items_for_phase(model: &Model, f: &Finishes, phase: Option<&str>) -> Vec<QtoItem> {
     let mut out = Vec::new();
     let round = |v: f64| (v * 1e4).round() / 1e4;
     if let Some(id) = f.facade.as_deref().and_then(|i| find("facade", i)) {
-        let (area, ids) = crate::insulation::scope_area(model, "wall", None);
+        let (area, ids) = if let Some(phase) = phase {
+            let parts: Vec<_> = crate::insulation::exterior_wall_areas(model).into_iter()
+                .filter(|(id, _)| model.elements.get(id).is_some_and(|e| crate::qto::matches_phase(e, Some(phase)))).collect();
+            (parts.iter().map(|(_, a)| *a).sum(), parts.iter().map(|(id, _)| *id).collect())
+        } else { crate::insulation::scope_area(model, "wall", None) };
         if area > 0.0 {
             out.push(QtoItem { code: code("facade", id.id), description: format!("Facade finish: {}", id.en), unit: Unit::M2, quantity: round(area), waste_pct: None, sources: ids, parts: Vec::new() });
         }
     }
     if let Some(id) = f.floor.as_deref().and_then(|i| find("floor", i)) {
-        let (area, ids) = floor_spaces(model);
+        let (area, ids) = if let Some(phase) = phase {
+            let parts: Vec<_> = model.elements.values().filter(|e| e.kind == Space::KIND && crate::qto::matches_phase(e, Some(phase)))
+                .filter_map(|e| Some((e.id, e.typed::<Space>().ok()?)))
+                .filter(|(_, s)| s.func != "bathroom" && s.func != "toilet")
+                .collect();
+            (parts.iter().map(|(_, s)| s.w as f64 * s.h as f64 / 1e6).sum(), parts.iter().map(|(id, _)| *id).collect())
+        } else { floor_spaces(model) };
         if area > 0.0 {
             out.push(QtoItem { code: code("floor", id.id), description: format!("Floor finish: {}", id.en), unit: Unit::M2, quantity: round(area), waste_pct: None, sources: ids, parts: Vec::new() });
         }
