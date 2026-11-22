@@ -209,6 +209,7 @@ fn house() -> (Document, Brief, walls::Plan, walls::WindowPlan) {
         adjacency: vec![],
         entry: Side::South,
         entry_at: None,
+        wall_mm: None,
     };
     let layout = generate(&b, &Options { seed: 7, ..Options::default() }).unwrap().remove(0);
     let plan = walls::build(&layout, b.envelope, b.entry, &WallOpts::default());

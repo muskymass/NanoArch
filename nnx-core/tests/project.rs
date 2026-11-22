@@ -18,6 +18,8 @@ fn brief() -> BriefIn {
         rooms: vec![RoomIn { key: "bed".into(), name: None, func: "bedroom".into(), area: 12.0, zone: "private".into(), light: true, min_width_mm: None, floor: None }],
         seed: None,
         stair: None,
+        wall_exterior_mm: None,
+        wall_interior_mm: None,
     }
 }
 

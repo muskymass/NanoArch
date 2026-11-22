@@ -75,6 +75,8 @@ pub struct Brief {
     /// Where the user marked the front door (mm, envelope frame), if they did: the entry door goes on the outside wall nearest to
     /// it. `None` keeps the street-side rule.
     pub entry_at: Option<(i64, i64)>,
+    /// Wall thickness the drawings use, `(exterior, interior)` in mm. `None` keeps the engine's defaults (300 / 150).
+    pub wall_mm: Option<(i64, i64)>,
 }
 
 #[derive(Debug, Clone)]

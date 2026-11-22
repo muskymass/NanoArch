@@ -143,6 +143,11 @@ pub struct BriefIn {
     pub rooms: Vec<RoomIn>,
     pub seed: Option<u64>,
     pub stair: Option<StairIn>,
+    /// Wall thickness of the drawings (mm). Both or none: with one missing the engine's default is used for it.
+    #[serde(default)]
+    pub wall_exterior_mm: Option<i64>,
+    #[serde(default)]
+    pub wall_interior_mm: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

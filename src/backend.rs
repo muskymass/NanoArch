@@ -2878,6 +2878,22 @@ mod tests {
     }
 
     #[test]
+    fn the_wall_thickness_the_user_gives_is_the_one_the_walls_are_built_with() {
+        let thicknesses = |brief: Value| -> std::collections::BTreeSet<i64> {
+            let mut app = App::default();
+            app.handle("generate", &json!({ "brief": brief, "struct": loads2(), "placement": sketch2(json!({ "x": 3000, "y": 0 })) })).unwrap();
+            app.handle("select", &json!({ "index": 0, "struct": loads2() })).unwrap();
+            of_level(&app, 0, "Wall").iter().filter_map(|w| w.props["thickness"].as_i64()).collect()
+        };
+        let default = thicknesses(brief2());
+        assert!(default.contains(&300) && default.contains(&150), "the engine's defaults without the fields: {default:?}");
+        let mut b = brief2();
+        b["wall_exterior_mm"] = json!(200);
+        b["wall_interior_mm"] = json!(200);
+        assert_eq!(thicknesses(b), std::collections::BTreeSet::from([200]), "every wall follows the given thickness");
+    }
+
+    #[test]
     fn a_stair_on_the_sketch_needs_every_level_marked() {
         let mut sketch = sketch2(json!({ "x": 3000, "y": 0 }));
         sketch.as_object_mut().unwrap().remove("bath3");
