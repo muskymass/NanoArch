@@ -1081,10 +1081,23 @@ impl App {
         let doc = self.doc()?;
         let base = args.get("pack").and_then(Value::as_str);
         let overlays = self.project().map(|p| p.overlays).unwrap_or_default();
-        if base.is_none_or(|b| b.trim().is_empty()) && !overlays.iter().any(|o| o.enabled) {
-            return Err("paste a rule pack (JSON), or load and enable a municipal overlay".into());
+        let sourced = args.get("sourced").and_then(Value::as_bool).unwrap_or(false);
+        if !sourced && base.is_none_or(|b| b.trim().is_empty()) && !overlays.iter().any(|o| o.enabled) {
+            return Err("paste a rule pack (JSON), use the sourced pack, or load and enable a municipal overlay".into());
         }
-        let (rs, reports) = nnx_core::overlay::rule_set(base, &overlays)?;
+        // The sourced pack is the bottom layer; a pasted pack and the enabled overlays go on top of it and may replace its rules.
+        let (rs, reports) = if sourced {
+            let (mut rs, mut reports) = nnx_core::overlay::rule_set(Some(&nnx_core::sbc::sourced_pack_json()), &[])?;
+            if let Some(b) = base.filter(|b| !b.trim().is_empty()) {
+                reports.push(rs.add_layer_reporting(b).map_err(|e| format!("rule pack: {e}"))?);
+            }
+            for o in overlays.iter().filter(|o| o.enabled) {
+                reports.push(rs.add_layer_reporting(&o.pack).map_err(|e| format!("overlay '{}': {e}", o.name))?);
+            }
+            (rs, reports)
+        } else {
+            nnx_core::overlay::rule_set(base, &overlays)?
+        };
         let r = rules::check(&doc.model, &rs);
         let sev = |s: rules::Severity| match s {
             rules::Severity::Error => "error",
@@ -2586,6 +2599,25 @@ mod tests {
         assert_eq!(r["checked"], 1);
         assert_eq!(r["findings"].as_array().unwrap().len(), 1, "the entry door is narrower than the synthetic 1200 mm");
         assert!(app.handle("check_rules", &json!({ "pack": "{" })).is_err());
+    }
+
+    #[test]
+    fn the_sourced_pack_runs_without_a_pasted_pack_and_every_rule_names_its_source() {
+        let mut app = started();
+        assert!(app.handle("check_rules", &json!({})).is_err(), "nothing to run without a pack, the sourced pack or an overlay");
+        let r = app.handle("check_rules", &json!({ "sourced": true })).unwrap();
+        assert!(r["checked"].as_u64().unwrap() > 0, "the sourced rules ran on the model's rooms");
+        assert_eq!(r["layers"][0].as_str().unwrap().split('@').next(), Some("SBC-SOURCED"));
+        assert!(r["skipped"].as_array().unwrap().is_empty(), "every value in the pack is set");
+        let pack: Value = serde_json::from_str(&nnx_core::sbc::sourced_pack_json()).unwrap();
+        for rule in pack["rules"].as_array().unwrap() {
+            let src = rule["params"]["min"]["source"].as_str().unwrap();
+            assert!(src.contains("clause") && src.contains("p."), "{} has no clause/page source: {src}", rule["id"]);
+        }
+        // A pasted pack goes on top and may replace a sourced rule.
+        let over = r#"{"id":"O","edition":"e","version":"1","rules":[{"id":"sbc.room_area.bedroom","clause":"X","applies_to":{"kind":"Space"},"check":"area >= param.min","params":{"min":{"value":1,"source":"test"}},"severity":"error","message":"m"}]}"#;
+        let r2 = app.handle("check_rules", &json!({ "sourced": true, "pack": over })).unwrap();
+        assert_eq!(r2["overlays"][1]["replaced"][0][0], "sbc.room_area.bedroom");
     }
 
     #[test]

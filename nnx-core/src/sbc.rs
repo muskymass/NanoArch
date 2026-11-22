@@ -82,6 +82,39 @@ pub fn code_value(id: &str) -> Option<&'static CodeValue> {
     CODE_VALUES.iter().find(|v| v.id == id)
 }
 
+/// The values in `CODE_VALUES` as a rule pack for the generic rule engine (the Code tab), so the tab runs without a pasted pack.
+/// Every parameter carries its source (code, edition, clause, file, page). Nothing is added that is not in `CODE_VALUES`: a
+/// function with no value gets no rule. Rooms without a measured glazing ratio are reported by the engine as not evaluable.
+pub fn sourced_pack_json() -> String {
+    use serde_json::json;
+    let src = |v: &CodeValue| format!("{} {}, clause {}, {}, p.{}", v.code, v.edition, v.clause, v.file, v.page);
+    let mut rules = Vec::new();
+    for area in CODE_VALUES.iter().filter(|v| v.id.starts_with("room_min_area_m2.")) {
+        let func = &area.id["room_min_area_m2.".len()..];
+        let applies = json!({ "kind": "Space", "where": format!("func == \"{func}\"") });
+        rules.push(json!({
+            "id": format!("sbc.room_area.{func}"), "clause": area.clause, "applies_to": applies,
+            "check": "area >= param.min", "params": { "min": { "value": area.value, "source": src(area) } },
+            "severity": "error", "message": format!("{func}: floor area is below the minimum of {} m2", area.value),
+        }));
+        if let Some(w) = code_value(&format!("room_min_width_m.{func}")) {
+            rules.push(json!({
+                "id": format!("sbc.room_width.{func}"), "clause": w.clause, "applies_to": applies,
+                "check": "min(w, h) >= param.min * 1000", "params": { "min": { "value": w.value, "source": src(w) } },
+                "severity": "error", "message": format!("{func}: the narrower side is below the minimum of {} m", w.value),
+            }));
+        }
+        if let Some(d) = code_value(&format!("daylight_min_ratio.{func}")) {
+            rules.push(json!({
+                "id": format!("sbc.daylight.{func}"), "clause": d.clause, "applies_to": applies,
+                "check": "glazing_ratio >= param.min", "params": { "min": { "value": d.value, "source": src(d) } },
+                "severity": "warning", "message": format!("{func}: glazing is below {} of the floor area", d.value),
+            }));
+        }
+    }
+    json!({ "id": "SBC-SOURCED", "edition": "values read from the files in the code folder", "version": "1", "rules": rules }).to_string()
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Violation {
     /// Stable key of the rule, for example `setback.front`.
