@@ -15,7 +15,7 @@ use crate::editing;
 use crate::levels::{self, Building, BuildingPlan};
 use nnx_core::building;
 use nnx_core::persist::Settings;
-use nnx_core::Document;
+use nnx_core::{Command, Document, Id, Origin};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -349,7 +349,8 @@ impl App {
             "sbc_check" => Ok(self.sbc_json()),
             "status" => Ok(json!({ "has_doc": self.doc.is_some(), "dirty": self.is_dirty() })),
             "assumptions" => Ok(assumptions()),
-            "qto" => self.qto(),
+            "qto" => self.qto(args),
+            "set_phase" => self.set_phase(args),
             "mep" => self.mep(args),
             "sizing" => self.sizing(args),
             "boq" => self.boq(args),
@@ -629,9 +630,76 @@ impl App {
         Ok(json!({ "report": r, "members_csv": r.members_csv(), "concrete_csv": r.concrete_csv(), "bbs_csv": r.bbs_csv(), "soil_kpa": soil }))
     }
 
-    fn qto(&self) -> Result<Value, String> {
-        let mut q = qto::compute(&self.doc()?.model, &QtoOpts::default());
-        q.items.extend(self.extra_items(&self.doc()?.model));
+    /// The construction phases an element can carry. Nothing is assumed: an element with no phase stays unset.
+    const PHASES: [&'static str; 6] = ["EXISTING", "TO_BE_DEMOLISHED", "TO_BE_MODIFIED", "NEW", "TEMPORARY", "UNVERIFIED"];
+
+    /// Gives rooms a construction phase (`phases`: room key -> phase). Walls take it from the rooms on their sides (a wall between an
+    /// existing and a new room is new; two different phases that are not that pair make it `UNVERIFIED`), doors and windows from their
+    /// wall. One undoable step. Rooms not named keep whatever they had.
+    fn set_phase(&mut self, args: &Value) -> Result<Value, String> {
+        let map = args.get("phases").and_then(Value::as_object).ok_or("phases (room key -> phase) is required")?;
+        let mut by_room: BTreeMap<String, String> = BTreeMap::new();
+        for (k, v) in map {
+            let p = v.as_str().ok_or_else(|| format!("the phase of '{k}' must be text"))?;
+            if !Self::PHASES.contains(&p) {
+                return Err(format!("'{p}' is not a phase: use one of {}", Self::PHASES.join(", ")));
+            }
+            by_room.insert(k.clone(), p.to_string());
+        }
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let phase_of = |key: &str| by_room.get(key).or_else(|| by_room.get(key.split('@').next().unwrap_or(""))).cloned();
+        let mut cmds: Vec<Command> = Vec::new();
+        let mut wall_phase: BTreeMap<Id, String> = BTreeMap::new();
+        let set = |id: Id, p: &str| Command::SetProp { id, key: "phase".into(), value: Some(json!(p)) };
+        for e in doc.model.elements.values() {
+            match e.kind.as_str() {
+                "Space" => {
+                    if let Some(p) = e.typed::<nnx_core::typed::Space>().ok().and_then(|s| phase_of(&s.requirement_key)) {
+                        cmds.push(set(e.id, &p));
+                    }
+                }
+                "Wall" => {
+                    let Ok(w) = e.typed::<nnx_core::typed::Wall>() else { continue };
+                    let (a, b) = (phase_of(&w.room_a), w.room_b.as_deref().and_then(phase_of));
+                    let p = match (a, b, w.room_b.is_some()) {
+                        (Some(a), Some(b), _) if a == b => Some(a),
+                        (Some(a), Some(b), _) if (a == "NEW" && b == "EXISTING") || (a == "EXISTING" && b == "NEW") => Some("NEW".to_string()),
+                        (Some(_), Some(_), _) => Some("UNVERIFIED".to_string()),
+                        (Some(a), None, false) => Some(a),
+                        (None, Some(b), _) => Some(b),
+                        (Some(a), None, true) => Some(a),
+                        (None, None, _) => None,
+                    };
+                    if let Some(p) = p {
+                        wall_phase.insert(e.id, p.clone());
+                        cmds.push(set(e.id, &p));
+                    }
+                }
+                _ => {}
+            }
+        }
+        for e in doc.model.elements.values().filter(|e| e.kind == "Door" || e.kind == "Window") {
+            if let Some(p) = e.host_id.and_then(|h| wall_phase.get(&h)) {
+                cmds.push(set(e.id, p));
+            }
+        }
+        if cmds.is_empty() {
+            return Err("no room in the plan has one of these keys".into());
+        }
+        let n = cmds.len();
+        doc.commit("Set construction phases", Origin::User, cmds).map_err(|e| e.to_string())?;
+        Ok(json!({ "elements": n, "svg": self.render_or_null()? }))
+    }
+
+    fn qto(&self, args: &Value) -> Result<Value, String> {
+        let phase = args.get("phase").and_then(Value::as_str).filter(|p| !p.is_empty()).map(String::from);
+        if let Some(p) = phase.as_ref().filter(|p| *p != "UNSET" && !Self::PHASES.contains(&p.as_str())) {
+            return Err(format!("'{p}' is not a phase"));
+        }
+        let mut q = qto::compute(&self.doc()?.model, &QtoOpts { phase: phase.clone(), ..QtoOpts::default() });
+        if phase.is_none() {
+            q.items.extend(self.extra_items(&self.doc()?.model));
+        }
         let items: Vec<Value> = q
             .items
             .iter()
@@ -2838,6 +2906,12 @@ mod tests {
         })
     }
 
+    impl App {
+        fn handle_ro_qto(&self, phase: &str) -> Value {
+            self.qto(&json!({ "phase": phase })).unwrap()
+        }
+    }
+
     fn generated_from(sketch: Value) -> App {
         let mut app = App::default();
         let g = app.handle("generate", &json!({ "brief": brief2(), "struct": loads2(), "placement": sketch })).unwrap();
@@ -2891,6 +2965,29 @@ mod tests {
         b["wall_exterior_mm"] = json!(200);
         b["wall_interior_mm"] = json!(200);
         assert_eq!(thicknesses(b), std::collections::BTreeSet::from([200]), "every wall follows the given thickness");
+    }
+
+    #[test]
+    fn construction_phases_are_set_on_rooms_walls_and_openings_and_split_the_quantities() {
+        let mut app = generated_from(sketch2(json!({ "x": 3000, "y": 0 })));
+        let wall_len = |app: &App, phase: &str| -> f64 { of_level(app, 0, "Wall").iter().filter(|w| w.props.get("phase").and_then(Value::as_str) == Some(phase)).map(|w| w.props["length"].as_f64().unwrap()).sum() };
+        assert_eq!(wall_len(&app, "EXISTING") + wall_len(&app, "NEW"), 0.0, "nothing is assumed before the user sets it");
+        let err = app.handle("set_phase", &json!({ "phases": { "majlis": "BUILT" } })).unwrap_err();
+        assert!(err.contains("not a phase"), "{err}");
+        let r = app.handle("set_phase", &json!({ "phases": { "majlis": "EXISTING", "living": "NEW" } })).unwrap();
+        assert!(r["svg"].as_str().unwrap().contains("ph-EXISTING") && r["svg"].as_str().unwrap().contains("ph-NEW"), "the plan colours the two phases apart");
+        let space = |app: &App, key: &str| of_level(app, 0, "Space").into_iter().find(|e| e.props["requirementKey"] == key).and_then(|e| e.props.get("phase").and_then(Value::as_str).map(String::from));
+        assert_eq!(space(&app, "majlis").as_deref(), Some("EXISTING"));
+        assert_eq!(space(&app, "living").as_deref(), Some("NEW"));
+        assert_eq!(space(&app, "dining"), None, "a room that was not named keeps no phase");
+        let shared = of_level(&app, 0, "Wall").into_iter().find(|w| { let (a, b) = (w.props["roomA"].as_str().unwrap(), w.props.get("roomB").and_then(Value::as_str)); (a == "majlis" && b == Some("living")) || (a == "living" && b == Some("majlis")) }).expect("a wall between the two rooms");
+        assert_eq!(shared.props.get("phase").and_then(Value::as_str), Some("NEW"), "a wall between an existing and a new room is new work");
+        let total = |phase: &str| -> f64 { app.handle_ro_qto(phase)["items"].as_array().unwrap().iter().filter(|i| i["code"] == "WALL.INT.AREA" || i["code"] == "WALL.EXT.AREA").map(|i| i["quantity"].as_f64().unwrap()).sum() };
+        let (e, n, u, all) = (total("EXISTING"), total("NEW"), total("UNSET"), total(""));
+        assert!(e > 0.0 && n > 0.0 && u > 0.0, "{e} {n} {u}");
+        assert!(((e + n + u) - all).abs() < 0.01, "the phases add up to the whole: {e} + {n} + {u} vs {all}");
+        app.doc.as_mut().unwrap().undo();
+        assert_eq!(space(&app, "majlis"), None, "one undo takes the phases back");
     }
 
     #[test]

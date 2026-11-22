@@ -69,6 +69,10 @@ pub struct QtoOpts {
     pub waste_pct: BTreeMap<String, f64>,
     /// Restrict to one level; `None` takes every level.
     pub level: Option<Id>,
+    /// Restrict to the elements of one construction phase (`EXISTING`, `NEW`, `TO_BE_DEMOLISHED`, `TO_BE_MODIFIED`, `TEMPORARY`,
+    /// `UNVERIFIED`), or `UNSET` for those that carry no phase. `None` takes every element. Structural members (slabs, beams, columns,
+    /// footings) are not given a phase by the engine, so they only appear under `None` or `UNSET`.
+    pub phase: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -106,11 +110,17 @@ impl Qto {
     }
 }
 
-fn collect<T: Typed>(model: &Model, level: Option<Id>) -> Vec<(&Element, T)> {
+fn collect<'a, T: Typed>(model: &'a Model, opts: &QtoOpts) -> Vec<(&'a Element, T)> {
+    let (level, phase) = (opts.level, opts.phase.as_deref());
     model
         .elements
         .values()
         .filter(|e| e.kind == T::KIND && (level.is_none() || e.level_id == level))
+        .filter(|e| match phase {
+            None => true,
+            Some("UNSET") => e.props.get("phase").and_then(|v| v.as_str()).is_none(),
+            Some(p) => e.props.get("phase").and_then(|v| v.as_str()) == Some(p),
+        })
         .filter_map(|e| e.typed::<T>().ok().map(|t| (e, t)))
         .collect()
 }
@@ -172,14 +182,14 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     let mut acc = Acc { items: Vec::new(), opts };
     let mut warnings = Vec::new();
 
-    let walls = collect::<Wall>(model, opts.level);
-    let doors = collect::<Door>(model, opts.level);
-    let windows = collect::<Window>(model, opts.level);
-    let slabs = collect::<Slab>(model, opts.level);
-    let beams = collect::<Beam>(model, opts.level);
-    let columns = collect::<Column>(model, opts.level);
-    let footings = collect::<Footing>(model, opts.level);
-    let spaces = collect::<Space>(model, opts.level);
+    let walls = collect::<Wall>(model, opts);
+    let doors = collect::<Door>(model, opts);
+    let windows = collect::<Window>(model, opts);
+    let slabs = collect::<Slab>(model, opts);
+    let beams = collect::<Beam>(model, opts);
+    let columns = collect::<Column>(model, opts);
+    let footings = collect::<Footing>(model, opts);
+    let spaces = collect::<Space>(model, opts);
 
     // ---- walls: area net of hosted openings, then volume ----
     let mut open_by_wall: BTreeMap<Id, f64> = BTreeMap::new();
@@ -336,7 +346,7 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     let mut floor: BTreeMap<String, (f64, Vec<Id>)> = BTreeMap::new();
     let mut skirting: BTreeMap<String, (f64, Vec<Id>)> = BTreeMap::new();
     // A room separator is a line on the drawing, not a wall: no skirting runs along it.
-    let separators = collect::<crate::typed::RoomSeparator>(model, opts.level);
+    let separators = collect::<crate::typed::RoomSeparator>(model, opts);
     let mut open_edge_mm = 0.0;
     for (e, s) in &spaces {
         let area = s.net_area.unwrap_or(s.area);

@@ -310,7 +310,7 @@ main.hl{grid-template-columns:1fr 420px}main.hr{grid-template-columns:400px 1fr}
       <select id="entry"><option value="south" data-i="south"></option><option value="north" data-i="north"></option><option value="east" data-i="east"></option><option value="west" data-i="west"></option></select>
 
       <h2 data-i="h_rooms"></h2>
-      <table class="rooms"><thead><tr><th data-i="r_name"></th><th data-i="r_func"></th><th data-i="r_area"></th><th data-i="r_zone"></th><th data-i="r_floor"></th><th>☀</th><th></th></tr></thead><tbody id="rooms"></tbody></table>
+      <table class="rooms"><thead><tr><th data-i="r_name"></th><th data-i="r_func"></th><th data-i="r_area"></th><th data-i="r_zone"></th><th data-i="r_floor"></th><th>☀</th><th data-i="r_phase"></th><th></th></tr></thead><tbody id="rooms"></tbody></table>
       <div class="bar" style="padding:8px 0;border:0"><button id="addroom" data-i="add_room"></button><button id="example" data-i="example"></button><button id="example2" data-i="example2"></button></div>
 
       <h2 data-i="h_struct"></h2>
@@ -518,7 +518,7 @@ ar: {
   edge_x0:"يسار", edge_x1:"يمين", edge_y0:"أسفل", edge_y1:"أعلى", i_grow:"غيّر الضلع (مم)", i_swap:"بدّل المكان مع", i_merge:"احذف وادمج في", i_nb:"جار", i_nb_none:"لا جار يشاركه ضلعاً كاملاً: لا تبديل ولا دمج.",
   export_dxf:"تصدير DXF", export_dxf_all:"DXF كل الأدوار", dxf_done:"DXF: {n} كياناً على {l} طبقة. الأبعاد بالمليمتر والتصدير أولي.",
   export_ifc:"تصدير IFC", ifc_done:"IFC: {n} عنصراً (جدران {w}، أبواب {d}، نوافذ {x}، فراغات {s}). الأبعاد بالمليمتر والتصدير أولي.",
-  r_floor:"الدور", example2:"مثال بدورين", stair_note:"عدد الأدوار أكبر من 1: تُرسم الأدوار فعلاً ويلزم إدخال الدرج (لا قيم افتراضية). أعطِ كل فراغ رقم دوره (1 أرضي)؛ دور بلا فراغات يكرر الذي تحته. يُرسم عمود الدرج (البئر) فقط، لا الدرجات.", wall_ext:"سماكة الجدار الخارجي (مم)، اختياري",wall_int:"سماكة الجدار الداخلي (مم)، اختياري",stair_w:"عرض الدرج (م)", stair_l:"طول الدرج (م)", stair_side:"جهة الدرج", lv_ground:"الأرضي", lv_n:"الدور {n}", lv_all:"كل الأدوار", v_level:"الأدوار",
+  r_floor:"الدور", example2:"مثال بدورين", stair_note:"عدد الأدوار أكبر من 1: تُرسم الأدوار فعلاً ويلزم إدخال الدرج (لا قيم افتراضية). أعطِ كل فراغ رقم دوره (1 أرضي)؛ دور بلا فراغات يكرر الذي تحته. يُرسم عمود الدرج (البئر) فقط، لا الدرجات.", r_phase:"المرحلة",qto_phase:"المرحلة",phase_all:"كل المراحل",phase_unset:"بلا مرحلة",phase:{EXISTING:"قائم",TO_BE_DEMOLISHED:"يُهدم",TO_BE_MODIFIED:"يُعدّل",NEW:"جديد",TEMPORARY:"مؤقت",UNVERIFIED:"غير متحقق"},wall_ext:"سماكة الجدار الخارجي (مم)، اختياري",wall_int:"سماكة الجدار الداخلي (مم)، اختياري",stair_w:"عرض الدرج (م)", stair_l:"طول الدرج (م)", stair_side:"جهة الدرج", lv_ground:"الأرضي", lv_n:"الدور {n}", lv_all:"كل الأدوار", v_level:"الأدوار",
   to3d:"3D", to2d:"المخطط 2D", v_slab:"السقف", v_struct:"الإنشائي", v_floor:"الأرضيات", v_glass:"الزجاج", v_mep:"نقاط MEP", v_top:"من أعلى", v_reset:"إعادة الضبط", v_solids:"مجسم", v_visual:"سماكة بصرية فقط: لا عمق مصمَّم", v_hint:"اسحب للدوران، Shift أو الزر الأيمن للتحريك، العجلة للتقريب، انقر لتحديد عنصر.",
   t_boq:"BOQ", boq_note:"وثيقة تنفيذ وتسعير: الكميات تُقاس من النموذج (حصر الكميات)، وأنت تُدخل المواصفة والسعر ومصدرهما، ومعاملات استهلاك المواد (إسمنت، رمل، حديد، طوب...)، والنسب الإضافية. لا قيم افتراضية: البند بلا سعر يُذكر باسمه ولا يدخل الإجمالي ويُوسَم الإجمالي «جزئي». حديد التسليح لا يُحسب إلا بمعاملاتك (كغ لكل م³) لأن البرنامج لا يصمم التسليح. المفاتيح: رمز البند أو بادئة تنتهي بـ *.", boq_example:"املأ بقيم اصطناعية (للاختبار فقط)", boq_run:"احسب BOQ",
   b_doc:"تصدير الوثيقة (HTML للطباعة)", b_xlsx:"تصدير Excel", t_sketch:"الرسم الأولي", sk_note:"استورد صورة أو PDF لمخطط أولي، ثم عيّن المقياس بنقطتين على بُعد معروف، وحدّد حدود الأرض والغرف بنقطتين لكل منها (زاويتان متقابلتان). تُنقل الأبعاد والمساحات المقاسة إلى النموذج. هذا قياس يدوي منك وليس تعرفاً آلياً، فراجع كل رقم.", sk_import:"استيراد رسم (صورة / PDF)", sk_clear:"إزالة الرسم", sk_known:"الطول الحقيقي بين النقطتين (م)", sk_t_scale:"1) تعيين المقياس", sk_t_plot:"2) حدود الأرض", sk_t_room:"3) إضافة غرفة", sk_swap:"تبديل العرض والطول", sk_name:"اسم الغرفة", sk_floor:"الدور", sk_reset:"مسح العلامات",
@@ -565,7 +565,7 @@ en: {
   edge_x0:"Left", edge_x1:"Right", edge_y0:"Bottom", edge_y1:"Top", i_grow:"Change the side (mm)", i_swap:"Swap places with", i_merge:"Delete and merge into", i_nb:"neighbour", i_nb_none:"No neighbour shares a full wall: no swap or merge.",
   export_dxf:"Export DXF", export_dxf_all:"DXF all levels", dxf_done:"DXF: {n} entities on {l} layers. Millimetres; preliminary export.",
   export_ifc:"Export IFC", ifc_done:"IFC: {n} products (walls {w}, doors {d}, windows {x}, spaces {s}). Millimetres; preliminary export.",
-  r_floor:"Floor", example2:"Two-floor example", stair_note:"Floors above 1 draw real levels and need the stair (no defaults). Give each room its floor number (1 is the ground floor); a floor with no rooms repeats the one below. Only the stair shaft is drawn, not the treads.", wall_ext:"Exterior wall thickness (mm), optional",wall_int:"Interior wall thickness (mm), optional",stair_w:"Stair width (m)", stair_l:"Stair length (m)", stair_side:"Stair side", lv_ground:"Ground", lv_n:"Floor {n}", lv_all:"All levels", v_level:"Levels",
+  r_floor:"Floor", example2:"Two-floor example", stair_note:"Floors above 1 draw real levels and need the stair (no defaults). Give each room its floor number (1 is the ground floor); a floor with no rooms repeats the one below. Only the stair shaft is drawn, not the treads.", r_phase:"Phase",qto_phase:"Phase",phase_all:"All phases",phase_unset:"No phase",phase:{EXISTING:"Existing",TO_BE_DEMOLISHED:"Demolish",TO_BE_MODIFIED:"Modify",NEW:"New",TEMPORARY:"Temporary",UNVERIFIED:"Unverified"},wall_ext:"Exterior wall thickness (mm), optional",wall_int:"Interior wall thickness (mm), optional",stair_w:"Stair width (m)", stair_l:"Stair length (m)", stair_side:"Stair side", lv_ground:"Ground", lv_n:"Floor {n}", lv_all:"All levels", v_level:"Levels",
   to3d:"3D", to2d:"2D plan", v_slab:"Roof slab", v_struct:"Structure", v_floor:"Floors", v_glass:"Glass", v_mep:"MEP points", v_top:"Top view", v_reset:"Reset", v_solids:"solids", v_visual:"visual thickness only: no designed depth", v_hint:"Drag to orbit, Shift or right button to pan, wheel to zoom, click to select an element.",
   t_boq:"BOQ", boq_note:"Execution and pricing document: quantities are measured from the model (quantity take-off); you enter each item's specification and rate with their sources, the consumption of each material (cement, sand, steel, blocks ...) and the mark-ups. No defaults: an item without a rate is named, left out of the total, and the total is marked PARTIAL. Reinforcement is counted only through your factors (kg per m³) because the application does not design it. Keys: an item code or a prefix ending in *.", boq_example:"Fill with synthetic values (testing only)", boq_run:"Compute BOQ",
   b_doc:"Export document (printable HTML)", b_xlsx:"Export Excel", t_sketch:"Draft sketch", sk_note:"Import an image or PDF of a draft plan, set the scale with two points on a known length, then mark the plot and each room with two opposite corners. The measured sizes and areas go into the model. This is your manual measuring, not automatic recognition: check every number.", sk_import:"Import sketch (image / PDF)", sk_clear:"Remove sketch", sk_known:"Real length between the two points (m)", sk_t_scale:"1) Set the scale", sk_t_plot:"2) Plot boundary", sk_t_room:"3) Add a room", sk_swap:"Swap width and length", sk_name:"Room name", sk_floor:"Floor", sk_reset:"Clear marks",
@@ -595,6 +595,7 @@ function applyLang() {
 
 // ---------------------------------------------------------------- state and helpers
 const state = { rooms: [{ key: "r1", name: "", func: "living", area: 30, zone: "public", light: true }], alts: [], sel: -1, notes: null, rooms_out: null, qto: null, sched: null, keys: [], rates: {} };
+const PHASES = ["EXISTING", "TO_BE_DEMOLISHED", "TO_BE_MODIFIED", "NEW", "TEMPORARY", "UNVERIFIED"];
 const FUNCS = ["majlis", "living", "dining", "kitchen", "bedroom", "bathroom", "other"], ZONES = ["public", "private", "service"];
 function toast(m) { const e = $("toast"); e.textContent = m; e.classList.add("on"); clearTimeout(toast.h); toast.h = setTimeout(() => e.classList.remove("on"), 3200); }
 async function busy(fn) {
@@ -614,6 +615,7 @@ function renderRooms() {
       <td><select data-f="zone">${ZONES.map(z => `<option value="${z}" ${z === r.zone ? "selected" : ""}>${t("zone")[z]}</option>`).join("")}</select></td>
       <td><input type="number" step="1" min="1" value="${r.floor || 1}" data-f="floor" style="width:40px;padding:4px 2px;text-align:center"></td>
       <td><input type="checkbox" ${r.light ? "checked" : ""} data-f="light"></td>
+      <td><select data-f="phase" style="width:84px"><option value="">—</option>${PHASES.map(p => `<option value="${p}" ${p === r.phase ? "selected" : ""}>${t("phase")[p]}</option>`).join("")}</select></td>
       <td><button data-del="${i}" title="x">×</button></td>`;
     tr.querySelectorAll("[data-f]").forEach(el => el.addEventListener("change", () => {
       const f = el.dataset.f; r[f] = f === "light" ? el.checked : (f === "area" || f === "floor") ? Number(el.value) : el.value;
@@ -824,7 +826,9 @@ function renderAlts() {
 }
 async function choose(i) {
   const res = await call("select", { index: i, struct: structInputs() });
-  state.sel = i; showPlan(res.svg); state.notes = res.warnings; state.rooms_out = res.rooms; state.qto = null; state.sched = null; renderSbc(res.sbc); refreshBim();
+  state.sel = i; showPlan(res.svg); state.notes = res.warnings;
+  const ph = {}; for (const q of state.rooms) if (q.phase) ph[q.key] = q.phase;
+  if (Object.keys(ph).length) { try { const rp = await call("set_phase", { phases: ph }); showPlan(rp.svg); } catch (e) { toast(e.message); } } state.rooms_out = res.rooms; state.qto = null; state.sched = null; renderSbc(res.sbc); refreshBim();
   renderAlts(); renderNotes(); setPlanButtons(true); $("p-qto").innerHTML = `<div class="empty">${t("working")}</div>`; $("schedout").innerHTML = "";
   loadQto(); refreshStatus(); try { anBuild(); } catch (e) { /* panel not built yet */ }
 }
@@ -885,12 +889,14 @@ function renderNotes() {
   $("p-notes").innerHTML = `<h2>${t("warnings")}</h2>${w.length ? `<ul class="clean">${w.map(x => `<li class="warn">${esc(x)}</li>`).join("")}</ul>` : `<div class="ok">${t("none")}</div>`}
     <h2>${t("rooms")}</h2><table><thead><tr><th>${t("r_name")}</th><th>${t("target")}</th><th>${t("actual")}</th></tr></thead><tbody>${rooms.map(r => `<tr><td>${esc(r.name)}</td><td class="num">${r.target.toFixed(1)}</td><td class="num">${r.area.toFixed(1)}</td></tr>`).join("")}</tbody></table>${assumptionsHtml()}`;
 }
-async function loadQto() { try { state.qto = await call("qto"); renderQto(); } catch (e) { $("p-qto").innerHTML = `<div class="bad">${esc(e.message)}</div>`; } }
+async function loadQto() { try { state.qto = await call("qto", { phase: state.qtoPhase || "" }); renderQto(); } catch (e) { $("p-qto").innerHTML = `<div class="bad">${esc(e.message)}</div>`; } }
 function renderQto() {
   const q = state.qto;
-  $("p-qto").innerHTML = `<div class="bar" style="padding:0 0 8px;border:0"><button id="expqto">${t("export_csv")}</button></div>
+  const phaseSel = `<select id="qto-phase" title="${t("qto_phase")}"><option value="">${t("phase_all")}</option>${["UNSET", ...PHASES].map(p => `<option value="${p}" ${p === state.qtoPhase ? "selected" : ""}>${p === "UNSET" ? t("phase_unset") : t("phase")[p]}</option>`).join("")}</select>`;
+  $("p-qto").innerHTML = `<div class="bar" style="padding:0 0 8px;border:0"><button id="expqto">${t("export_csv")}</button> ${phaseSel}</div>
     <table><thead><tr><th>${t("code")}</th><th>${t("qty")}</th><th>${t("unit")}</th><th>${t("el")}</th></tr></thead><tbody>${q.items.map(i => `<tr title="${esc(i.description)}"><td>${esc(i.code)}</td><td class="num">${i.quantity.toFixed(2)}</td><td>${i.unit}</td><td class="num">${i.sources}</td></tr>`).join("")}</tbody></table>
     <h2>${t("warnings")}</h2><ul class="clean">${q.warnings.map(x => `<li class="warn">${esc(x)}</li>`).join("")}</ul>`;
+  $("qto-phase").onchange = () => { state.qtoPhase = $("qto-phase").value; loadQto(); };
   $("expqto").onclick = () => busy(async () => { const r = await call("export", { name: "quantities.csv", data: q.csv }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
 }
 

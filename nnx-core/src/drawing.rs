@@ -102,6 +102,14 @@ struct Host {
     t: f64,
 }
 
+/// ` ph-<PHASE>` for an element that carries a construction phase, so the plan can colour existing and new work apart.
+fn phase_class(e: &Element) -> String {
+    match e.props.get("phase").and_then(|v| v.as_str()) {
+        Some(p) if p.chars().all(|c| c.is_ascii_uppercase() || c == '_') => format!(" ph-{p}"),
+        _ => String::new(),
+    }
+}
+
 pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<String, DrawError> {
     let spaces = collect::<Space>(model, level);
     let walls = collect::<Wall>(model, level);
@@ -138,6 +146,8 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
  .title{{font-size:16px;font-weight:700;fill:#111}} .note{{font-size:10.5px;fill:#a33}}
  .grid{{stroke:#c0392b;stroke-width:.8;stroke-dasharray:14 3 2 3;fill:none}} .gbub{{fill:#fff;stroke:#c0392b;stroke-width:1}} .gtxt{{font-size:11px;font-weight:600;fill:#c0392b;text-anchor:middle}}
  .dimline,.dimext,.dimtick{{stroke:#1c5d99;stroke-width:.8;fill:none}} .dimtick{{stroke-width:1.2}} .dimtxt2{{font-size:10.5px;fill:#1c5d99;text-anchor:middle}}
+ .room.ph-EXISTING{{fill:#dbe8f6}} .room.ph-NEW{{fill:#d3ece3}} .room.ph-TO_BE_DEMOLISHED{{fill:#f6d5d1}} .room.ph-TO_BE_MODIFIED{{fill:#fbe9c6}} .room.ph-TEMPORARY{{fill:#ece3f5}} .room.ph-UNVERIFIED{{fill:#eeeeee}}
+ .wall.ph-EXISTING{{fill:#385f8c}} .wall.ph-NEW{{fill:#177360}} .wall.ph-TO_BE_DEMOLISHED{{fill:#b53a2e}} .wall.ph-TO_BE_MODIFIED{{fill:#b9801d}} .wall.ph-TEMPORARY{{fill:#7a4fa3}} .wall.ph-UNVERIFIED{{fill:#7a7a7a}}
  .tagbox{{fill:#fff;fill-opacity:.9;stroke:#555;stroke-width:.8}} .tagname{{font-size:11px;font-weight:600;fill:#111;text-anchor:middle}} .tagtxt{{font-size:10px;fill:#444;text-anchor:middle}}
 </style>
 <rect class="bg" width="{w:.1}" height="{h:.1}"/>
@@ -151,8 +161,9 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
         let wet = matches!(sp.func.as_str(), "bathroom" | "toilet");
         let _ = writeln!(
             o,
-            r#"<rect class="room{}" data-id="{}" x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}"/>"#,
+            r#"<rect class="room{}{}" data-id="{}" x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}"/>"#,
             if wet { " wet" } else { "" },
+            phase_class(e),
             e.id,
             tx(sp.x as f64),
             ty((sp.y + sp.h) as f64),
@@ -168,8 +179,9 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
         let (rx, ry, rw, rh) = if w.horizontal() { (x0, y0 + t / 2.0, x1 - x0, t) } else { (x0 - t / 2.0, y1, t, y1 - y0) };
         let _ = writeln!(
             o,
-            r#"<rect class="wall{}" data-id="{}" x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}"/>"#,
+            r#"<rect class="wall{}{}" data-id="{}" x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}"/>"#,
             if w.is_exterior { "" } else { " int" },
+            phase_class(e),
             e.id,
             tx(rx),
             ty(ry),
