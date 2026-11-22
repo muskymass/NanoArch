@@ -185,3 +185,37 @@ fn levels_are_laid_side_by_side_and_an_empty_request_is_refused() {
     assert_eq!(on(&one, "A-ROOM").len(), 1);
     assert!(dxf::export_dxf(&Model::default(), &[None], &opts()).unwrap_err().contains("nothing to export"));
 }
+
+#[test]
+fn an_element_with_a_phase_goes_on_its_phase_layer_and_one_without_stays_on_the_base_layer() {
+    let mut g = golden();
+    let set = |g: &mut Golden, kind: &str, interior: Option<bool>, phase: &str| {
+        let id = g.doc.model.elements.values().find(|e| e.kind == kind && interior.is_none_or(|i| e.typed::<Wall>().map(|w| w.is_exterior != i).unwrap_or(false))).unwrap().id;
+        g.doc.commit("phase", Origin::User, vec![Command::SetProp { id, key: "phase".into(), value: Some(serde_json::json!(phase)) }]).unwrap();
+    };
+    set(&mut g, "Wall", Some(false), "NEW"); // the exterior wall
+    set(&mut g, "Column", None, "EXISTING");
+    let out = dxf::export_dxf(&g.doc.model, &[None], &opts()).unwrap();
+    let layers: Vec<String> = entities(&out.text).iter().map(|e| e.1.clone()).collect();
+    assert!(layers.iter().any(|l| l == "A-WALL-EXT_NEW"), "the exterior wall is on its phase layer");
+    assert!(!layers.iter().any(|l| l == "A-WALL-EXT"), "none of it is left on the base layer");
+    assert!(layers.iter().any(|l| l == "A-DOOR_NEW") && layers.iter().any(|l| l == "A-GLAZ_NEW"), "its door and window follow the wall");
+    assert!(layers.iter().any(|l| l == "S-COLS_EXISTING"));
+    assert!(layers.iter().any(|l| l == "A-WALL-INT"), "the partition has no phase and stays on the base layer: {layers:?}");
+    assert!(!layers.iter().any(|l| l.ends_with("_UNSET")), "no phase is written for an element without one");
+    // Each phase layer is declared in the layer table with its base layer's colour and line type.
+    let p = pairs(&out.text);
+    let table = |name: &str| -> Option<(String, String)> {
+        let i = p.iter().position(|(c, v)| *c == 2 && v == name)?;
+        let colour = p[i..].iter().find(|(c, _)| *c == 62)?.1.clone();
+        let ltype = p[i..].iter().find(|(c, _)| *c == 6)?.1.clone();
+        Some((colour, ltype))
+    };
+    assert_eq!(table("A-WALL-EXT_NEW"), table("A-WALL-EXT"));
+    assert_eq!(table("S-COLS_EXISTING"), table("S-COLS"));
+    assert!(table("S-COLS_EXISTING").is_some());
+    // The layer count in the table matches the layers written.
+    let table_layers = p.iter().zip(p.iter().skip(1)).filter(|((c, v), _)| *c == 0 && v == "LAYER").count();
+    let declared: usize = p.iter().skip_while(|(c, v)| !(*c == 2 && v == "LAYER")).nth(1).unwrap().1.parse().unwrap();
+    assert_eq!(declared, table_layers);
+}

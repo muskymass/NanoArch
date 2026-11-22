@@ -196,3 +196,13 @@ fn levels_become_storeys_at_their_elevations_and_an_empty_model_is_refused() {
     assert_eq!(contained, 2, "one containment per storey");
     assert!(ifc::export_ifc(&Model::default(), &opts()).unwrap_err().contains("nothing to export"));
 }
+
+#[test]
+fn the_construction_phase_is_a_property_of_the_products_that_have_one() {
+    let mut g = golden();
+    let wall = g.doc.model.elements.values().find(|e| e.kind == "Wall" && e.typed::<Wall>().unwrap().is_exterior).unwrap().id;
+    g.doc.commit("phase", Origin::User, vec![Command::SetProp { id: wall, key: "phase".into(), value: Some(serde_json::json!("TO_BE_DEMOLISHED")) }]).unwrap();
+    let text = export(&g.doc);
+    assert_eq!(text.matches("IFCPROPERTYSINGLEVALUE('Phase',$,IFCLABEL('TO_BE_DEMOLISHED'),$)").count(), 1, "one product has a phase");
+    assert_eq!(text.matches("'Phase'").count(), 1, "the others get none: an unset phase is not written");
+}

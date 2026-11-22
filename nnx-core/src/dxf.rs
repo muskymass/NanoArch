@@ -20,6 +20,10 @@
 //! | `A-ROOM-SEP` | room separators (virtual lines that divide an open space; no wall) |
 //! | `A-DIMS` | overall dimensions, title and the preliminary note |
 //!
+//! An element that has a construction phase is drawn on the layer `<layer>_<PHASE>` (`A-WALL-EXT_NEW`, `S-COLS_EXISTING`, ...),
+//! declared with the colour and line type of its base layer, so each phase can be switched on and off. An element with no phase stays
+//! on the base layer: none is written for it.
+//!
 //! Several levels are laid side by side on one file, left to right, each under its own title. Text outside ASCII
 //! (Arabic names) uses the DXF `\U+XXXX` escape.
 
@@ -107,13 +111,23 @@ pub fn dxf_text(s: &str) -> String {
 struct D {
     body: String,
     counts: BTreeMap<String, usize>,
+    /// Construction phase of the element being drawn. Its entities go on the layer `<base>_<PHASE>`; an element without a phase
+    /// stays on the base layer (no phase is written for it).
+    phase: Option<String>,
 }
 
 impl D {
+    fn lay(&self, layer: &str) -> String {
+        match &self.phase {
+            Some(p) => format!("{layer}_{p}"),
+            None => layer.to_string(),
+        }
+    }
     fn pair(&mut self, code: i32, v: &str) {
         self.body.push_str(&format!("{code}\n{v}\n"));
     }
     fn head(&mut self, kind: &str, layer: &str) {
+        let layer = &self.lay(layer);
         self.pair(0, kind);
         self.pair(8, layer);
         *self.counts.entry(layer.to_string()).or_default() += 1;
@@ -130,6 +144,7 @@ impl D {
     }
     fn poly(&mut self, layer: &str, pts: &[(f64, f64)], closed: bool) {
         self.head("POLYLINE", layer);
+        let layer = &self.lay(layer);
         self.pair(66, "1");
         self.pair(70, if closed { "1" } else { "0" });
         for p in pts {
@@ -180,6 +195,11 @@ struct Sheet {
     name: String,
     min: (i64, i64),
     max: (i64, i64),
+}
+
+/// The element's construction phase, if it has one.
+fn phase_of(e: &crate::model::Element) -> Option<String> {
+    e.props.get("phase").and_then(|v| v.as_str()).filter(|p| !p.is_empty()).map(String::from)
 }
 
 fn on_level(e: &crate::model::Element, level: Option<Id>) -> bool {
@@ -286,7 +306,7 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
         .map_err(|e| e.to_string())?);
     }
 
-    let mut d = D { body: String::new(), counts: BTreeMap::new() };
+    let mut d = D { body: String::new(), counts: BTreeMap::new(), phase: None };
     let (mut gx0, mut gy0, mut gx1, mut gy1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
     for (k, sh) in sheets.iter().enumerate() {
         // The sheet is shifted so its lower-left corner sits at k * step; y is unchanged.
@@ -301,8 +321,9 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
         // Rooms: outline, name and area; the stair shaft crossed.
         let tagged = crate::annot::tagged_rooms(model, sh.level);
         let tagged_keys: std::collections::BTreeSet<String> = tagged.iter().filter_map(|id| model.get(id)?.typed::<Space>().ok().map(|s| s.requirement_key)).collect();
-        let spaces: Vec<Space> = model.elements.values().filter(|e| e.kind == Space::KIND && on_level(e, sh.level)).filter_map(|e| e.typed::<Space>().ok()).collect();
-        for s in &spaces {
+        let (spaces, space_phases): (Vec<Space>, Vec<Option<String>>) = model.elements.values().filter(|e| e.kind == Space::KIND && on_level(e, sh.level)).filter_map(|e| e.typed::<Space>().ok().map(|s| (s, phase_of(e)))).unzip();
+        for (s, ph) in spaces.iter().zip(&space_phases) {
+            d.phase = ph.clone();
             d.rect("A-ROOM", px(s.x), py(s.y), px(s.x + s.w), py(s.y + s.h));
             let (cx, cy) = (px(s.x) + s.w as f64 / 2.0, py(s.y) + s.h as f64 / 2.0);
             let name = crate::annot::room_name(s, &opts.labels).unwrap_or_else(|| s.requirement_key.clone());
@@ -316,10 +337,12 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
                 d.line("A-STAIR", (x0, y1), (x1, y0));
             }
         }
+        d.phase = None;
 
         // Walls cut around their openings, then the openings themselves.
         for e in model.elements.values().filter(|e| e.kind == Wall::KIND && on_level(e, sh.level)) {
             let Ok(w) = e.typed::<Wall>() else { continue };
+            d.phase = phase_of(e);
             let layer = if w.is_exterior { "A-WALL-EXT" } else { "A-WALL-INT" };
             let (s0, s1, cl, t) = (w.start(), w.start() + w.length, w.centre_line(), w.thickness);
             let mut gaps: Vec<(i64, i64)> = Vec::new();
@@ -390,20 +413,24 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
                 }
             }
         }
+        d.phase = None;
 
         // Structure.
         for e in model.elements.values().filter(|e| e.kind == Beam::KIND && on_level(e, sh.level)) {
             if let Ok(b) = e.typed::<Beam>() {
+                d.phase = phase_of(e);
                 d.line("S-BEAM", (px(b.x1), py(b.y1)), (px(b.x2), py(b.y2)));
             }
         }
         for e in model.elements.values().filter(|e| e.kind == Footing::KIND && on_level(e, sh.level)) {
             if let Ok(f) = e.typed::<Footing>() {
+                d.phase = phase_of(e);
                 d.rect("S-FTNG", px(f.x - f.length / 2), py(f.y - f.width / 2), px(f.x + f.length / 2), py(f.y + f.width / 2));
             }
         }
         for e in model.elements.values().filter(|e| e.kind == TieBeam::KIND && on_level(e, sh.level)) {
             if let Ok(b) = e.typed::<TieBeam>() {
+                d.phase = phase_of(e);
                 let hw = b.width as f64 / 2.0;
                 let (x0, x1) = (b.x1.min(b.x2) as f64, b.x1.max(b.x2) as f64);
                 let (y0, y1) = (b.y1.min(b.y2) as f64, b.y1.max(b.y2) as f64);
@@ -412,16 +439,19 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
         }
         for e in model.elements.values().filter(|e| e.kind == Column::KIND && on_level(e, sh.level)) {
             if let Ok(c) = e.typed::<Column>() {
+                d.phase = phase_of(e);
                 let (x0, y0, x1, y1) = (px(c.x - c.b / 2), py(c.y - c.h / 2), px(c.x + c.b / 2), py(c.y + c.h / 2));
                 d.solid("S-COLS", x0, y0, x1, y1);
                 d.rect("S-COLS", x0, y0, x1, y1);
             }
         }
+        d.phase = None;
 
         // MEP points.
         if opts.mep {
             for e in model.elements.values().filter(|e| e.kind == MepPoint::KIND && on_level(e, sh.level)) {
                 let Ok(p) = e.typed::<MepPoint>() else { continue };
+                d.phase = phase_of(e);
                 let c = (px(p.x), py(p.y));
                 match p.role.as_str() {
                     "light" => d.circle("E-LITE", c, 100.0),
@@ -447,6 +477,7 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
         if opts.mep {
             for e in model.elements.values().filter(|e| e.kind == MepRun::KIND && on_level(e, sh.level)) {
                 let Ok(r) = e.typed::<MepRun>() else { continue };
+                d.phase = phase_of(e);
                 let layer = match r.system.as_str() {
                     "duct" => "M-DUCT",
                     "pipe" => "P-PIPE",
@@ -466,6 +497,7 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
                 d.text(layer, (mx, my + hw + 80.0), 70.0, &format!("{} {}x{}", r.system, r.width, r.height));
             }
         }
+        d.phase = None;
 
         // Grid lines (project-wide), permanent dimensions and room tags.
         for e in model.elements.values().filter(|e| e.kind == crate::typed::Grid::KIND) {
@@ -574,8 +606,18 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
     pair(0, "ENDTAB");
     pair(0, "TABLE");
     pair(2, "LAYER");
-    pair(70, &(LAYERS.len() + 1).to_string());
-    for (name, color, ltype) in LAYERS.iter().copied().chain(std::iter::once(DIMS_LAYER)) {
+    // The base layers, then one layer per phase actually used, with the colour and line type of its base layer.
+    let mut layers: Vec<(String, i32, &str)> = LAYERS.iter().copied().chain(std::iter::once(DIMS_LAYER)).map(|(n, c, l)| (n.to_string(), c, l)).collect();
+    for used in d.counts.keys() {
+        if layers.iter().any(|(n, _, _)| n == used) {
+            continue;
+        }
+        if let Some((_, color, ltype)) = layers.iter().filter(|(n, _, _)| used.starts_with(&format!("{n}_"))).max_by_key(|(n, _, _)| n.len()).cloned() {
+            layers.push((used.clone(), color, ltype));
+        }
+    }
+    pair(70, &layers.len().to_string());
+    for (name, color, ltype) in &layers {
         pair(0, "LAYER");
         pair(2, name);
         pair(70, "0");

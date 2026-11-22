@@ -191,6 +191,10 @@ fn source_name(e: &Element) -> &'static str {
 /// The traceability property set every product carries, plus its own properties.
 fn trace(w: &mut W, e: &Element, id: usize, extra: Vec<(&str, Pv)>) {
     let mut props = vec![("ModelId", Pv::Ident(e.id.to_string())), ("Source", Pv::Label(source_name(e).into())), ("Locked", Pv::Bool(e.provenance.locked))];
+    // The construction phase only when the element has one: an unset phase is left out, not written as a value.
+    if let Some(p) = e.props.get("phase").and_then(|v| v.as_str()) {
+        props.push(("Phase", Pv::Label(p.into())));
+    }
     props.extend(extra);
     w.pset("NanoArch", &props, id);
 }
