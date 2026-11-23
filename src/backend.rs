@@ -365,6 +365,7 @@ impl App {
             "wind_check" => Self::wind_check(args),
             "courtyard_check" => Self::courtyard_check(args),
             "room_shape_check" => Self::room_shape_check(args),
+            "mezzanine_check" => Self::mezzanine_check(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
@@ -2021,6 +2022,22 @@ impl App {
         };
         let report = nnx_core::roomshape::check_room_shape(&layout, &envelope, key, &outline, min_wall)?;
         Ok(json!({ "room_shape": report }))
+    }
+
+    /// Checks a mezzanine or partial floor: `{ rooms, envelope, outline: [{ x, y }], storey_height_mm, level_mm, slab_mm,
+    /// min_clear_below_mm?, min_clear_above_mm?, max_area_share? }` (mm). The vertical set-out is required; each limit left out
+    /// is reported as `unchecked`. Reports area, share of the lower floor, clear heights, covered rooms and open edges.
+    fn mezzanine_check(args: &Value) -> Result<Value, String> {
+        let (layout, envelope) = Self::layout_from_args(args, "mezzanine")?;
+        let outline: Vec<nnx_core::courtyard::Pt> = serde_json::from_value(args.get("outline").cloned().unwrap_or(Value::Null)).map_err(|e| format!("mezzanine: outline must be a list of {{ x, y }} vertices in whole millimetres: {e}"))?;
+        for name in ["storey_height_mm", "level_mm", "slab_mm"] {
+            if args.get(name).and_then(Value::as_i64).is_none() {
+                return Err(format!("mezzanine: '{name}' is required (whole millimetres)"));
+            }
+        }
+        let spec: nnx_core::mezzanine::MezzanineSpec = serde_json::from_value(args.clone()).map_err(|e| format!("mezzanine: limits must be numbers (min_clear_*_mm in whole millimetres, max_area_share between 0 and 1): {e}"))?;
+        let report = nnx_core::mezzanine::check_mezzanine(&layout, &envelope, &outline, &spec)?;
+        Ok(json!({ "mezzanine": report }))
     }
 
     /// Checks a courtyard of any simple outline: `{ rooms, envelope, outline: [{ x, y }] }` (mm). Reports area, perimeter, a
@@ -4378,6 +4395,28 @@ EOF
         let mut slanted = base.clone();
         slanted["outline"] = json!([{ "x": 0, "y": 0 }, { "x": 4000, "y": 0 }, { "x": 2000, "y": 3000 }]);
         assert!(app.handle("room_shape_check", &slanted).unwrap_err().contains("slanted"));
+    }
+
+    #[test]
+    fn mezzanine_check_measures_a_partial_floor_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([{ "key": "shop", "func": "living", "zone": "public", "x": 0, "y": 0, "w": 10000, "h": 10000 }]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 10000, "h": 10000 }, "storey_height_mm": 5400, "level_mm": 2800, "slab_mm": 300,
+            "min_clear_below_mm": 2300, "outline": [{ "x": 0, "y": 5000 }, { "x": 10000, "y": 5000 }, { "x": 10000, "y": 10000 }, { "x": 0, "y": 10000 }] });
+        let r = app.handle("mezzanine_check", &base).unwrap();
+        assert!((r["mezzanine"]["area_m2"].as_f64().unwrap() - 50.0).abs() < 1e-9);
+        assert_eq!(r["mezzanine"]["clear_below_mm"], 2500);
+        assert_eq!(r["mezzanine"]["clear_below_check"], "pass");
+        assert_eq!(r["mezzanine"]["clear_above_check"], "unchecked");
+        let mut missing = base.clone();
+        missing.as_object_mut().unwrap().remove("level_mm");
+        assert!(app.handle("mezzanine_check", &missing).unwrap_err().contains("level_mm"));
+        let mut bad = base.clone();
+        bad["max_area_share"] = json!("x");
+        assert!(app.handle("mezzanine_check", &bad).unwrap_err().contains("limits must be numbers"));
+        let mut deep = base.clone();
+        deep["slab_mm"] = json!(3000);
+        assert!(app.handle("mezzanine_check", &deep).unwrap_err().contains("thinner"));
     }
 
     #[test]

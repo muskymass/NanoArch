@@ -29,6 +29,7 @@ pub mod elevation;
 pub mod entrances;
 pub mod courtyard;
 pub mod roomshape;
+pub mod mezzanine;
 pub mod expr;
 pub mod history;
 pub mod ifc;
