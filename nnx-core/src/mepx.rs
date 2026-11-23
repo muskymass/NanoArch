@@ -32,6 +32,10 @@ pub struct SolarIn {
     /// Panel DC power divided by inverter AC power.
     pub dc_ac_ratio: Option<f64>,
     pub annual_consumption_kwh: Option<f64>,
+    /// Smallest share of the roof that must stay usable for the roof to count as suitable, 0 to 1 (your own criterion, with its source).
+    pub min_usable_share: Option<f64>,
+    /// Fewest panels that make an installation worth doing (your own criterion).
+    pub min_panels: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -221,7 +225,7 @@ impl MepExtInputs {
         }
         nonneg("edge clearance", s.edge_clearance_mm)?;
         nonneg("tariff", s.tariff_per_kwh)?;
-        for (n, v) in [("coverage ratio", s.coverage_ratio), ("self-consumption share", s.self_consumption)] {
+        for (n, v) in [("coverage ratio", s.coverage_ratio), ("self-consumption share", s.self_consumption), ("minimum usable share", s.min_usable_share)] {
             if v.is_some_and(|x| !x.is_finite() || !(0.0..=1.0).contains(&x)) {
                 return Err(format!("{n} is between 0 and 1"));
             }

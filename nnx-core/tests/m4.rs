@@ -90,7 +90,7 @@ fn project(ext: MepExtInputs) -> NanoArchProject {
 // ------------------------------------------------------------------ solar
 
 fn solar_in() -> SolarIn {
-    SolarIn { panel_w: Some(550.0), panel_area_m2: Some(2.6), edge_clearance_mm: Some(500.0), coverage_ratio: Some(0.6), obstructions: vec![[1000.0, 1000.0, 2000.0, 2000.0]], specific_yield_kwh_kw: Some(1700.0), tariff_per_kwh: Some(0.18), self_consumption: Some(0.7), dc_ac_ratio: Some(1.2), annual_consumption_kwh: Some(8000.0) }
+    SolarIn { panel_w: Some(550.0), panel_area_m2: Some(2.6), edge_clearance_mm: Some(500.0), coverage_ratio: Some(0.6), obstructions: vec![[1000.0, 1000.0, 2000.0, 2000.0]], specific_yield_kwh_kw: Some(1700.0), tariff_per_kwh: Some(0.18), self_consumption: Some(0.7), dc_ac_ratio: Some(1.2), annual_consumption_kwh: Some(8000.0), min_usable_share: None, min_panels: None }
 }
 
 #[test]

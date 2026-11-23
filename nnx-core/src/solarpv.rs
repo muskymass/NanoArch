@@ -29,6 +29,11 @@ pub struct SolarReport {
     pub exported_kwh: Option<f64>,
     pub annual_saving: Option<f64>,
     pub offset_pct: Option<f64>,
+    /// Usable roof as a share of the whole roof, percent.
+    pub usable_share_pct: Option<f64>,
+    /// `suitable`, `unsuitable` or `unchecked` (no criterion entered, or the figure it needs was not computed).
+    pub suitability: String,
+    pub suitability_reasons: Vec<String>,
     /// The roof rectangles left for panels' footprint reference: `[x0, y0, x1, y1]` mm of the pulled-in slabs, and what is excluded.
     pub roof_rects: Vec<Rect4>,
     pub excluded_rects: Vec<Rect4>,
@@ -37,8 +42,49 @@ pub struct SolarReport {
 }
 
 pub fn size(model: &Model, p: &crate::project::NanoArchProject) -> SolarReport {
+    let mut rep = size_inner(model, p);
+    judge(&p.meta.mep_ext.solar, &mut rep);
+    rep
+}
+
+/// Applies the user's own suitability criteria. A criterion that was not entered is not judged; one whose figure is missing stays `unchecked`.
+fn judge(s: &SolarIn, rep: &mut SolarReport) {
+    let mut checked = false;
+    let mut failed = false;
+    if let Some(min) = s.min_usable_share {
+        match rep.usable_share_pct {
+            Some(share) => {
+                checked = true;
+                if share < min * 100.0 {
+                    failed = true;
+                    rep.suitability_reasons.push(format!("usable share {share:.2}% is below the {:.2}% you require", min * 100.0));
+                }
+            }
+            None => rep.missing.push("a roof, to judge the usable share".into()),
+        }
+    }
+    if let Some(min) = s.min_panels {
+        match rep.panels {
+            Some(n) => {
+                checked = true;
+                if n < min {
+                    failed = true;
+                    rep.suitability_reasons.push(format!("{n} panels fit, fewer than the {min} you require"));
+                }
+            }
+            None => rep.missing.push("panel power, area and coverage ratio, to judge the panel count".into()),
+        }
+    }
+    if failed {
+        rep.suitability = "unsuitable".into();
+    } else if checked {
+        rep.suitability = "suitable".into();
+    }
+}
+
+fn size_inner(model: &Model, p: &crate::project::NanoArchProject) -> SolarReport {
     let s: &SolarIn = &p.meta.mep_ext.solar;
-    let mut rep = SolarReport::default();
+    let mut rep = SolarReport { suitability: "unchecked".into(), ..Default::default() };
     let top = crate::building::levels(model).last().map(|(_, id)| *id);
     let slabs: Vec<Slab> = model.elements.values().filter(|e| e.kind == Slab::KIND && (top.is_none() || e.level_id == top)).filter_map(|e| e.typed::<Slab>().ok()).collect();
     if slabs.is_empty() {
@@ -72,6 +118,9 @@ pub fn size(model: &Model, p: &crate::project::NanoArchProject) -> SolarReport {
     }
     rep.usable_m2 = r2(area_minus_m2(&inset, &excluded));
     rep.excluded_m2 = r2(rep.after_edge_m2 - rep.usable_m2);
+    if rep.roof_m2 > 0.0 {
+        rep.usable_share_pct = Some(r2(rep.usable_m2 / rep.roof_m2 * 100.0));
+    }
     rep.roof_rects = inset;
     rep.excluded_rects = excluded;
     for (n, ok) in [("panel power (W)", s.panel_w.is_some()), ("panel area (m2)", s.panel_area_m2.is_some()), ("coverage ratio (0 to 1)", s.coverage_ratio.is_some())] {
@@ -111,4 +160,71 @@ pub fn size(model: &Model, p: &crate::project::NanoArchProject) -> SolarReport {
     }
     rep.notes.push("no yield, tariff or panel rating is built in; shading by neighbours and the roof's tilt are not modelled; the exported energy is not paid for here".into());
     rep
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Source;
+    use crate::typed::element_of;
+    use serde_json::Map;
+
+    /// A 10 m x 10 m roof slab.
+    fn project(solar: SolarIn) -> (Model, crate::project::NanoArchProject) {
+        let mut model = Model::default();
+        let slab = Slab { x: 0, y: 0, w: 10_000, h: 10_000, thickness: 200, kind: "roof".into(), room: String::new(), extra: Map::new() };
+        let el = element_of(&slab, Source::User);
+        model.elements.insert(el.id, el);
+        let mut p = crate::project::NanoArchProject::default();
+        p.meta.mep_ext.solar = solar;
+        (model, p)
+    }
+
+    fn full() -> SolarIn {
+        SolarIn { panel_w: Some(500.0), panel_area_m2: Some(2.0), edge_clearance_mm: Some(1000.0), coverage_ratio: Some(0.5), ..Default::default() }
+    }
+
+    #[test]
+    fn no_criterion_means_unchecked_and_nothing_is_invented() {
+        let (m, p) = project(full());
+        let r = size(&m, &p);
+        assert_eq!(r.suitability, "unchecked");
+        assert!(r.suitability_reasons.is_empty());
+        // 8 m x 8 m after the 1 m edge strip = 64 m2 of 100 m2.
+        assert_eq!(r.usable_share_pct, Some(64.0));
+        assert_eq!(r.panels, Some(16));
+    }
+
+    #[test]
+    fn the_users_own_criteria_decide_suitable_or_not() {
+        let (m, p) = project(SolarIn { min_usable_share: Some(0.6), min_panels: Some(16), ..full() });
+        assert_eq!(size(&m, &p).suitability, "suitable");
+        let (m, p) = project(SolarIn { min_usable_share: Some(0.7), ..full() });
+        let r = size(&m, &p);
+        assert_eq!(r.suitability, "unsuitable");
+        assert!(r.suitability_reasons[0].contains("64.00%") && r.suitability_reasons[0].contains("70.00%"));
+        let (m, p) = project(SolarIn { min_panels: Some(17), ..full() });
+        let r = size(&m, &p);
+        assert_eq!(r.suitability, "unsuitable");
+        assert!(r.suitability_reasons[0].contains("16 panels"));
+    }
+
+    #[test]
+    fn a_criterion_without_its_figure_stays_unchecked_and_is_named() {
+        let (m, p) = project(SolarIn { min_panels: Some(5), edge_clearance_mm: Some(1000.0), ..Default::default() });
+        let r = size(&m, &p);
+        assert_eq!(r.suitability, "unchecked");
+        assert!(r.missing.iter().any(|x| x.contains("judge the panel count")));
+        let (m, p) = (Model::default(), p);
+        let r = size(&m, &p);
+        assert_eq!(r.suitability, "unchecked");
+        assert!(r.missing.iter().any(|x| x.contains("no slabs")));
+    }
+
+    #[test]
+    fn an_impossible_share_is_refused() {
+        let mut e = crate::mepx::MepExtInputs::default();
+        e.solar.min_usable_share = Some(1.5);
+        assert!(e.check().is_err());
+    }
 }
