@@ -633,6 +633,8 @@ impl App {
             "report": report,
             "applied": applied.map(|(c, r)| json!({ "created": c, "removed": r })),
             "points": self.doc()?.model.elements.values().filter(|e| e.kind == "MepPoint").count(),
+            // Every duct, pipe, drain and cable in the model against the structure, checked on each call: an applied route that hits a beam, column or footing is named here without a separate request.
+            "structure_clashes": self.clash_json(),
             "svg": self.render_or_null()?,
         }))
     }
@@ -5692,6 +5694,8 @@ END-ISO-10303-21;
         let clashes = app.handle("clashes", &json!({})).unwrap();
         // Whatever remains is reported by the clash check, never hidden.
         assert!(clashes["runs"].as_u64().unwrap() > 0);
+        // The same report comes back with the apply itself, so no separate request is needed to see what hits the structure.
+        assert_eq!(r["structure_clashes"], clashes);
         let mut bad = mep_inputs();
         bad["routing"] = json!({ "ahu_room": "living", "supply_delta_t_c": 10, "duct_velocity_mps": 5, "duct_height_mm": 250, "ceiling_height_mm": 2300, "return_offset_mm": 400, "avoid_structure": true });
         let m = app.handle("mep", &json!({ "inputs": bad })).unwrap();
