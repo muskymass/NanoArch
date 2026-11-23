@@ -418,14 +418,15 @@ impl App {
             "assemblies_get" => self.assemblies_get(),
             "assemblies_set" => self.assemblies_set(args),
             "assembly_assign" => self.assembly_assign(args),
-            "export_ifc" => self.export_ifc(),
-            "export_dxf" => self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false)),
+            "precheck" => Ok(json!(nnx_core::precheck::run(&self.doc()?.model))),
+            "export_ifc" => self.gate(args).and_then(|_| self.export_ifc()),
+            "export_dxf" => self.gate(args).and_then(|_| self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false))),
             "report_html" => {
                 let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
                 self.report(args).map(|(html, _)| json!({ "html": self.with_history(html, arabic), "name": "engineering-report.pdf" }))
             }
             "report_xlsx" => self.report(args).map(|(_, b64)| json!({ "xlsx_b64": b64, "name": "engineering-report.xlsx" })),
-            "pdf_html" => self.pdf_html(args.get("lang").and_then(Value::as_str) != Some("en")),
+            "pdf_html" => self.gate(args).and_then(|_| self.pdf_html(args.get("lang").and_then(Value::as_str) != Some("en"))),
             "template_keys" => Ok(json!(schedule::template_keys().iter().map(|(k, fixed)| json!({ "key": k, "fixed": fixed })).collect::<Vec<_>>())),
             "schedule" => self.schedule(args),
             "check_rules" => self.check_rules(args),
@@ -542,6 +543,20 @@ impl App {
     /// The Bill of Quantities: every take-off item with the user's specification and rate, the materials the
     /// items consume, a specification schedule, and the exports (three CSV files and a printable document).
     /// The model as an IFC4 file (text) with the count of each product class written.
+    /// Stops an export while the model contradicts itself (rooms on top of each other, openings on the same wall, a door that
+    /// names a room that is not there). `force: true` exports anyway; the warnings never stop it.
+    fn gate(&self, args: &Value) -> Result<(), String> {
+        let Some(doc) = self.doc.as_ref() else { return Ok(()) };
+        if args.get("force").and_then(Value::as_bool).unwrap_or(false) {
+            return Ok(());
+        }
+        let report = nnx_core::precheck::run(&doc.model);
+        if report.has_errors() {
+            return Err(format!("export stopped, the model has errors (run the precheck, fix them, or export with force): {}", report.error_text()));
+        }
+        Ok(())
+    }
+
     fn export_ifc(&self) -> Result<Value, String> {
         let opts = nnx_core::ifc::IfcOpts {
             project_name: self.display_title(),
@@ -3109,6 +3124,31 @@ mod tests {
         let door_total: f64 = q["items"].as_array().unwrap().iter().filter(|i| i["code"].as_str().unwrap().starts_with("DOOR.")).map(|i| i["quantity"].as_f64().unwrap()).sum();
         let all_doors = model.elements.values().filter(|e| e.kind == "Door").count() as f64;
         assert_eq!(door_total, all_doors - 2.0, "no lift landing is priced as an interior door");
+    }
+
+    #[test]
+    fn the_precheck_passes_a_generated_model_and_stops_exports_when_the_model_contradicts_itself() {
+        let mut app = started2();
+        let r = app.handle("precheck", &json!({})).unwrap();
+        let errors: Vec<&Value> = r["issues"].as_array().unwrap().iter().filter(|i| i["level"] == "error").collect();
+        assert!(errors.is_empty(), "a generated model has no errors: {errors:?}");
+        assert!(app.handle("export_ifc", &json!({})).is_ok());
+        // Put two rooms of the ground level on top of each other: the exports refuse, naming the code.
+        let lid0 = building::levels(&app.doc.as_ref().unwrap().model)[0].1;
+        let mut found = app.doc.as_ref().unwrap().model.elements.values().filter(|e| e.kind == "Space" && e.level_id == Some(lid0)).map(|e| e.id).collect::<Vec<_>>();
+        found.sort();
+        let (a, b) = (found[0], found[1]);
+        let pos: Vec<Value> = ["x", "y", "w", "h"].iter().map(|k| app.doc.as_ref().unwrap().model.elements[&a].props[*k].clone()).collect();
+        let el = app.doc.as_mut().unwrap().model.elements.get_mut(&b).unwrap();
+        for (k, v) in ["x", "y", "w", "h"].iter().zip(pos) {
+            el.props.insert((*k).into(), v);
+        }
+        let r = app.handle("precheck", &json!({})).unwrap();
+        assert!(r["issues"].as_array().unwrap().iter().any(|i| i["code"] == "ROOM.OVERLAP" && i["level"] == "error"));
+        let e = app.handle("export_ifc", &json!({})).unwrap_err();
+        assert!(e.contains("ROOM.OVERLAP"), "{e}");
+        assert!(app.handle("export_dxf", &json!({})).is_err() && app.handle("pdf_html", &json!({})).is_err());
+        assert!(app.handle("export_ifc", &json!({ "force": true })).is_ok(), "force exports anyway");
     }
 
     #[test]

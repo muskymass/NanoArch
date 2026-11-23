@@ -38,6 +38,7 @@ pub mod mepx;
 pub mod model3d;
 pub mod persist;
 pub mod printdoc;
+pub mod precheck;
 pub mod project;
 pub mod presets;
 pub mod qto;
