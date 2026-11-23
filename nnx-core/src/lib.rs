@@ -36,6 +36,7 @@ pub mod layout;
 pub mod mep;
 pub mod privacy;
 pub mod sun;
+pub mod wind;
 pub mod model;
 pub mod malath;
 pub mod merger;

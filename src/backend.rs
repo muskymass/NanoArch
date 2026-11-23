@@ -362,6 +362,7 @@ impl App {
             "entrances_check" => Self::entrances_check(args),
             "privacy_check" => Self::privacy_check(args),
             "sun_check" => Self::sun_check(args),
+            "wind_check" => Self::wind_check(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
@@ -1987,6 +1988,21 @@ impl App {
         let sleeping_funcs: Vec<String> = serde_json::from_value(args.get("sleeping_funcs").cloned().unwrap_or(Value::Null)).map_err(|e| format!("sun: sleeping_funcs must be a list of room functions: {e}"))?;
         let report = nnx_core::sun::check_sun(&layout, &envelope, &sleeping_funcs)?;
         Ok(json!({ "sun": report }))
+    }
+
+    /// Classes habitable rooms by cross ventilation against the prevailing wind:
+    /// `{ rooms, envelope, wind_from, wind_source, habitable_funcs }` (mm). The wind side, its source and the functions
+    /// have no default.
+    fn wind_check(args: &Value) -> Result<Value, String> {
+        let (layout, envelope) = Self::layout_from_args(args, "wind")?;
+        let wind_from = match args.get("wind_from").filter(|v| !v.is_null()) {
+            Some(v) => Some(Self::side_from_str(v.as_str(), "wind: wind_from")?),
+            None => None,
+        };
+        let source = args.get("wind_source").and_then(Value::as_str).unwrap_or("");
+        let funcs: Vec<String> = serde_json::from_value(args.get("habitable_funcs").cloned().unwrap_or(Value::Null)).map_err(|e| format!("wind: habitable_funcs must be a list of room functions: {e}"))?;
+        let report = nnx_core::wind::check_wind(&layout, &envelope, wind_from, source, &funcs)?;
+        Ok(json!({ "wind": report }))
     }
 
     /// Reads plot boundary candidates from a DXF drawing: `{ path, units?, index? }`. A drawing without a unit needs `units`;
@@ -4291,6 +4307,30 @@ EOF
         let mut no_funcs = base.clone();
         no_funcs.as_object_mut().unwrap().remove("sleeping_funcs");
         assert!(app.handle("sun_check", &no_funcs).unwrap_err().contains("sleeping_funcs"));
+    }
+
+    #[test]
+    fn wind_check_classes_rooms_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([
+            { "key": "a", "func": "bedroom", "zone": "private", "x": 0, "y": 0, "w": 6000, "h": 10000 },
+            { "key": "b", "func": "hall", "zone": "public", "x": 6000, "y": 0, "w": 6000, "h": 10000 }
+        ]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 10000 }, "wind_from": "north", "wind_source": "met station 2020", "habitable_funcs": ["bedroom"] });
+        let r = app.handle("wind_check", &base).unwrap();
+        assert_eq!(r["wind"]["rooms"][0]["flow"], "cross");
+        let mut no_dir = base.clone();
+        no_dir.as_object_mut().unwrap().remove("wind_from");
+        assert!(app.handle("wind_check", &no_dir).unwrap_err().contains("prevailing wind"));
+        let mut no_src = base.clone();
+        no_src.as_object_mut().unwrap().remove("wind_source");
+        assert!(app.handle("wind_check", &no_src).unwrap_err().contains("source"));
+        let mut bad = base.clone();
+        bad["wind_from"] = json!("up");
+        assert!(app.handle("wind_check", &bad).unwrap_err().contains("wind_from"));
+        let mut no_funcs = base.clone();
+        no_funcs.as_object_mut().unwrap().remove("habitable_funcs");
+        assert!(app.handle("wind_check", &no_funcs).unwrap_err().contains("habitable_funcs"));
     }
 
     #[test]
