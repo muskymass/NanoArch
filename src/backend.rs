@@ -419,6 +419,7 @@ impl App {
             "room_finishes_schedule" => self.room_finishes_schedule(args),
             "wet_room_detail" => self.wet_room_detail(args),
             "ceiling_plan" => self.ceiling_plan(args),
+            "axes_plan" => self.axes_plan(args),
             "stair_detail" => self.stair_detail(args),
             "site_fence_plan" => self.site_fence_plan(args),
             "number_audit" => self.number_audit(),
@@ -2961,6 +2962,17 @@ impl App {
         serde_json::to_value(&plan).map_err(|e| e.to_string())
     }
 
+    /// The axes and detailed dimensions plan (read-only): `{ level?, title?, axes_x: [{ label, pos_mm }], axes_y: [...] }` or
+    /// `{ from_columns: true, cluster_mm }`, with `tolerance_mm?` and `tolerance_source?`. Returns the axes with bay spacings and
+    /// overall dimensions, each column's offset from its nearest axes, each orthogonal wall's offset from the nearest parallel
+    /// axis, the columns-on-axes check (`unchecked` without a tolerance) and the SVG.
+    fn axes_plan(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::axes::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("axes plan: inputs are malformed (level?, axes_x [{{ label, pos_mm }}], axes_y, from_columns?, cluster_mm?, tolerance_mm?, tolerance_source?): {e}"))?;
+        let plan = nnx_core::axes::build(&self.doc()?.model, &input)?;
+        serde_json::to_value(&plan).map_err(|e| e.to_string())
+    }
+
     /// The stair detail (read-only): `{ rise_mm, riser_count, going_mm, width_mm, nosing_mm?, landing_after_riser?, landing_length_mm?,
     /// room?, level?, run_axis?, limits?: { min_riser_mm?, max_riser_mm?, ..., source }, title? }`. Every figure is the user's;
     /// returns the numbered step table, the flights, the section + plan SVG and the riser / going / width / landing / 2R+G / pitch /
@@ -5394,6 +5406,17 @@ EOF
         assert!(e.contains("ceiling_height_mm") && e.contains("devices"), "{e}");
         assert!(app.handle("ceiling_plan", &json!({ "devices": "x" })).unwrap_err().contains("malformed"));
         assert!(App::default().handle("ceiling_plan", &json!({})).is_err());
+    }
+
+    #[test]
+    fn axes_plan_needs_the_users_axes_or_the_columns_to_read_them_from() {
+        let mut app = started_with_project();
+        let e = app.handle("axes_plan", &json!({})).unwrap_err();
+        assert!(e.contains("axes_x"), "{e}");
+        let e = app.handle("axes_plan", &json!({ "from_columns": true })).unwrap_err();
+        assert!(e.contains("cluster_mm"), "{e}");
+        assert!(app.handle("axes_plan", &json!({ "axes_x": "x" })).unwrap_err().contains("malformed"));
+        assert!(App::default().handle("axes_plan", &json!({})).is_err());
     }
 
     #[test]
