@@ -801,6 +801,7 @@ impl App {
     fn boq(&mut self, args: &Value) -> Result<Value, String> {
         let inputs = args.get("inputs").cloned().unwrap_or(json!({}));
         let lib: nnx_core::boq::BoqLib = serde_json::from_value(inputs).map_err(|e| format!("BOQ inputs: {e}"))?;
+        nnx_core::boq::validate(&lib)?;
         nnx_core::project::update(self.doc.as_mut().ok_or("choose a layout first")?, "BOQ inputs", |p| {
             p.boq = Some(lib.clone());
             Ok(())

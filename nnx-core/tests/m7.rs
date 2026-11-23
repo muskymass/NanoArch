@@ -107,7 +107,7 @@ fn execution_records_and_versions_appear_in_the_outline() {
 
 fn lib_with(rate: f64) -> BoqLib {
     let mut lib = BoqLib::default();
-    lib.items.insert("SLAB.VOL".into(), ItemData { spec: Some("s".into()), spec_source: Some("synthetic".into()), rate: Some(rate), rate_source: Some("synthetic".into()), waste_pct: None });
+    lib.items.insert("SLAB.VOL".into(), ItemData { spec: Some("s".into()), spec_source: Some("synthetic".into()), rate: Some(rate), rate_source: Some("synthetic".into()), rate_date: None, waste_pct: None });
     lib
 }
 

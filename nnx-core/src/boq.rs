@@ -37,6 +37,9 @@ pub struct ItemData {
     pub spec_source: Option<String>,
     pub rate: Option<f64>,
     pub rate_source: Option<String>,
+    /// The date the rate was quoted or read, `YYYY-MM-DD`. Entered by the user, never defaulted.
+    #[serde(default)]
+    pub rate_date: Option<String>,
     pub waste_pct: Option<f64>,
 }
 
@@ -55,6 +58,9 @@ pub struct MatData {
     pub spec_source: Option<String>,
     pub rate: Option<f64>,
     pub rate_source: Option<String>,
+    /// The date the rate was quoted or read, `YYYY-MM-DD`. Entered by the user, never defaulted.
+    #[serde(default)]
+    pub rate_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -90,6 +96,7 @@ pub struct BoqRow {
     pub waste_pct: Option<f64>,
     pub ordered: f64,
     pub rate: Option<f64>,
+    pub rate_date: Option<String>,
     pub amount: Option<f64>,
     pub elements: usize,
     pub reference_only: bool,
@@ -110,6 +117,7 @@ pub struct MaterialRow {
     pub quantity: f64,
     pub spec: Option<String>,
     pub rate: Option<f64>,
+    pub rate_date: Option<String>,
     pub cost: Option<f64>,
     pub used_in: Vec<String>,
 }
@@ -138,6 +146,17 @@ pub struct Missing {
     pub no_material_factors: Vec<String>,
     /// Figures that were entered without a source.
     pub no_source: Vec<String>,
+    /// Rates (items and materials) entered without the date they were quoted.
+    pub no_date: Vec<String>,
+}
+
+/// The oldest and newest rate date among the priced items (`YYYY-MM-DD` sorts as text).
+#[derive(Debug, Clone, Serialize)]
+pub struct RateDates {
+    pub oldest: String,
+    pub newest: String,
+    /// Priced items whose rate carries a date.
+    pub dated: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -155,6 +174,8 @@ pub struct BoqReport {
     /// True only when every non-reference item has a rate.
     pub complete: bool,
     pub material_cost: Option<f64>,
+    /// `None` when no priced item has a dated rate.
+    pub rate_dates: Option<RateDates>,
     pub missing: Missing,
     pub warnings: Vec<String>,
 }
@@ -210,6 +231,39 @@ fn round(v: f64, d: i32) -> f64 {
     (v * m).round() / m
 }
 
+/// `YYYY-MM-DD` with a real calendar day (leap years included).
+fn valid_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' || !b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit()) {
+        return false;
+    }
+    let (Ok(y), Ok(m), Ok(d)) = (s[0..4].parse::<u32>(), s[5..7].parse::<u32>(), s[8..10].parse::<u32>()) else { return false };
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let days = match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    y >= 1900 && (1..=days).contains(&d)
+}
+
+/// Rejects, by name, a rate date that is not a real `YYYY-MM-DD` day or that sits on an entry with no rate.
+pub fn validate(lib: &BoqLib) -> Result<(), String> {
+    let mut errors = Vec::new();
+    let entries = lib.items.iter().map(|(k, d)| (format!("item '{k}'"), d.rate, &d.rate_date)).chain(lib.material_data.iter().map(|(k, d)| (format!("material '{k}'"), d.rate, &d.rate_date)));
+    for (name, rate, date) in entries {
+        let Some(date) = date.as_deref() else { continue };
+        if rate.is_none() {
+            errors.push(format!("{name} has a rate date ({date}) but no rate"));
+        } else if !valid_date(date) {
+            errors.push(format!("{name}: rate date '{date}' is not a real date in the form YYYY-MM-DD"));
+        }
+    }
+    if errors.is_empty() { Ok(()) } else { Err(format!("BOQ inputs: {}", errors.join("; "))) }
+}
+
 fn blank(s: &Option<String>) -> bool {
     s.as_deref().is_none_or(|s| s.trim().is_empty())
 }
@@ -231,6 +285,7 @@ pub fn compute(items: &[QtoItem], lib: &BoqLib) -> BoqReport {
         let waste = i.waste_pct.or_else(|| data.and_then(|d| d.waste_pct));
         let spec = data.and_then(|d| d.spec.clone()).filter(|s| !s.trim().is_empty());
         let rate = data.and_then(|d| d.rate);
+        let rate_date = data.filter(|d| d.rate.is_some()).and_then(|d| d.rate_date.clone()).filter(|d| !d.trim().is_empty());
         if !reference {
             if spec.is_none() {
                 miss.no_spec.push(i.code.clone());
@@ -241,6 +296,9 @@ pub fn compute(items: &[QtoItem], lib: &BoqLib) -> BoqReport {
             if let Some(d) = data {
                 if d.rate.is_some() && blank(&d.rate_source) {
                     miss.no_source.push(format!("rate of {}", i.code));
+                }
+                if d.rate.is_some() && rate_date.is_none() {
+                    miss.no_date.push(format!("rate of {}", i.code));
                 }
                 if d.spec.is_some() && blank(&d.spec_source) {
                     miss.no_source.push(format!("specification of {}", i.code));
@@ -258,6 +316,7 @@ pub fn compute(items: &[QtoItem], lib: &BoqLib) -> BoqReport {
             waste_pct: waste,
             ordered: round(i.quantity * (1.0 + waste.unwrap_or(0.0) / 100.0), 3),
             rate: if reference { None } else { rate },
+            rate_date: if reference { None } else { rate_date },
             amount: if reference { None } else { rate.map(|r| round(r * round(i.quantity, 3), 2)) },
             elements: i.sources.len(),
             reference_only: reference,
@@ -324,15 +383,30 @@ pub fn compute(items: &[QtoItem], lib: &BoqLib) -> BoqReport {
             _ => miss.no_material_factors.push(r.code.clone()),
         }
     }
+    let mut undated_materials: Vec<String> = Vec::new();
     let materials: Vec<MaterialRow> = mats
         .into_iter()
         .map(|((material, unit), (q, used_in))| {
             let d = find(&lib.material_data, &material);
             let rate = d.and_then(|d| d.rate);
-            MaterialRow { spec: d.and_then(|d| d.spec.clone()), rate, cost: rate.map(|r| round(r * q, 2)), quantity: round(q, 3), material, unit, used_in }
+            let rate_date = d.filter(|d| d.rate.is_some()).and_then(|d| d.rate_date.clone()).filter(|d| !d.trim().is_empty());
+            if rate.is_some() && rate_date.is_none() {
+                undated_materials.push(format!("rate of material {material}"));
+            }
+            MaterialRow { spec: d.and_then(|d| d.spec.clone()), rate, rate_date, cost: rate.map(|r| round(r * q, 2)), quantity: round(q, 3), material, unit, used_in }
         })
         .collect();
     let material_cost = if !materials.is_empty() && materials.iter().all(|m| m.cost.is_some()) { Some(round(materials.iter().filter_map(|m| m.cost).sum(), 2)) } else { None };
+
+    miss.no_date.extend(undated_materials);
+    let dates: Vec<&str> = rows.iter().filter(|r| r.amount.is_some()).filter_map(|r| r.rate_date.as_deref()).collect();
+    let rate_dates = match (dates.iter().min(), dates.iter().max()) {
+        (Some(o), Some(n)) => Some(RateDates { oldest: (*o).to_string(), newest: (*n).to_string(), dated: dates.len() }),
+        _ => None,
+    };
+    if !miss.no_date.is_empty() {
+        warnings.push(format!("{} rates carry no date, so their age cannot be judged: {}", miss.no_date.len(), miss.no_date.join(", ")));
+    }
 
     let specs = rows
         .iter()
@@ -347,7 +421,7 @@ pub fn compute(items: &[QtoItem], lib: &BoqLib) -> BoqReport {
         })
         .collect();
 
-    BoqReport { project: lib.project.clone(), rows, sections, materials, specs, subtotal, markups, total: running, priced, unpriced, complete: unpriced == 0 && priced > 0, material_cost, missing: miss, warnings }
+    BoqReport { project: lib.project.clone(), rows, sections, materials, specs, subtotal, markups, total: running, priced, unpriced, complete: unpriced == 0 && priced > 0, material_cost, rate_dates, missing: miss, warnings }
 }
 
 // ------------------------------------------------------------------ exports
@@ -375,11 +449,11 @@ impl BoqReport {
 
     /// The BOQ lines as CSV (UTF-8 with a byte-order mark so Excel reads Arabic).
     pub fn boq_csv(&self) -> String {
-        let mut o = String::from("\u{feff}no,section,code,description,specification,unit,quantity,waste_pct,quantity_to_order,rate,amount,currency,status\n");
+        let mut o = String::from("\u{feff}no,section,code,description,specification,unit,quantity,waste_pct,quantity_to_order,rate,rate_date,amount,currency,status\n");
         for r in &self.rows {
             let status = if r.reference_only { "reference" } else if r.amount.is_some() { "priced" } else { "no rate" };
             o.push_str(&format!(
-                "{},{},{},{},{},{},{:.3},{},{:.3},{},{},{},{}\n",
+                "{},{},{},{},{},{},{:.3},{},{:.3},{},{},{},{},{}\n",
                 r.no,
                 cell(&r.section),
                 cell(&r.code),
@@ -390,23 +464,24 @@ impl BoqReport {
                 opt(r.waste_pct, 2),
                 r.ordered,
                 opt(r.rate, 2),
+                cell(r.rate_date.as_deref().unwrap_or("")),
                 opt(r.amount, 2),
                 cell(self.currency()),
                 status
             ));
         }
-        o.push_str(&format!(",,,Subtotal ({} of {} items priced),,,,,,,{:.2},{},{}\n", self.priced, self.priced + self.unpriced, self.subtotal, cell(self.currency()), self.state()));
+        o.push_str(&format!(",,,Subtotal ({} of {} items priced),,,,,,,,{:.2},{},{}\n", self.priced, self.priced + self.unpriced, self.subtotal, cell(self.currency()), self.state()));
         for m in &self.markups {
-            o.push_str(&format!(",,,{} {}%,,,,,,,{:.2},{},\n", cell(&m.name), m.pct, m.amount, cell(self.currency())));
+            o.push_str(&format!(",,,{} {}%,,,,,,,,{:.2},{},\n", cell(&m.name), m.pct, m.amount, cell(self.currency())));
         }
-        o.push_str(&format!(",,,Total,,,,,,,{:.2},{},{}\n", self.total, cell(self.currency()), self.state()));
+        o.push_str(&format!(",,,Total,,,,,,,,{:.2},{},{}\n", self.total, cell(self.currency()), self.state()));
         o
     }
 
     pub fn materials_csv(&self) -> String {
-        let mut o = String::from("\u{feff}material,unit,quantity,specification,rate,cost,used_in\n");
+        let mut o = String::from("\u{feff}material,unit,quantity,specification,rate,rate_date,cost,used_in\n");
         for m in &self.materials {
-            o.push_str(&format!("{},{},{:.3},{},{},{},{}\n", cell(&m.material), cell(&m.unit), m.quantity, cell(m.spec.as_deref().unwrap_or("")), opt(m.rate, 2), opt(m.cost, 2), cell(&m.used_in.join(";"))));
+            o.push_str(&format!("{},{},{:.3},{},{},{},{},{}\n", cell(&m.material), cell(&m.unit), m.quantity, cell(m.spec.as_deref().unwrap_or("")), opt(m.rate, 2), cell(m.rate_date.as_deref().unwrap_or("")), opt(m.cost, 2), cell(&m.used_in.join(";"))));
         }
         o
     }
@@ -464,7 +539,7 @@ impl BoqReport {
                 last = &r.section;
             }
             h.push_str(&format!(
-                "<tr><td>{}</td><td>{}<br><small>{}</small></td><td>{}</td><td>{}</td><td class=\"n\">{:.2}</td><td class=\"n\">{}</td><td class=\"n\">{}</td></tr>",
+                "<tr><td>{}</td><td>{}<br><small>{}</small></td><td>{}</td><td>{}</td><td class=\"n\">{:.2}</td><td class=\"n\">{}{}</td><td class=\"n\">{}</td></tr>",
                 r.no,
                 esc(&r.description),
                 esc(&r.code),
@@ -472,6 +547,7 @@ impl BoqReport {
                 r.unit,
                 r.quantity,
                 opt(r.rate, 2),
+                r.rate_date.as_deref().map_or(String::new(), |d| format!("<br><small>{}</small>", esc(d))),
                 if r.reference_only { t("مرجعي", "ref.").to_string() } else { opt(r.amount, 2) }
             ));
         }
