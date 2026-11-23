@@ -350,6 +350,7 @@ impl App {
             "ifc_review" => Self::ifc_review(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
+            "areas_import" => Self::areas_import(args),
             "prefs_learn" => Self::prefs_learn(args),
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
             "analysis" => self.analysis(args),
@@ -1927,6 +1928,25 @@ impl App {
             }
         }
         Ok(json!({ "draft": draft, "next": clarify::next_question(&draft), "missing": clarify::missing(&draft), "complete": clarify::is_complete(&draft) }))
+    }
+
+    /// Reads a room-area schedule from an Excel workbook (`path`, or `xlsx_b64` from the page). With a `draft`, the rooms replace
+    /// the draft's and the clarification state comes back with it.
+    fn areas_import(args: &Value) -> Result<Value, String> {
+        use nnx_core::clarify;
+        let bytes = match (args.get("xlsx_b64").and_then(Value::as_str).filter(|t| !t.trim().is_empty()), args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty())) {
+            (Some(b), _) => nnx_core::xlsx::base64_decode(b).map_err(|e| format!("areas import: {e}"))?,
+            (None, Some(p)) => std::fs::read(p).map_err(|e| format!("areas import: cannot read {p}: {e}"))?,
+            (None, None) => return Err("areas import: give the workbook's path, or its content as xlsx_b64".into()),
+        };
+        let table = nnx_core::areatable::import(&bytes, args.get("sheet").and_then(Value::as_str)).map_err(|e| format!("areas import: {e}"))?;
+        let Some(d) = args.get("draft").filter(|d| !d.is_null()) else {
+            return Ok(json!({ "table": table }));
+        };
+        let mut draft: nnx_core::briefai::BriefDraft = serde_json::from_value(d.clone()).map_err(|e| format!("areas import: the draft is not valid: {e}"))?;
+        draft.rooms = table.rooms.clone();
+        draft.notes.push(format!("rooms read from the sheet '{}' of the workbook: {} room(s), {:.1} m² with an area", table.sheet, table.rooms.len(), table.total_area_m2));
+        Ok(json!({ "table": table, "draft": draft, "next": clarify::next_question(&draft), "missing": clarify::missing(&draft), "complete": clarify::is_complete(&draft) }))
     }
 
     fn plot_import_survey(args: &Value) -> Result<Value, String> {
@@ -4143,6 +4163,22 @@ END-ISO-10303-21;
         assert_eq!((r["complete"].as_bool(), r["next"].is_null()), (Some(true), true));
         assert!(app.handle("brief_clarify", &json!({ "draft": r["draft"], "field": "floors", "answer": "many" })).unwrap_err().contains(" | "));
         assert!(app.handle("brief_clarify", &json!({})).unwrap_err().contains("draft is required"));
+    }
+
+    #[test]
+    fn an_excel_area_schedule_fills_the_draft_rooms_through_the_backend() {
+        let mut app = App::default();
+        let b64 = nnx_core::xlsx::base64_encode(include_bytes!("../nnx-core/tests/data/areas_deflated.xlsx"));
+        let r = app.handle("areas_import", &json!({ "xlsx_b64": b64 })).unwrap();
+        assert_eq!(r["table"]["rooms"][0]["func"], "kitchen");
+        assert!(r.get("draft").is_none());
+        let draft = json!({ "building_type": "villa", "floors": 1, "city": "Riyadh", "climate_zone": 1, "style": "contemporary", "rooms": [{ "func": "bedroom", "name": "old", "area_m2": 9.0, "floor": 1, "assumed": false }] });
+        let r = app.handle("areas_import", &json!({ "xlsx_b64": b64, "draft": draft })).unwrap();
+        assert_eq!(r["draft"]["rooms"].as_array().unwrap().len(), 1);
+        assert_eq!(r["draft"]["rooms"][0]["area_m2"], 14.5);
+        assert_eq!(r["next"]["field"], "plot_size");
+        assert!(app.handle("areas_import", &json!({})).unwrap_err().contains("workbook's path"));
+        assert!(app.handle("areas_import", &json!({ "path": "C:/nope/none.xlsx" })).unwrap_err().contains("cannot read"));
     }
 
     #[test]

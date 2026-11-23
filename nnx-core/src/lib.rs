@@ -8,6 +8,7 @@ pub mod annot;
 pub mod assembly;
 pub mod asbuilt;
 pub mod analytical;
+pub mod areatable;
 pub mod audits;
 pub mod certificate;
 pub mod compliance;
