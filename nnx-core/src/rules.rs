@@ -224,6 +224,8 @@ pub struct Finding {
 pub struct Skipped {
     pub rule_id: String,
     pub reason: String,
+    /// Elements the rule would have been applied to: they were not checked, which is not the same as passing.
+    pub elements: Vec<Id>,
 }
 
 #[derive(Debug, Default)]
@@ -272,9 +274,21 @@ pub fn check(model: &Model, rules: &RuleSet) -> Report {
     let mut report = Report { layers: rules.layers.clone(), ..Default::default() };
     for c in rules.rules.values() {
         if let Some((name, _)) = c.def.params.iter().find(|(_, p)| p.value.is_none()) {
+            // The filter is evaluated without parameters: a filter that needs one counts as "not applicable", as in a run.
+            let elements = model
+                .elements
+                .values()
+                .filter(|e| e.kind == c.def.applies_to.kind)
+                .filter(|e| {
+                    let scope = ElScope { el: e, params: &c.def.params };
+                    c.filter.as_ref().is_none_or(|f| matches!(f.eval(&scope), Ok(Val::Bool(true))))
+                })
+                .map(|e| e.id)
+                .collect();
             report.skipped.push(Skipped {
                 rule_id: c.def.id.clone(),
                 reason: format!("parameter '{name}' is unset; enter it from the official text"),
+                elements,
             });
             continue;
         }

@@ -1350,7 +1350,7 @@ $("runrules").onclick = () => busy(async () => {
   const r = await call("check_rules", { pack: $("pack").value, sourced: $("rules-sourced").checked });
   $("rulesout").innerHTML = `<h2>${t("checked")}: ${r.checked}</h2><div class="note">${r.layers.map(esc).join(" → ")}</div>
     <h2>${t("findings")} (${r.findings.length})</h2><ul class="clean">${r.findings.map(f => `<li class="${f.severity === "error" ? "bad" : "warn"}">${esc(f.rule)} [${esc(f.clause)}] ${esc(f.message)}</li>`).join("") || `<li class="ok">${t("none")}</li>`}</ul>
-    <h2>${t("skipped")} (${r.skipped.length})</h2><ul class="clean">${r.skipped.map(s => `<li class="warn">${esc(s.rule)}: ${esc(s.reason)}</li>`).join("")}</ul>`;
+    <h2>${t("skipped")} (${r.skipped.length})</h2><ul class="clean">${r.skipped.map(s => `<li class="warn">${esc(s.rule)}: ${esc(s.reason)}${(s.elements || []).length ? `<ul class="clean">${s.elements.map(x => `<li class="hint">${esc(x.name)} · ${x.area} m² · ${x.glazing_ratio == null ? "—" : x.glazing_ratio}</li>`).join("")}</ul>` : ""}</li>`).join("")}</ul>`;
 });
 
 // ---------------------------------------------------------------- editing the plan

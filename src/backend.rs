@@ -1113,8 +1113,22 @@ impl App {
             "layers": r.layers,
             "overlays": reports,
             "findings": r.findings.iter().map(|f| json!({ "rule": f.rule_id, "clause": f.clause, "layer": f.layer, "severity": sev(f.severity), "message": f.message, "element": f.element.to_string() })).collect::<Vec<_>>(),
-            "skipped": r.skipped.iter().map(|s| json!({ "rule": s.rule_id, "reason": s.reason })).collect::<Vec<_>>(),
+            "skipped": r.skipped.iter().map(|s| json!({ "rule": s.rule_id, "reason": s.reason, "elements": self.skipped_rooms(&s.elements) })).collect::<Vec<_>>(),
         }))
+    }
+
+    /// The rooms a skipped rule left unchecked: name, area and measured glazing ratio (null when the model has none).
+    fn skipped_rooms(&self, ids: &[nnx_core::Id]) -> Vec<Value> {
+        let Ok(doc) = self.doc() else { return Vec::new() };
+        let labels = self.labels();
+        ids.iter()
+            .filter_map(|id| doc.model.get(id))
+            .filter_map(|e| e.typed::<nnx_core::typed::Space>().ok().map(|s| (e, s)))
+            .map(|(e, s)| {
+                let name = nnx_core::annot::room_name(&s, &labels).unwrap_or(s.requirement_key.clone());
+                json!({ "id": e.id.to_string(), "name": name, "area": s.area, "glazing_ratio": s.glazing_ratio })
+            })
+            .collect()
     }
 
     // ------------------------------------------------------------------ Milestone 7: outliner, snapshots, overlays

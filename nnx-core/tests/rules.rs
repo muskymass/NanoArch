@@ -96,11 +96,13 @@ fn unset_parameter_disables_rule_visibly() {
     rules.add_layer(PACK).unwrap();
     let mut doc = Document::lenient();
     let space = Element::new("Space", Discipline::Arc, Source::User).with_prop("area", 1);
+    let space_id = space.id;
     doc.commit("s", Origin::User, vec![Command::Create(space)]).unwrap();
     let report = check(&doc.model, &rules);
     assert!(report.findings.is_empty(), "no silent default value is applied");
     assert_eq!(report.skipped.len(), 1);
     assert_eq!(report.skipped[0].rule_id, "room.area");
+    assert_eq!(report.skipped[0].elements, vec![space_id], "the rooms the rule left unchecked are named");
 }
 
 #[test]
