@@ -232,7 +232,7 @@ fn round(v: f64, d: i32) -> f64 {
 }
 
 /// `YYYY-MM-DD` with a real calendar day (leap years included).
-fn valid_date(s: &str) -> bool {
+pub(crate) fn valid_date(s: &str) -> bool {
     let b = s.as_bytes();
     if b.len() != 10 || b[4] != b'-' || b[7] != b'-' || !b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit()) {
         return false;

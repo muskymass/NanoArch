@@ -455,6 +455,7 @@ impl App {
             "assumptions" => Ok(assumptions()),
             "qto" => self.qto(args),
             "qto_elements" => self.qto_elements(args),
+            "bid_compare" => self.bid_compare(args),
             "set_phase" => self.set_phase(args),
             "add_feature" => self.add_feature(args),
             "features" => self.features_json(args),
@@ -1063,6 +1064,15 @@ impl App {
     }
 
     /// The quantities of the model grouped by the element they were measured on: `{ phase?, element? }`. Read-only.
+    /// Contractor bids compared on the project's own BOQ (read-only): `{ bids: [{ contractor, source, date, currency, rates: { CODE: rate }, markups? }] }`.
+    /// Rates, mark-ups, dates and sources are the bidders' own as entered; nothing is stored and nothing is filled in.
+    fn bid_compare(&self, args: &Value) -> Result<Value, String> {
+        let bids: Vec<nnx_core::bids::Bid> = serde_json::from_value(args.get("bids").cloned().ok_or("bids is required")?).map_err(|e| format!("bids: {e}"))?;
+        let boq = self.boq_now()?;
+        let cmp = nnx_core::bids::compare(&boq, &bids)?;
+        Ok(json!({ "comparison": cmp, "csv": cmp.csv(), "name": "bid-comparison" }))
+    }
+
     /// Each row is one element's share of an item; the shares of one code add up to that item (checked in the tests).
     /// Items other modules add (MEP, insulation, finishes) have no per-element breakdown and are named in `not_linked`.
     fn qto_elements(&self, args: &Value) -> Result<Value, String> {
@@ -4135,6 +4145,30 @@ mod tests {
             }
         }
         assert!(moved, "at least one partition can move");
+    }
+
+    #[test]
+    fn bid_comparison_is_read_only_and_ranks_only_complete_bids() {
+        let mut app = started();
+        let inputs = json!({ "project": { "currency": "XXX" }, "items": { "SLAB.VOL": { "rate": 100, "rate_source": "test" } } });
+        let r = app.handle("boq", &json!({ "inputs": inputs })).unwrap();
+        let codes: Vec<String> = r["report"]["rows"].as_array().unwrap().iter().filter(|x| x["reference_only"] == false).map(|x| x["code"].as_str().unwrap().to_string()).collect();
+        assert!(codes.len() >= 2);
+        let rates = |k: f64| codes.iter().map(|c| (c.clone(), json!(k))).collect::<serde_json::Map<_, _>>();
+        let bid = |n: &str, k: f64| json!({ "contractor": n, "source": "synthetic", "date": "2026-11-01", "currency": "XXX", "rates": rates(k) });
+        let before = hash(&app);
+        let r = app.handle("bid_compare", &json!({ "bids": [bid("A", 2.0), bid("B", 1.0)] })).unwrap();
+        assert_eq!(hash(&app), before, "the comparison changes nothing");
+        assert_eq!(r["comparison"]["lowest_complete"], "B");
+        assert!(r["csv"].as_str().unwrap().contains("contractor,source,date"));
+        let mut partial = bid("C", 0.5);
+        partial["rates"] = json!({ codes[0].clone(): 0.5 });
+        let r = app.handle("bid_compare", &json!({ "bids": [bid("A", 2.0), partial] })).unwrap();
+        assert_eq!(r["comparison"]["totals"][1]["rank"], Value::Null);
+        assert!(app.handle("bid_compare", &json!({})).unwrap_err().contains("bids is required"));
+        assert!(app.handle("bid_compare", &json!({ "bids": [bid("A", 2.0)] })).unwrap_err().contains("at least two"));
+        assert!(app.handle("bid_compare", &json!({ "bids": [bid("A", 2.0), { "contractor": "Z", "extra": 1 }] })).is_err());
+        assert!(App::default().handle("bid_compare", &json!({ "bids": [] })).is_err());
     }
 
     #[test]
