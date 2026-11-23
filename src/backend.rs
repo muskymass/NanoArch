@@ -371,6 +371,7 @@ impl App {
             "panel_schedule" => Self::panel_schedule(args),
             "cable_check" => Self::cable_check(args),
             "water_storage_check" => Self::water_storage_check(args),
+            "insulation_options" => self.insulation_options(args),
             "fire_protection_check" => Self::fire_protection_check(args),
             "shear_core_check" => Self::shear_core_check(args),
             "savings_compare" => Self::savings_compare(args),
@@ -2145,6 +2146,22 @@ impl App {
             .map_err(|e| format!("cable check: inputs are malformed (see the field list for catalogue and circuits): {e}"))?;
         let report = nnx_core::cables::check(&input)?;
         Ok(json!({ "cables": report }))
+    }
+
+    /// Insulation options for the wall or roof compared by cost and yearly cooling saving: `{ scope, degree_hours,
+    /// degree_hours_source, cop, tariff_per_kwh, study_years, baseline_insulation_cost_per_m2?, options: [{ name, lambda,
+    /// thicknesses_mm, price_per_m3, install_per_m2, source }] }`. The baseline is the project's stored `wall` or `roof` assembly
+    /// and its U limit; the area comes from the model. Every figure is the caller's; a missing one is refused by name.
+    fn insulation_options(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::insulopt::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("insulation options: inputs are malformed (see the field list for the scope, energy figures and options): {e}"))?;
+        let lib = self
+            .project()
+            .and_then(|p| p.mep)
+            .and_then(|m| m.insulation)
+            .ok_or("insulation options: enter the insulation assemblies in the MEP inputs first (the base assembly is the baseline)")?;
+        let report = nnx_core::insulopt::compare(self.model()?, &lib, &input)?;
+        Ok(json!({ "insulation_options": report }))
     }
 
     /// Ground and roof water tanks plus the transfer pump: `{ persons, litres_per_person_day, demand_source, ground_storage_days,
@@ -4704,6 +4721,27 @@ EOF
         no_p.as_object_mut().unwrap().remove("persons");
         assert!(app.handle("water_storage_check", &no_p).unwrap_err().contains("persons is required"));
         assert!(app.handle("water_storage_check", &json!({ "persons": "x" })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn insulation_options_compare_against_the_stored_base_assembly() {
+        let mut app = started();
+        let args = json!({
+            "scope": "wall", "degree_hours": 50000, "degree_hours_source": "test data", "cop": 3, "tariff_per_kwh": 0.2, "study_years": 10,
+            "options": [{ "name": "pir", "lambda": 0.025, "thicknesses_mm": [30, 60], "price_per_m3": 400, "install_per_m2": 8, "source": "test data" }]
+        });
+        assert!(app.handle("insulation_options", &args).unwrap_err().contains("enter the insulation assemblies"));
+        app.handle("mep", &json!({ "inputs": mep_inputs(), "apply": false, "show": false })).unwrap();
+        let r = app.handle("insulation_options", &args).unwrap();
+        let rep = &r["insulation_options"];
+        assert_eq!(rep["scope"], "wall");
+        assert_eq!(rep["rows"].as_array().unwrap().len(), 2);
+        assert!(rep["rows"][1]["u_value"].as_f64().unwrap() < rep["rows"][0]["u_value"].as_f64().unwrap());
+        assert!(rep["area_m2"].as_f64().unwrap() > 0.0);
+        let mut no_cop = args.clone();
+        no_cop.as_object_mut().unwrap().remove("cop");
+        assert!(app.handle("insulation_options", &no_cop).unwrap_err().contains("cop is required"));
+        assert!(app.handle("insulation_options", &json!({ "cop": "x" })).unwrap_err().contains("malformed"));
     }
 
     #[test]

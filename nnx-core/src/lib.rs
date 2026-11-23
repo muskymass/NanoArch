@@ -42,6 +42,7 @@ pub mod history;
 pub mod ifc;
 pub mod ifc_review;
 pub mod insulation;
+pub mod insulopt;
 pub mod layout;
 pub mod lighting;
 pub mod mep;
