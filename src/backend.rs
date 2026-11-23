@@ -368,6 +368,7 @@ impl App {
             "deep_foundation_check" => Self::deep_foundation_check(args),
             "spalling_check" => Self::spalling_check(args),
             "lighting_plan" => Self::lighting_plan(args),
+            "panel_schedule" => Self::panel_schedule(args),
             "shear_core_check" => Self::shear_core_check(args),
             "savings_compare" => Self::savings_compare(args),
             "furniture_fit" => Self::furniture_fit(args),
@@ -2120,6 +2121,16 @@ impl App {
             .map_err(|e| format!("lighting plan: inputs are malformed (see the field list for rooms and luminaires): {e}"))?;
         let report = nnx_core::lighting::check(&input)?;
         Ok(json!({ "lighting": report }))
+    }
+
+    /// Distribution-board load schedules: `{ voltage_v, power_factor, three_phase, demand_factors: { kind: factor }, breaker_sizes_a: [],
+    /// breaker_margin, boards: [{ key, ways, bus_rating_a? }], loads: [{ id, board, kind, watts, phases: 1|3, phase?, description? }],
+    /// max_imbalance_pct?, min_spare_ways? }`. Every value is the caller's; none is assumed. Preliminary schedule, not an electrical design.
+    fn panel_schedule(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::panels::PanelInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("panel schedule: inputs are malformed (see the field list for boards and loads): {e}"))?;
+        let report = nnx_core::panels::check(&input)?;
+        Ok(json!({ "panels": report }))
     }
 
     /// Shear-wall core around lifts and stairs:`{ walls: [{ key, x_mm, y_mm, w_mm, h_mm }], shafts?: [{ key, kind: lift|stair,
@@ -4608,6 +4619,29 @@ EOF
         assert!(app.handle("drift_check", &no_e).unwrap_err().contains("e_mpa is required"));
         assert!(app.handle("drift_check", &json!({})).unwrap_err().contains("nothing to check"));
         assert!(app.handle("drift_check", &json!({ "beams": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn panel_schedule_balances_phases_and_refuses_missing_inputs() {
+        let mut app = App::default();
+        let args = json!({
+            "voltage_v": 230, "power_factor": 1, "three_phase": true, "breaker_margin": 1.25,
+            "breaker_sizes_a": [16, 32, 63], "demand_factors": { "lighting": 1.0 },
+            "boards": [{ "key": "DB1", "ways": 12 }],
+            "loads": [
+                { "id": "L1", "board": "DB1", "kind": "lighting", "watts": 2300, "phases": 1 },
+                { "id": "L2", "board": "DB1", "kind": "lighting", "watts": 2300, "phases": 1 },
+                { "id": "L3", "board": "DB1", "kind": "lighting", "watts": 2300, "phases": 1 }
+            ]
+        });
+        let r = app.handle("panel_schedule", &args).unwrap();
+        assert_eq!(r["panels"]["boards"][0]["imbalance_pct"], 0.0);
+        assert_eq!(r["panels"]["boards"][0]["main_breaker_a"], 16.0);
+        assert_eq!(r["panels"]["boards"][0]["status"], "unchecked");
+        let mut no_v = args.clone();
+        no_v.as_object_mut().unwrap().remove("voltage_v");
+        assert!(app.handle("panel_schedule", &no_v).unwrap_err().contains("voltage_v is required"));
+        assert!(app.handle("panel_schedule", &json!({ "boards": 3 })).unwrap_err().contains("malformed"));
     }
 
     #[test]
