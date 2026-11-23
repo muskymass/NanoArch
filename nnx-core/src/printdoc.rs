@@ -104,7 +104,7 @@ pub fn print_html(model: &Model, opts: &PrintOpts) -> Result<String, String> {
             .collect();
         let window_rows: String = window_sizes.iter().enumerate().map(|(i, ((w, h, sill), n))| format!("<tr><td>W{}</td><td class=\"n\">{w} × {h}</td><td class=\"n\">{sill}</td><td class=\"n\">{n}</td></tr>", i + 1)).collect();
         let openings = format!(
-            "<h2>{}</h2><div class=\"sched\"><table><tr><th>{}</th><th>{}</th><th>{}</th><th>{}</th></tr>{door_rows}</table><table><tr><th>{}</th><th>{}</th><th>{}</th><th>{}</th></tr>{window_rows}</table></div>",
+            "<h2>{}</h2><div class=\"sched\"><table class=\"op\"><tr><th>{}</th><th>{}</th><th>{}</th><th>{}</th></tr>{door_rows}</table><table class=\"op\"><tr><th>{}</th><th>{}</th><th>{}</th><th>{}</th></tr>{window_rows}</table></div>",
             t("جدول الأبواب والنوافذ (مم)", "Door and window schedule (mm)"),
             t("الباب", "Door"),
             t("العرض × الارتفاع", "Width × height"),
