@@ -482,6 +482,8 @@ impl App {
             "tender_set" => self.tender_set(args),
             "payment" => self.payment_report(),
             "payment_set" => self.payment_set(args),
+            "site_photos" => self.site_photos_report(),
+            "site_photos_set" => self.site_photos_set(args),
             "progress_payments" => self.progress_report(),
             "progress_payments_set" => self.progress_set(args),
             "procure" => self.procure_report(),
@@ -1319,6 +1321,28 @@ impl App {
         })?;
         let mut v = self.payment_report()?;
         v["changed"] = json!(changed);
+        Ok(v)
+    }
+
+    fn site_photos_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let rep = nnx_core::sitephotos::report(&self.doc()?.model, &p.meta.site_photos);
+        Ok(json!({ "inputs": p.meta.site_photos, "csv": rep.csv(), "html": rep.html(), "report": rep }))
+    }
+
+    /// Replaces the stored photo references (`photos`): ONE undoable edit. Every photo needs a file, a real date and at least one
+    /// element that exists in the model; nothing is stored when any photo is refused.
+    fn site_photos_set(&mut self, args: &Value) -> Result<Value, String> {
+        let sp: nnx_core::sitephotos::SitePhotos = serde_json::from_value(json!({ "photos": args.get("photos").cloned().ok_or("photos is required")? })).map_err(|e| format!("photos: {e}"))?;
+        sp.check()?;
+        nnx_core::sitephotos::validate_links(&self.doc()?.model, &sp)?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "Site photos", |p| {
+            p.meta.site_photos = sp.clone();
+            Ok(())
+        })?;
+        let mut v = self.site_photos_report()?;
+        v["changed"] = json!(out.changed);
         Ok(v)
     }
 
@@ -7421,6 +7445,32 @@ END-ISO-10303-21;
         if let Ok(s) = app.handle("schedule", &json!({})) {
             assert!(!s.to_string().contains("FIN."));
         }
+    }
+
+    #[test]
+    fn site_photos_are_linked_to_existing_elements_stored_as_one_undoable_edit_and_reported_per_element() {
+        let mut app = started();
+        assert!(App::default().handle("site_photos", &json!({})).is_err());
+        assert!(app.handle("site_photos_set", &json!({})).is_err());
+        let ph = |id: &str, date: &str, el: &str, pct: f64| json!({ "id": id, "file": format!("{id}.jpg"), "taken": date, "elements": [el], "observedPct": pct });
+        // A reference that matches no element is refused by name and nothing is stored.
+        let bad = json!({ "photos": [ph("p1", "2026-03-01", "NOPE-9", 10.0)] });
+        assert!(app.handle("site_photos_set", &bad).unwrap_err().contains("NOPE-9"));
+        assert!(app.handle("site_photos", &json!({})).unwrap()["inputs"]["photos"].as_array().unwrap().is_empty());
+        let bad_date = json!({ "photos": [ph("p1", "2026-02-30", "COL-1", 10.0)] });
+        assert!(app.handle("site_photos_set", &bad_date).unwrap_err().contains("not a date"));
+        let ok = json!({ "photos": [ph("p2", "2026-03-10", "COL-1", 60.0), ph("p1", "2026-03-01", "COL-1", 30.0)] });
+        let r = app.handle("site_photos_set", &ok).unwrap();
+        assert_eq!(r["changed"], true);
+        let el = &r["report"]["elements"][0];
+        assert_eq!(el["name"], "COL-1");
+        assert_eq!(el["latest_photo"], "p2");
+        assert_eq!(el["latest_observed_pct"], 60.0);
+        assert_eq!(r["report"]["first_taken"], "2026-03-01");
+        assert!(r["csv"].as_str().unwrap().lines().count() == 3);
+        assert_eq!(app.handle("site_photos_set", &ok).unwrap()["changed"], false);
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.handle("site_photos", &json!({})).unwrap()["inputs"]["photos"].as_array().unwrap().is_empty());
     }
 
     #[test]
