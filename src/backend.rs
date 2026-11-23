@@ -414,6 +414,7 @@ impl App {
             }
             "certificate_html" => self.certificate(args),
             "permit_pack" => self.permit_pack(args),
+            "signoff_form" => self.signoff_form(args),
             "number_audit" => self.number_audit(),
             "lock" => self.lock(args),
             "regenerate" => self.regenerate(args),
@@ -2890,6 +2891,20 @@ impl App {
         Ok(json!({ "html": pack.html, "name": "permit_pack.pdf", "sheets": pack.sheets, "notes": pack.notes }))
     }
 
+    /// The engineer's sign-off form with a statement of responsibility (one A4 page): `{ engineer: { name, licence_no,
+    /// licensing_body, discipline? }, project_no, revision, scope: [..], statement, statement_source, lang? }`. The statement
+    /// wording is the user's input and is never written here; signature, seal and date boxes stay empty.
+    fn signoff_form(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::signoff::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("sign-off form: inputs are malformed (engineer {{ name, licence_no, licensing_body, discipline? }}, project_no, revision, scope [text], statement, statement_source): {e}"))?;
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        let date: String = utc_now().chars().take(10).collect();
+        let title = self.display_title();
+        self.doc()?;
+        let form = nnx_core::signoff::build(&title, &date, arabic, &input)?;
+        Ok(json!({ "html": form.html, "name": "engineer_signoff.pdf", "notes": form.notes }))
+    }
+
     /// The number audit file of the open project: every number with the source and date entered beside it, and the list of
     /// numbers that have none. Read-only; returns the entries, the counts and a CSV text (`name`: `number_audit.csv`).
     fn number_audit(&self) -> Result<Value, String> {
@@ -5192,6 +5207,29 @@ EOF
         assert!(e.contains("engineer.licence_no") && e.contains("project_no") && !e.contains("revision"), "{e}");
         assert!(app.handle("permit_pack", &json!({ "engineer": "x" })).unwrap_err().contains("malformed"));
         assert!(App::default().handle("permit_pack", &args).is_err());
+    }
+
+    #[test]
+    fn signoff_form_prints_user_statement_leaves_boxes_empty_and_names_missing_inputs() {
+        let mut app = started_with_project();
+        let args = json!({
+            "engineer": { "name": "Eng <A>", "licence_no": "L-123", "licensing_body": "Test council" },
+            "project_no": "P-7", "revision": "Rev B", "scope": ["Architectural drawings A-01..A-03", " "],
+            "statement": "I take responsibility <as worded>.", "statement_source": "Council form 9, 2026-01-01", "lang": "en"
+        });
+        let r = app.handle("signoff_form", &args).unwrap();
+        let h = r["html"].as_str().unwrap();
+        assert_eq!(r["name"], "engineer_signoff.pdf");
+        assert!(h.contains("Eng &lt;A&gt;") && h.contains("L-123") && h.contains("Test council") && h.contains("I take responsibility &lt;as worded&gt;.") && h.contains("Council form 9"));
+        assert_eq!(h.matches("<li>").count(), 1, "blank scope entries are dropped");
+        assert!(h.contains("void until the licensed engineer signs") && !h.to_lowercase().contains("approved by"));
+        let mut bad = args.clone();
+        bad.as_object_mut().unwrap().remove("statement");
+        bad["scope"] = json!([" "]);
+        let e = app.handle("signoff_form", &bad).unwrap_err();
+        assert!(e.contains("statement") && e.contains("scope") && !e.contains("revision"), "{e}");
+        assert!(app.handle("signoff_form", &json!({ "engineer": "x" })).unwrap_err().contains("malformed"));
+        assert!(App::default().handle("signoff_form", &args).is_err());
     }
 
     #[test]

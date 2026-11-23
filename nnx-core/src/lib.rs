@@ -126,6 +126,7 @@ pub mod zoning;
 pub mod shearcore;
 pub mod wallload;
 pub mod permitpack;
+pub mod signoff;
 pub mod changereport;
 
 pub use command::{Command, CommandError, Origin};

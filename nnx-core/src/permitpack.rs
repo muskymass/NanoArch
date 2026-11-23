@@ -68,7 +68,7 @@ pub struct Context<'a> {
     pub date: &'a str,
 }
 
-fn esc(s: &str) -> String {
+pub(crate) fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
@@ -90,7 +90,7 @@ fn missing(i: &Input) -> Vec<&'static str> {
     m
 }
 
-fn valid_date(d: &str) -> bool {
+pub(crate) fn valid_date(d: &str) -> bool {
     let b = d.as_bytes();
     b.len() == 10 && b[4] == b'-' && b[7] == b'-' && b.iter().enumerate().all(|(k, c)| k == 4 || k == 7 || c.is_ascii_digit()) && (1..=12).contains(&d[5..7].parse::<u32>().unwrap_or(0)) && (1..=31).contains(&d[8..10].parse::<u32>().unwrap_or(0))
 }
