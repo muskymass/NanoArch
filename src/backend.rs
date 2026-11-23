@@ -486,6 +486,7 @@ impl App {
             "site_photos" => self.site_photos_report(),
             "site_photos_set" => self.site_photos_set(args),
             "decisions" => self.decisions_report(),
+            "quality_report" => self.quality_report(args),
             "decisions_set" => self.decisions_set(args),
             "progress_payments" => self.progress_report(),
             "progress_payments_set" => self.progress_set(args),
@@ -1372,6 +1373,23 @@ impl App {
         Ok(v)
     }
 
+    /// The project quality report (`weights` optional): integrity, rule check (sourced pack, enabled overlays and plugins, plus any `pack`
+    /// and `limits` given), rule coverage and number provenance, as one declared score with its counted sets. Read-only; stores nothing.
+    fn quality_report(&self, args: &Value) -> Result<Value, String> {
+        let weights: nnx_core::quality::QualityWeights = match args.get("weights") {
+            Some(w) => serde_json::from_value(w.clone()).map_err(|e| format!("weights: {e}"))?,
+            None => Default::default(),
+        };
+        let doc = self.doc()?;
+        let mut rule_args = args.clone();
+        rule_args["sourced"] = json!(true);
+        let (rule_report, _) = self.run_rules(&rule_args)?;
+        let audit = self.project().map(|p| nnx_core::numaudit::audit(&p)).transpose()?;
+        let integrity = nnx_core::precheck::run(&doc.model);
+        let rep = nnx_core::quality::build(&doc.model, &integrity, Some(&rule_report), audit.as_ref(), &weights)?;
+        Ok(json!({ "report": rep, "csv": rep.csv(), "html": rep.html(), "name": "quality_report.csv" }))
+    }
+
     fn decisions_report(&self) -> Result<Value, String> {
         let p = self.project().ok_or("choose a layout first")?;
         let rep = nnx_core::decisions::report(&self.doc()?.model, &p.meta.decisions);
@@ -1492,6 +1510,23 @@ impl App {
     /// Runs the rules: the pack pasted in the Rules tab (if any), then the enabled municipal overlays in order. Every finding names the
     /// layer its rule belongs to, and `overlays` says what each layer added, replaced and overrode.
     fn check_rules(&self, args: &Value) -> Result<Value, String> {
+        let (r, reports) = self.run_rules(args)?;
+        let sev = |s: rules::Severity| match s {
+            rules::Severity::Error => "error",
+            rules::Severity::Warning => "warning",
+            rules::Severity::Info => "info",
+        };
+        Ok(json!({
+            "checked": r.checked,
+            "layers": r.layers,
+            "overlays": reports,
+            "findings": r.findings.iter().map(|f| json!({ "rule": f.rule_id, "clause": f.clause, "layer": f.layer, "severity": sev(f.severity), "message": f.message, "element": f.element.to_string() })).collect::<Vec<_>>(),
+            "skipped": r.skipped.iter().map(|s| json!({ "rule": s.rule_id, "param": s.param, "reason": s.reason, "elements": self.skipped_rooms(&s.elements) })).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// Builds the rule set from the arguments (`pack`, `sourced`, `limits`, the enabled overlays and plugins) and runs it on the open model.
+    fn run_rules(&self, args: &Value) -> Result<(rules::Report, Vec<nnx_core::rules::LayerReport>), String> {
         let doc = self.doc()?;
         let base = args.get("pack").and_then(Value::as_str);
         let overlays = self.project().map(|p| nnx_core::plugins::effective_overlays(&p.overlays, &p.plugins)).unwrap_or_default();
@@ -1526,19 +1561,7 @@ impl App {
             let pack = json!({ "id": "USER-LIMITS", "edition": "entered in the application", "version": "1", "overrides": overrides });
             reports.push(rs.add_layer_reporting(&pack.to_string()).map_err(|e| format!("limits: {e}"))?);
         }
-        let r = rules::check(&doc.model, &rs);
-        let sev = |s: rules::Severity| match s {
-            rules::Severity::Error => "error",
-            rules::Severity::Warning => "warning",
-            rules::Severity::Info => "info",
-        };
-        Ok(json!({
-            "checked": r.checked,
-            "layers": r.layers,
-            "overlays": reports,
-            "findings": r.findings.iter().map(|f| json!({ "rule": f.rule_id, "clause": f.clause, "layer": f.layer, "severity": sev(f.severity), "message": f.message, "element": f.element.to_string() })).collect::<Vec<_>>(),
-            "skipped": r.skipped.iter().map(|s| json!({ "rule": s.rule_id, "param": s.param, "reason": s.reason, "elements": self.skipped_rooms(&s.elements) })).collect::<Vec<_>>(),
-        }))
+        Ok((rules::check(&doc.model, &rs), reports))
     }
 
     /// The rooms a skipped rule left unchecked: name, area and measured glazing ratio (null when the model has none).
@@ -5775,6 +5798,30 @@ EOF
         assert!(app.handle("snapshot_report", &json!({})).is_err());
         assert!(app.handle("snapshot_report", &json!({ "a": "S9" })).is_err());
         assert!(App::default().handle("snapshot_report", &json!({ "a": "S1" })).is_err());
+    }
+
+    #[test]
+    fn quality_report_scores_the_open_project_and_refuses_bad_input() {
+        let mut app = started_with_project();
+        let r = app.handle("quality_report", &json!({})).unwrap();
+        assert_eq!(r["name"], "quality_report.csv");
+        let crits = r["report"]["criteria"].as_array().unwrap();
+        assert_eq!(crits.len(), 4);
+        let integ = crits.iter().find(|c| c["id"] == "integrity").unwrap();
+        assert!(integ["score"].as_f64().is_some_and(|s| (0.0..=100.0).contains(&s)));
+        let prov = crits.iter().find(|c| c["id"] == "provenance").unwrap();
+        let audit = app.handle("number_audit", &json!({})).unwrap();
+        assert_eq!(prov["total"], audit["total"], "provenance counts exactly what the number audit counts");
+        assert_eq!(prov["counted"], audit["sourced"]);
+        let pre = app.handle("precheck", &json!({})).unwrap();
+        let errs = pre["issues"].as_array().unwrap().iter().filter(|i| i["level"] == "error").count();
+        assert_eq!(r["report"]["integrity_errors"].as_u64().unwrap() as usize, errs);
+        assert!(r["csv"].as_str().unwrap().starts_with("criterion,score"));
+        let w = app.handle("quality_report", &json!({ "weights": { "integrity": 1.0, "rules": 0.0, "coverage": 0.0, "provenance": 0.0 } })).unwrap();
+        assert_eq!(w["report"]["overall"], integ["score"], "with only integrity weighted the overall is the integrity score");
+        assert!(app.handle("quality_report", &json!({ "weights": { "rules": -1.0 } })).unwrap_err().contains("rules"));
+        assert!(app.handle("quality_report", &json!({ "weights": { "bogus": 1.0 } })).is_err());
+        assert!(App::default().handle("quality_report", &json!({})).is_err());
     }
 
     #[test]
