@@ -313,6 +313,11 @@ main.hl{grid-template-columns:1fr 420px}main.hr{grid-template-columns:400px 1fr}
       <table class="rooms"><thead><tr><th data-i="r_name"></th><th data-i="r_func"></th><th data-i="r_area"></th><th data-i="r_zone"></th><th data-i="r_floor"></th><th>☀</th><th data-i="r_phase"></th><th></th></tr></thead><tbody id="rooms"></tbody></table>
       <div class="bar" style="padding:8px 0;border:0"><button id="addroom" data-i="add_room"></button><button id="example" data-i="example"></button><button id="example2" data-i="example2"></button></div>
 
+      <h2 data-i="h_adj"></h2>
+      <div class="note" data-i="adj_note"></div>
+      <table class="rooms"><thead><tr><th data-i="adj_a"></th><th data-i="adj_b"></th><th data-i="adj_w"></th><th></th></tr></thead><tbody id="adj-rows"></tbody></table>
+      <div class="bar" style="padding:6px 0;border:0"><button id="adj-add" data-i="adj_add"></button></div>
+
       <h2 data-i="h_struct"></h2>
       <div class="note" data-i="struct_note"></div>
       <div class="row"><div><label data-i="dead"></label><input id="dead" type="number" step="0.1" min="0"></div>
@@ -489,6 +494,8 @@ ar: {
   subtitle:"مصمم مخططات الفلل", prelim:"أولي — غير صالح للتنفيذ", h_project:"المشروع", title:"اسم المشروع", width:"عرض الأرض (م)", length:"عمق الأرض (م)",
   sb_front:"ارتداد أمامي (م)", sb_back:"ارتداد خلفي (م)", sb_side:"ارتداد جانبي (م)", sb_note:"أدخل الارتدادات من اشتراطات البلدية؛ لا قيم افتراضية.",
   entry:"جهة المدخل (الشارع)", south:"جنوب", north:"شمال", east:"شرق", west:"غرب", h_rooms:"الفراغات", r_name:"الاسم", r_func:"النوع", r_area:"م²", r_zone:"المنطقة",
+  h_adj:"قواعد الجوار", adj_note:"رغبتك في الجوار بين فراغين: موجب = جدار مشترك وباب، سالب = إبعاد. لا قاعدة افتراضية؛ ما لا تدخله لا يُفترض.", adj_a:"الفراغ الأول", adj_b:"الفراغ الثاني", adj_w:"الرغبة", adj_add:"+ قاعدة جوار", adj_same:"اختر فراغين مختلفين في كل قاعدة", adj_dup:"القاعدة مكررة لنفس الفراغين",
+  adj_wl:{ "3":"+3 دائماً متجاوران", "2":"+2 يُفضَّل التجاور", "1":"+1 يُحبَّذ التجاور", "-1":"−1 يُحبَّذ الإبعاد", "-2":"−2 يُفضَّل الإبعاد", "-3":"−3 لا يتجاوران أبداً" },
   add_room:"+ فراغ", example:"مثال تجريبي", h_struct:"مدخلات إنشائية", struct_note:"اتركها فارغة إن لم تتوفر: لن تُحسب الأحمال والقواعد وسيُنبَّه إلى ذلك.",
   dead:"حمل ميت (kPa)", live:"حمل حي (kPa)", bearing:"تحمل التربة (kPa)", floors:"عدد الأدوار", maxspan:"أقصى بحر بين الأعمدة (مم)", generate:"ولّد البدائل",
   undo:"تراجع", redo:"إعادة", show_struct:"إظهار الإنشائي", sync:"مزامنة الإنشائي", export_svg:"تصدير SVG", save_proj:"حفظ المشروع",
@@ -536,6 +543,8 @@ en: {
   subtitle:"Villa plan designer", prelim:"Preliminary - not for construction", h_project:"Project", title:"Project name", width:"Plot width (m)", length:"Plot depth (m)",
   sb_front:"Front setback (m)", sb_back:"Rear setback (m)", sb_side:"Side setback (m)", sb_note:"Enter setbacks from the municipality's requirements; no defaults.",
   entry:"Entrance side (street)", south:"South", north:"North", east:"East", west:"West", h_rooms:"Rooms", r_name:"Name", r_func:"Type", r_area:"m²", r_zone:"Zone",
+  h_adj:"Neighbour rules", adj_note:"Your wish for two rooms: positive = shared wall and a door, negative = keep apart. No rule is assumed; what you do not enter is not guessed.", adj_a:"First room", adj_b:"Second room", adj_w:"Wish", adj_add:"+ Neighbour rule", adj_same:"Pick two different rooms in every rule", adj_dup:"The same pair of rooms is listed twice",
+  adj_wl:{ "3":"+3 always adjacent", "2":"+2 prefer adjacent", "1":"+1 lean adjacent", "-1":"−1 lean apart", "-2":"−2 prefer apart", "-3":"−3 never adjacent" },
   add_room:"+ Room", example:"Synthetic example", h_struct:"Structural inputs", struct_note:"Leave blank if unknown: loads and footings are then not computed, and you are told.",
   dead:"Dead load (kPa)", live:"Live load (kPa)", bearing:"Soil bearing (kPa)", floors:"Floors", maxspan:"Max column span (mm)", generate:"Generate alternatives",
   undo:"Undo", redo:"Redo", show_struct:"Show structure", sync:"Sync structure", export_svg:"Export SVG", save_proj:"Save project",
@@ -596,7 +605,7 @@ function applyLang() {
 }
 
 // ---------------------------------------------------------------- state and helpers
-const state = { rooms: [{ key: "r1", name: "", func: "living", area: 30, zone: "public", light: true }], alts: [], sel: -1, notes: null, rooms_out: null, qto: null, sched: null, keys: [], rates: {} };
+const state = { rooms: [{ key: "r1", name: "", func: "living", area: 30, zone: "public", light: true }], adj: [], alts: [], sel: -1, notes: null, rooms_out: null, qto: null, sched: null, keys: [], rates: {} };
 const PHASES = ["EXISTING", "TO_BE_DEMOLISHED", "TO_BE_MODIFIED", "NEW", "TEMPORARY", "UNVERIFIED"];
 const FUNCS = ["majlis", "living", "dining", "kitchen", "bedroom", "bathroom", "lift", "courtyard", "other"], ZONES = ["public", "private", "service"];
 function toast(m) { const e = $("toast"); e.textContent = m; e.classList.add("on"); clearTimeout(toast.h); toast.h = setTimeout(() => e.classList.remove("on"), 3200); }
@@ -623,12 +632,47 @@ function renderRooms() {
       const f = el.dataset.f; r[f] = f === "light" ? el.checked : (f === "area" || f === "floor") ? Number(el.value) : el.value;
       if (f === "area") { r.suggested = false; el.classList.remove("sugg"); el.title = ""; }
     }));
-    tr.querySelector("[data-del]").addEventListener("click", () => { state.rooms.splice(i, 1); renderRooms(); });
+    tr.querySelector("[data-del]").addEventListener("click", () => { const gone = state.rooms.splice(i, 1)[0]; state.adj = state.adj.filter(x => x.a !== gone.key && x.b !== gone.key); renderRooms(); });
     tb.appendChild(tr);
+  });
+  renderAdj();
+}
+// Neighbour rules: weight -3..3 without 0, two different rooms of the brief, each pair once. The backend validates again and its message is shown.
+const ADJ_WEIGHTS = [3, 2, 1, -1, -2, -3];
+function roomLabel(r) { return r.name ? r.name : `${t("func")[r.func] || r.func} (${r.key})`; }
+function renderAdj() {
+  const tb = $("adj-rows"); if (!tb) return; tb.innerHTML = "";
+  const opts = sel => state.rooms.map(r => `<option value="${esc(r.key)}" ${r.key === sel ? "selected" : ""}>${esc(roomLabel(r))}</option>`).join("")
+    + (sel && !state.rooms.some(r => r.key === sel) ? `<option value="${esc(sel)}" selected>${esc(sel)} ⚠</option>` : "");
+  state.adj.forEach((x, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td><select data-f="a">${opts(x.a)}</select></td><td><select data-f="b">${opts(x.b)}</select></td>
+      <td><select data-f="weight">${ADJ_WEIGHTS.map(w => `<option value="${w}" ${w === x.weight ? "selected" : ""}>${t("adj_wl")[String(w)]}</option>`).join("")}</select></td>
+      <td><button data-del="${i}" title="x">×</button></td>`;
+    tr.querySelectorAll("[data-f]").forEach(el => el.addEventListener("change", () => { x[el.dataset.f] = el.dataset.f === "weight" ? Number(el.value) : el.value; }));
+    tr.querySelector("[data-del]").addEventListener("click", () => { state.adj.splice(i, 1); renderAdj(); });
+    tb.appendChild(tr);
+  });
+}
+$("adj-add").onclick = () => {
+  if (state.rooms.length < 2) { toast(t("adj_same")); return; }
+  const used = new Set(state.adj.map(x => [x.a, x.b].sort().join("|")));
+  for (let i = 0; i < state.rooms.length; i++) for (let j = i + 1; j < state.rooms.length; j++) {
+    if (!used.has([state.rooms[i].key, state.rooms[j].key].sort().join("|"))) { state.adj.push({ a: state.rooms[i].key, b: state.rooms[j].key, weight: 2 }); renderAdj(); return; }
+  }
+  toast(t("adj_dup"));
+};
+function adjacencyForBrief() {
+  const seen = new Set();
+  return state.adj.map(x => {
+    if (x.a === x.b) throw new Error(t("adj_same"));
+    const k = [x.a, x.b].sort().join("|"); if (seen.has(k)) throw new Error(t("adj_dup")); seen.add(k);
+    return { a: x.a, b: x.b, weight: x.weight };
   });
 }
 $("addroom").onclick = () => { state.rooms.push({ key: "r" + (Date.now() % 100000), name: "", func: "bedroom", area: 15, zone: "private", light: true, floor: 1 }); renderRooms(); };
 $("example").onclick = () => {
+  state.adj = [];
   const r = (key, name, func, area, zone, light) => ({ key, name, func, area, zone, light });
   state.rooms = [r("majlis", "المجلس", "majlis", 36, "public", true), r("living", "الصالة", "living", 30, "public", true), r("dining", "الطعام", "dining", 24, "public", true), r("kitchen", "المطبخ", "kitchen", 20, "service", true),
     r("master", "الماستر", "bedroom", 28, "private", true), r("bed1", "غرفة 1", "bedroom", 20, "private", true), r("bed2", "غرفة 2", "bedroom", 20, "private", true), r("bed3", "غرفة 3", "bedroom", 20, "private", true),
@@ -638,6 +682,7 @@ $("example").onclick = () => {
   renderRooms();
 };
 $("example2").onclick = () => {
+  state.adj = [];
   const r = (key, name, func, area, zone, light, floor) => ({ key, name, func, area, zone, light, floor });
   state.rooms = [r("majlis", "المجلس", "majlis", 36, "public", true, 1), r("living", "الصالة", "living", 30, "public", true, 1), r("dining", "الطعام", "dining", 24, "public", true, 1), r("kitchen", "المطبخ", "kitchen", 20, "service", true, 1), r("bath1", "حمام 1", "bathroom", 6, "service", false, 1),
     r("master", "الماستر", "bedroom", 28, "private", true, 2), r("bed1", "غرفة 1", "bedroom", 20, "private", true, 2), r("bed2", "غرفة 2", "bedroom", 20, "private", true, 2), r("bath2", "حمام 2", "bathroom", 6, "service", false, 2), r("bath3", "حمام 3", "bathroom", 6, "service", false, 2)];
@@ -818,6 +863,7 @@ $("generate").onclick = () => busy(async () => {
   const brief = { title: $("title").value, width_m: w, length_m: l, setback_front_m: num("sbf") || 0, setback_back_m: num("sbb") || 0, setback_side_m: num("sbs") || 0, entry: $("entry").value, rooms };
   if (num("wallext") > 0) brief.wall_exterior_mm = Math.round(num("wallext")); if (num("wallint") > 0) brief.wall_interior_mm = Math.round(num("wallint")); if (num("wallh") > 0) brief.wall_height_mm = Math.round(num("wallh"));
   if (num("stairw") && num("stairl")) brief.stair = { width_m: num("stairw"), length_m: num("stairl"), side: $("stairside").value };
+  const adjacency = adjacencyForBrief(); if (adjacency.length) brief.adjacency = adjacency;
   const pp = projectPayload(); const res = await call("generate", { brief, struct: structInputs(), placement: skPlacement(), meta: pp.meta, limits: pp.limits });
   state.alts = res.alternatives; state.sel = -1; state.qto = null; state.sched = null; state.rooms_out = null; state.notes = null;
   renderAlts(); $("viewer").innerHTML = `<div class="empty">${t("alts_empty")}</div>`; setPlanButtons(false);
@@ -1531,6 +1577,7 @@ async function applyTemplate(id) {
   $("sbf").value = r.setbacks.front_m; $("sbb").value = r.setbacks.back_m; $("sbs").value = r.setbacks.side_m; $("entry").value = "south";
   $("floors").value = x.floors; if (x.stair) { $("stairw").value = x.stair[0]; $("stairl").value = x.stair[1]; $("stairside").value = x.stair[2]; } else { $("stairw").value = ""; $("stairl").value = ""; }
   $("p-btype").value = x.building_type; $("p-style").value = x.style; $("p-climate").value = x.city;
+  state.adj = [];
   state.rooms = x.rooms.map(q => ({ key: q.key, name: q.name, func: q.func, area: q.area_m2, zone: q.zone, light: NEEDS_LIGHT(q.func), floor: q.floor, suggested: true }));
   renderRooms();
   $("tpl-out").innerHTML = `<ul class="clean">${x.assumptions.map(a => `<li class="warn">${esc(a)}</li>`).join("")}</ul><div class="hint">${t("tpl_sb")}: ${r.sources.map(esc).join(" · ")}</div>`;
@@ -2352,7 +2399,8 @@ function applySettings(s) {
   $("title").value = b.title ?? s.title ?? "";
   for (const [id, k] of [["width", "width_m"], ["length", "length_m"], ["sbf", "setback_front_m"], ["sbb", "setback_back_m"], ["sbs", "setback_side_m"]]) $(id).value = b[k] ?? "";
   $("entry").value = b.entry || "south";
-  if (Array.isArray(b.rooms)) { state.rooms = b.rooms.map(x => ({ key: x.key, name: x.name || "", func: x.func, area: x.area, zone: x.zone, light: !!x.light, floor: x.floor || 1, phase: x.phase || "" })); renderRooms(); }
+  state.adj = Array.isArray(b.adjacency) ? b.adjacency.map(x => ({ a: x.a, b: x.b, weight: x.weight })) : [];
+  if (Array.isArray(b.rooms)) { state.rooms = b.rooms.map(x => ({ key: x.key, name: x.name || "", func: x.func, area: x.area, zone: x.zone, light: !!x.light, floor: x.floor || 1, phase: x.phase || "" })); renderRooms(); } else renderAdj();
   $("wallext").value = b.wall_exterior_mm ?? ""; $("wallint").value = b.wall_interior_mm ?? ""; $("wallh").value = b.wall_height_mm ?? "";
   $("stairw").value = (b.stair || {}).width_m ?? ""; $("stairl").value = (b.stair || {}).length_m ?? ""; $("stairside").value = (b.stair || {}).side || "west";
   for (const [id, k] of [["dead", "dead_kpa"], ["live", "live_kpa"], ["bearing", "bearing_kpa"], ["floors", "floors"], ["maxspan", "max_span_mm"]]) $(id).value = st[k] ?? "";
