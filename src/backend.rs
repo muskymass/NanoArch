@@ -361,6 +361,7 @@ impl App {
             "ifc_review" => Self::ifc_review(args),
             "entrances_check" => Self::entrances_check(args),
             "privacy_check" => Self::privacy_check(args),
+            "sun_check" => Self::sun_check(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
@@ -1977,6 +1978,15 @@ impl App {
         };
         let report = nnx_core::privacy::check_privacy(&layout, &envelope, &neighbours, &private_funcs, min)?;
         Ok(json!({ "privacy": report }))
+    }
+
+    /// Reports the sleeping rooms that take the afternoon sun on a west outside wall: `{ rooms, envelope, sleeping_funcs }`
+    /// (mm). `sleeping_funcs` has no default.
+    fn sun_check(args: &Value) -> Result<Value, String> {
+        let (layout, envelope) = Self::layout_from_args(args, "sun")?;
+        let sleeping_funcs: Vec<String> = serde_json::from_value(args.get("sleeping_funcs").cloned().unwrap_or(Value::Null)).map_err(|e| format!("sun: sleeping_funcs must be a list of room functions: {e}"))?;
+        let report = nnx_core::sun::check_sun(&layout, &envelope, &sleeping_funcs)?;
+        Ok(json!({ "sun": report }))
     }
 
     /// Reads plot boundary candidates from a DXF drawing: `{ path, units?, index? }`. A drawing without a unit needs `units`;
@@ -4265,6 +4275,22 @@ EOF
         bad_side["neighbours"] = json!([{ "side": "up", "distance_mm": 1 }]);
         assert!(app.handle("privacy_check", &bad_side).unwrap_err().contains("neighbour side"));
         assert!(app.handle("privacy_check", &json!({ "rooms": rooms, "envelope": { "w": 1, "h": 1 } })).unwrap_err().contains("neighbours are required"));
+    }
+
+    #[test]
+    fn sun_check_flags_west_bedrooms_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([
+            { "key": "bed1", "func": "bedroom", "zone": "private", "x": 0, "y": 0, "w": 6000, "h": 10000 },
+            { "key": "hall", "func": "hall", "zone": "public", "x": 6000, "y": 0, "w": 6000, "h": 10000 }
+        ]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 10000 }, "sleeping_funcs": ["bedroom"] });
+        let r = app.handle("sun_check", &base).unwrap();
+        assert_eq!(r["sun"]["status"], "west_exposed");
+        assert_eq!(r["sun"]["west_rooms"][0]["room"], "bed1");
+        let mut no_funcs = base.clone();
+        no_funcs.as_object_mut().unwrap().remove("sleeping_funcs");
+        assert!(app.handle("sun_check", &no_funcs).unwrap_err().contains("sleeping_funcs"));
     }
 
     #[test]
