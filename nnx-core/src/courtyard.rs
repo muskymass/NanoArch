@@ -81,16 +81,16 @@ pub struct Rect2 {
     pub h: i64,
 }
 
-fn cross(o: Pt, a: Pt, b: Pt) -> i128 {
+pub(crate) fn cross(o: Pt, a: Pt, b: Pt) -> i128 {
     (a.x - o.x) as i128 * (b.y - o.y) as i128 - (a.y - o.y) as i128 * (b.x - o.x) as i128
 }
 
-fn on_segment(a: Pt, b: Pt, p: Pt) -> bool {
+pub(crate) fn on_segment(a: Pt, b: Pt, p: Pt) -> bool {
     cross(a, b, p) == 0 && p.x >= a.x.min(b.x) && p.x <= a.x.max(b.x) && p.y >= a.y.min(b.y) && p.y <= a.y.max(b.y)
 }
 
 /// True when the closed segments share at least one point.
-fn segments_touch(a: Pt, b: Pt, c: Pt, d: Pt) -> bool {
+pub(crate) fn segments_touch(a: Pt, b: Pt, c: Pt, d: Pt) -> bool {
     let (d1, d2, d3, d4) = (cross(a, b, c).signum(), cross(a, b, d).signum(), cross(c, d, a).signum(), cross(c, d, b).signum());
     if d1 * d2 < 0 && d3 * d4 < 0 {
         return true;
@@ -98,7 +98,7 @@ fn segments_touch(a: Pt, b: Pt, c: Pt, d: Pt) -> bool {
     on_segment(a, b, c) || on_segment(a, b, d) || on_segment(c, d, a) || on_segment(c, d, b)
 }
 
-fn signed_area2(p: &[Pt]) -> i128 {
+pub(crate) fn signed_area2(p: &[Pt]) -> i128 {
     (0..p.len()).map(|i| (p[i].x as i128) * (p[(i + 1) % p.len()].y as i128) - (p[(i + 1) % p.len()].x as i128) * (p[i].y as i128)).sum()
 }
 
@@ -119,7 +119,7 @@ fn inside(p: &[Pt], x: f64, y: f64) -> bool {
 }
 
 /// True when the polygon and the rectangle share area (touching along an edge is not overlap).
-fn overlaps(p: &[Pt], r: &Rect) -> bool {
+pub(crate) fn overlaps(p: &[Pt], r: &Rect) -> bool {
     const EPS: f64 = 1e-6;
     let (x0, x1, y0, y1) = (r.x as f64, (r.x + r.w) as f64, r.y as f64, (r.y + r.h) as f64);
     let strictly = |x: f64, y: f64| x > x0 + EPS && x < x1 - EPS && y > y0 + EPS && y < y1 - EPS;
@@ -147,7 +147,7 @@ fn overlaps(p: &[Pt], r: &Rect) -> bool {
     inside(p, (x0 + x1) / 2.0, (y0 + y1) / 2.0)
 }
 
-fn rectilinear_rects(p: &[Pt]) -> Vec<Rect2> {
+pub(crate) fn rectilinear_rects(p: &[Pt]) -> Vec<Rect2> {
     let mut ys: Vec<i64> = p.iter().map(|v| v.y).collect();
     ys.sort_unstable();
     ys.dedup();
@@ -178,28 +178,28 @@ fn rectilinear_rects(p: &[Pt]) -> Vec<Rect2> {
     out
 }
 
-fn overlap_len(a0: i64, a1: i64, b0: i64, b1: i64) -> i64 {
+pub(crate) fn overlap_len(a0: i64, a1: i64, b0: i64, b1: i64) -> i64 {
     (a1.min(b1) - a0.max(b0)).max(0)
 }
 
-/// Checks a courtyard outline against the envelope and the rooms already placed on the level.
-/// `outline` lists the vertices in order, either direction, without repeating the first one at the end.
-pub fn check_courtyard(layout: &Layout, envelope: &Rect, outline: &[Pt]) -> Result<CourtyardReport, String> {
+/// Shared by every outline-based check: the envelope must have area, the outline at least 3 distinct vertices inside the
+/// envelope, no zero-width spikes, no self-touching, and a non-zero area. Returns the vertices in counter-clockwise order.
+pub(crate) fn validate_outline(tag: &str, envelope: &Rect, outline: &[Pt]) -> Result<Vec<Pt>, String> {
     if envelope.w <= 0 || envelope.h <= 0 {
-        return Err(format!("courtyard: the envelope must have a positive width and depth, not {} x {} mm", envelope.w, envelope.h));
+        return Err(format!("{tag}: the envelope must have a positive width and depth, not {} x {} mm", envelope.w, envelope.h));
     }
     let n = outline.len();
     if n < 3 {
-        return Err(format!("courtyard: an outline needs at least 3 vertices, {n} given"));
+        return Err(format!("{tag}: an outline needs at least 3 vertices, {n} given"));
     }
     for (i, v) in outline.iter().enumerate() {
         if v.x < 0 || v.y < 0 || v.x > envelope.w || v.y > envelope.h {
-            return Err(format!("courtyard: vertex {} ({}, {}) lies outside the envelope 0..{} x 0..{} mm", i + 1, v.x, v.y, envelope.w, envelope.h));
+            return Err(format!("{tag}: vertex {} ({}, {}) lies outside the envelope 0..{} x 0..{} mm", i + 1, v.x, v.y, envelope.w, envelope.h));
         }
     }
     for i in 0..n {
         if outline[i] == outline[(i + 1) % n] {
-            return Err(format!("courtyard: vertices {} and {} are the same point", i + 1, (i + 1) % n + 1));
+            return Err(format!("{tag}: vertices {} and {} are the same point", i + 1, (i + 1) % n + 1));
         }
     }
     for i in 0..n {
@@ -209,21 +209,30 @@ pub fn check_courtyard(layout: &Layout, envelope: &Rect, outline: &[Pt]) -> Resu
                 // Neighbouring edges meet only at their shared vertex: folding back on each other is a degenerate spike.
                 let (shared, p, q) = if j == i + 1 { (b, a, d) } else { (a, b, c) };
                 if cross(shared, p, q) == 0 && (p.x - shared.x) as i128 * (q.x - shared.x) as i128 + (p.y - shared.y) as i128 * (q.y - shared.y) as i128 > 0 {
-                    return Err(format!("courtyard: the edges at vertex {} fold back on themselves (a zero-width spike)", if j == i + 1 { i + 2 } else { 1 }));
+                    return Err(format!("{tag}: the edges at vertex {} fold back on themselves (a zero-width spike)", if j == i + 1 { i + 2 } else { 1 }));
                 }
             } else if segments_touch(a, b, c, d) {
-                return Err(format!("courtyard: the outline crosses or touches itself between edges {} and {}", i + 1, j + 1));
+                return Err(format!("{tag}: the outline crosses or touches itself between edges {} and {}", i + 1, j + 1));
             }
         }
     }
     let twice = signed_area2(outline);
     if twice == 0 {
-        return Err("courtyard: the outline encloses no area (all vertices on one line)".to_string());
+        return Err(format!("{tag}: the outline encloses no area (all vertices on one line)"));
     }
     let mut poly: Vec<Pt> = outline.to_vec();
     if twice < 0 {
         poly.reverse();
     }
+    Ok(poly)
+}
+
+/// Checks a courtyard outline against the envelope and the rooms already placed on the level.
+/// `outline` lists the vertices in order, either direction, without repeating the first one at the end.
+pub fn check_courtyard(layout: &Layout, envelope: &Rect, outline: &[Pt]) -> Result<CourtyardReport, String> {
+    let poly = validate_outline("courtyard", envelope, outline)?;
+    let n = poly.len();
+    let twice = signed_area2(&poly);
     let covered: Vec<&str> = layout.rooms.iter().filter(|r| overlaps(&poly, &r.rect)).map(|r| r.key.as_str()).collect();
     if !covered.is_empty() {
         return Err(format!("courtyard: the outline covers part of the room(s) {}; move the vertices or the rooms", covered.join(", ")));

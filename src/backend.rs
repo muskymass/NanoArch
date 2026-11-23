@@ -364,6 +364,7 @@ impl App {
             "sun_check" => Self::sun_check(args),
             "wind_check" => Self::wind_check(args),
             "courtyard_check" => Self::courtyard_check(args),
+            "room_shape_check" => Self::room_shape_check(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
@@ -2004,6 +2005,22 @@ impl App {
         let funcs: Vec<String> = serde_json::from_value(args.get("habitable_funcs").cloned().unwrap_or(Value::Null)).map_err(|e| format!("wind: habitable_funcs must be a list of room functions: {e}"))?;
         let report = nnx_core::wind::check_wind(&layout, &envelope, wind_from, source, &funcs)?;
         Ok(json!({ "wind": report }))
+    }
+
+    /// Checks a non-rectangular room (L, T or any horizontal-and-vertical outline):
+    /// `{ rooms, envelope, key, outline: [{ x, y }], min_wall_mm? }` (mm). Reports area, perimeter, shape, an exact rectangle
+    /// decomposition, the notch left in the bounding box and one wall segment per edge with what lies outside it. Without
+    /// `min_wall_mm` the segment-length check is reported as `unchecked`.
+    fn room_shape_check(args: &Value) -> Result<Value, String> {
+        let (layout, envelope) = Self::layout_from_args(args, "room shape")?;
+        let key = args.get("key").and_then(Value::as_str).ok_or("room shape: 'key' (the room being reshaped) is required")?;
+        let outline: Vec<nnx_core::courtyard::Pt> = serde_json::from_value(args.get("outline").cloned().unwrap_or(Value::Null)).map_err(|e| format!("room shape: outline must be a list of {{ x, y }} vertices in whole millimetres: {e}"))?;
+        let min_wall = match args.get("min_wall_mm") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(v.as_i64().ok_or("room shape: 'min_wall_mm' must be a whole number of millimetres")?),
+        };
+        let report = nnx_core::roomshape::check_room_shape(&layout, &envelope, key, &outline, min_wall)?;
+        Ok(json!({ "room_shape": report }))
     }
 
     /// Checks a courtyard of any simple outline: `{ rooms, envelope, outline: [{ x, y }] }` (mm). Reports area, perimeter, a
@@ -4336,6 +4353,31 @@ EOF
         let mut none = base.clone();
         none.as_object_mut().unwrap().remove("outline");
         assert!(app.handle("courtyard_check", &none).unwrap_err().contains("outline"));
+    }
+
+    #[test]
+    fn room_shape_check_measures_an_l_room_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([{ "key": "living", "func": "living", "zone": "public", "x": 0, "y": 0, "w": 8000, "h": 8000 }]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 12000 }, "key": "living", "min_wall_mm": 3000, "outline": [
+            { "x": 0, "y": 0 }, { "x": 8000, "y": 0 }, { "x": 8000, "y": 4000 }, { "x": 4000, "y": 4000 }, { "x": 4000, "y": 8000 }, { "x": 0, "y": 8000 }] });
+        let r = app.handle("room_shape_check", &base).unwrap();
+        assert_eq!(r["room_shape"]["shape"], "l_shape");
+        assert!((r["room_shape"]["area_m2"].as_f64().unwrap() - 48.0).abs() < 1e-9);
+        assert_eq!(r["room_shape"]["length_check"], "pass");
+        assert_eq!(r["room_shape"]["walls"][0]["faces"], "south");
+        let mut none = base.clone();
+        none.as_object_mut().unwrap().remove("min_wall_mm");
+        assert_eq!(app.handle("room_shape_check", &none).unwrap()["room_shape"]["length_check"], "unchecked");
+        let mut bad = base.clone();
+        bad["min_wall_mm"] = json!("x");
+        assert!(app.handle("room_shape_check", &bad).unwrap_err().contains("min_wall_mm"));
+        let mut nokey = base.clone();
+        nokey.as_object_mut().unwrap().remove("key");
+        assert!(app.handle("room_shape_check", &nokey).unwrap_err().contains("key"));
+        let mut slanted = base.clone();
+        slanted["outline"] = json!([{ "x": 0, "y": 0 }, { "x": 4000, "y": 0 }, { "x": 2000, "y": 3000 }]);
+        assert!(app.handle("room_shape_check", &slanted).unwrap_err().contains("slanted"));
     }
 
     #[test]
