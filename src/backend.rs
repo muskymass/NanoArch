@@ -438,6 +438,7 @@ impl App {
             "features" => self.features_json(args),
             "mep" => self.mep(args),
             "sizing" => self.sizing(args),
+            "structural_calc_report" => self.structural_calc_report(args),
             "rebar_drawings" => self.rebar_drawings(),
             "boq" => self.boq(args),
             "model3d" => self.model3d(),
@@ -753,6 +754,19 @@ impl App {
             "report": r, "members_csv": r.members_csv(), "concrete_csv": r.concrete_csv(), "bbs_csv": r.bbs_csv(), "soil_kpa": soil,
             "bbs": bbs, "bbs_lines_csv": bbs.as_ref().map(|b| b.lines_csv()), "bbs_summary_csv": bbs.as_ref().map(|b| b.summary_csv()), "bbs_error": bbs_error,
         }))
+    }
+
+    /// Reviewable structural calculation report of the sizing inputs stored in the project: assumptions, then results, then what was
+    /// not computed. `{ lang?: "ar"|"en" }` (default `en`). Read-only; run `sizing` first.
+    fn structural_calc_report(&self, args: &Value) -> Result<Value, String> {
+        let lang = args.get("lang").and_then(Value::as_str).unwrap_or("en");
+        let p = self.project().ok_or("choose a layout first")?;
+        let inputs = p.sizing.clone().ok_or("no structural sizing inputs yet: run `sizing` first")?;
+        let loaded = inputs.with_floor_load(&p.structure);
+        let rep = nnx_core::sizing::compute(&self.doc()?.model, p.structure.bearing_kpa, &loaded);
+        let report = nnx_core::calcreport::build(&p.meta.title, &p.structure, &inputs, &rep);
+        let markdown = report.markdown(lang)?;
+        Ok(json!({ "calc_report": report, "markdown": markdown }))
     }
 
     /// Reinforcement detail drawings (DXF) of the sizing inputs stored in the project: sections and elevations of the columns,
@@ -5927,6 +5941,29 @@ END-ISO-10303-21;
                 "column": { "bar_dia_mm": 16, "count": 8, "tie_dia_mm": 8, "tie_spacing_mm": 200 },
                 "footing": { "bar_dia_mm": 12, "spacing_mm": 150 },
                 "beam": { "top_dia_mm": 16, "top_count": 2, "bottom_dia_mm": 16, "bottom_count": 3, "stirrup_dia_mm": 8, "stirrup_spacing_mm": 150 } } })
+    }
+
+    #[test]
+    fn the_structural_calc_report_lists_assumptions_then_results_and_changes_nothing() {
+        let mut app = sized_app();
+        assert!(app.handle("structural_calc_report", &json!({})).unwrap_err().contains("run `sizing` first"));
+        app.handle("sizing", &json!({ "inputs": sizing_inputs() })).unwrap();
+        let h = hash(&app);
+        let r = app.handle("structural_calc_report", &json!({ "lang": "en" })).unwrap();
+        assert_eq!(hash(&app), h, "the report must not edit the project");
+        let rep = &r["calc_report"];
+        let get = |k: &str| rep["assumptions"].as_array().unwrap().iter().find(|a| a["key"] == k).unwrap()["value"].clone();
+        assert_eq!(get("sizing.footing_thickness_mm"), "500");
+        assert_eq!(get("sizing.rebar.cover_mm"), "40");
+        // Inputs the test never entered stay unset and are named; the report is not complete.
+        assert_eq!(get("design.fy_mpa"), Value::Null);
+        assert_eq!(rep["status"], "incomplete");
+        assert!(rep["missing_assumptions"].as_array().unwrap().iter().any(|m| m == "design.fy_mpa"));
+        let md = r["markdown"].as_str().unwrap();
+        assert!(md.find("## 1.").unwrap() < md.find("## 2.").unwrap());
+        let ar = app.handle("structural_calc_report", &json!({ "lang": "ar" })).unwrap();
+        assert!(ar["markdown"].as_str().unwrap().contains("الفرضيات"));
+        assert!(app.handle("structural_calc_report", &json!({ "lang": "fr" })).unwrap_err().contains("lang"));
     }
 
     #[test]

@@ -11,6 +11,7 @@ pub mod analytical;
 pub mod areatable;
 pub mod audits;
 pub mod bbs;
+pub mod calcreport;
 pub mod certificate;
 pub mod compliance;
 pub mod costtier;
