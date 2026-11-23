@@ -364,6 +364,7 @@ impl App {
             "sun_check" => Self::sun_check(args),
             "span_compare" => Self::span_compare(args),
             "wall_load" => Self::wall_load(args),
+            "drift_check" => Self::drift_check(args),
             "savings_compare" => Self::savings_compare(args),
             "furniture_fit" => Self::furniture_fit(args),
             "wind_check" => Self::wind_check(args),
@@ -2056,6 +2057,18 @@ impl App {
             .map_err(|e| format!("wall load: beams need key, a and b ([x, y] whole mm): {e}"))?;
         let report = nnx_core::wallload::take_down(&walls, &beams)?;
         Ok(json!({ "wall_load": report }))
+    }
+
+    /// Serviceability screen: `{ e_mpa?, beams?: [{ key, span_mm, b_mm, h_mm, support: simple|fixed|cantilever, w_kn_m,
+    /// cracked_factor?, long_term_factor?, limit_span_ratio? }], storeys?: [{ key, height_mm, shear_kn, columns: [{ count,
+    /// width_mm, depth_mm }], stiffness_factor? }], max_drift_ratio?, footings?: [{ key, load_kn, width_mm, length_mm, es_mpa, nu,
+    /// influence }], pairs?: [{ a, b, distance_mm }], max_settlement_mm?, max_angular_distortion? }`. The concrete modulus is
+    /// required for beams and storeys; a missing limit leaves its check `unchecked`. Preliminary, not a design.
+    fn drift_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::drift::DriftInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("drift check: inputs are malformed (see the field list for beams, storeys, footings and pairs): {e}"))?;
+        let report = nnx_core::drift::check(&input)?;
+        Ok(json!({ "drift": report }))
     }
 
     /// Compares structural alternatives on concrete and steel: `{ criterion: steel_kg|concrete_m3|cost, baseline?, prices?: {
@@ -4512,6 +4525,26 @@ EOF
         no_limit.as_object_mut().unwrap().remove("max_span_mm");
         assert!(app.handle("span_compare", &no_limit).unwrap_err().contains("max_span_mm is required"));
         assert!(app.handle("span_compare", &json!({ "envelope": { "w": 1, "h": 1 }, "max_span_mm": 6000 })).unwrap_err().contains("alternatives are required"));
+    }
+
+    #[test]
+    fn drift_check_screens_beams_storeys_and_footings_and_names_missing_input() {
+        let mut app = App::default();
+        let args = json!({
+            "e_mpa": 25000.0,
+            "beams": [{ "key": "b1", "span_mm": 5000, "b_mm": 300, "h_mm": 500, "support": "simple", "w_kn_m": 10.0, "limit_span_ratio": 360 }],
+            "footings": [{ "key": "F1", "load_kn": 400, "width_mm": 2000, "length_mm": 2000, "es_mpa": 10, "nu": 0.3, "influence": 0.82 }]
+        });
+        let r = app.handle("drift_check", &args).unwrap();
+        assert_eq!(r["drift"]["beams"][0]["immediate_mm"], 1.042);
+        assert_eq!(r["drift"]["beams"][0]["status"], "ok");
+        assert_eq!(r["drift"]["settlements"][0]["settlement_mm"], 14.924);
+        assert_eq!(r["drift"]["settlements"][0]["status"], "unchecked");
+        let mut no_e = args.clone();
+        no_e.as_object_mut().unwrap().remove("e_mpa");
+        assert!(app.handle("drift_check", &no_e).unwrap_err().contains("e_mpa is required"));
+        assert!(app.handle("drift_check", &json!({})).unwrap_err().contains("nothing to check"));
+        assert!(app.handle("drift_check", &json!({ "beams": 3 })).unwrap_err().contains("malformed"));
     }
 
     #[test]

@@ -106,6 +106,7 @@ pub mod structural;
 pub mod typed;
 pub mod xlsx;
 pub mod walls;
+pub mod drift;
 pub mod wallload;
 
 pub use command::{Command, CommandError, Origin};
