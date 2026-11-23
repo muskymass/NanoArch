@@ -28,6 +28,7 @@ pub mod elevation;
 pub mod expr;
 pub mod history;
 pub mod ifc;
+pub mod ifc_review;
 pub mod insulation;
 pub mod layout;
 pub mod mep;

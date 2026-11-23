@@ -347,6 +347,7 @@ impl App {
             "presets" => Ok(nnx_core::presets::presets_json()),
             "site_analyze" => Self::site_analyze(args),
             "plot_import_dxf" => Self::plot_import_dxf(args),
+            "ifc_review" => Self::ifc_review(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "prefs_learn" => Self::prefs_learn(args),
@@ -1860,6 +1861,15 @@ impl App {
         let r = nnx_core::site::analyse(&input).map_err(|e| e.join("; "))?;
         let svg = nnx_core::site::site_svg(&r, "Site plan");
         Ok(json!({ "result": r, "svg": svg, "rule_source": nnx_core::site::RULE_SOURCE }))
+    }
+
+    /// Reviews an existing IFC file without importing it: `{ path }`. A Revit file, an archive or ifcXML is refused with the
+    /// reason; the reply lists units, counts, storeys, spaces with area and source, and findings.
+    fn ifc_review(args: &Value) -> Result<Value, String> {
+        let path = args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty()).ok_or("ifc review: the path of the IFC file is missing")?;
+        let bytes = std::fs::read(path).map_err(|e| format!("ifc review: cannot read {path}: {e}"))?;
+        let r = nnx_core::ifc_review::review_ifc(&bytes).map_err(|e| format!("ifc review: {e}"))?;
+        Ok(json!({ "review": r }))
     }
 
     /// Reads plot boundary candidates from a DXF drawing: `{ path, units?, index? }`. A drawing without a unit needs `units`;
@@ -4078,6 +4088,32 @@ EOF
         assert!((r["result"]["candidates"][0]["area_m2"].as_f64().unwrap() - 396.0).abs() < 1e-9);
         assert!(app.handle("plot_import_dxf", &json!({})).unwrap_err().contains("path"));
         assert!(app.handle("plot_import_dxf", &json!({ "path": dir.join("none.dxf").to_str().unwrap() })).unwrap_err().contains("cannot read"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn ifc_review_reads_a_file_and_refuses_a_revit_file() {
+        let mut app = App::default();
+        let dir = std::env::temp_dir().join(format!("nanoarch_ifcrev_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ifc = dir.join("a.ifc");
+        std::fs::write(&ifc, "ISO-10303-21;
+HEADER;
+FILE_SCHEMA(('IFC4'));
+ENDSEC;
+DATA;
+#1=IFCPROJECT('7777777777777777777777',$,'P',$,$,$,$,$,$);
+ENDSEC;
+END-ISO-10303-21;
+").unwrap();
+        let r = app.handle("ifc_review", &json!({ "path": ifc.to_str().unwrap() })).unwrap();
+        assert_eq!(r["review"]["schema"], "IFC4");
+        assert_eq!(r["review"]["project_name"], "P");
+        assert!(r["review"]["findings"].as_array().unwrap().iter().any(|f| f["code"] == "no_storeys"));
+        let rvt = dir.join("a.rvt");
+        std::fs::write(&rvt, [0xD0u8, 0xCF, 0x11, 0xE0, 0, 0]).unwrap();
+        assert!(app.handle("ifc_review", &json!({ "path": rvt.to_str().unwrap() })).unwrap_err().contains("Revit"));
+        assert!(app.handle("ifc_review", &json!({})).unwrap_err().contains("path"));
         std::fs::remove_dir_all(&dir).ok();
     }
 
