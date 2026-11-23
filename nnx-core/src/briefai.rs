@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! From a client's description to the fields of the brief. Two sources, one result:
 //!
 //! - **Keywords** (`from_keywords`): Arabic and English words for the building type, the number of floors, an annex, the city,
