@@ -485,6 +485,8 @@ impl App {
             "change_log" => self.change_log(args),
             "site_photos" => self.site_photos_report(),
             "site_photos_set" => self.site_photos_set(args),
+            "decisions" => self.decisions_report(),
+            "decisions_set" => self.decisions_set(args),
             "progress_payments" => self.progress_report(),
             "progress_payments_set" => self.progress_set(args),
             "procure" => self.procure_report(),
@@ -1366,6 +1368,28 @@ impl App {
             Ok(())
         })?;
         let mut v = self.site_photos_report()?;
+        v["changed"] = json!(out.changed);
+        Ok(v)
+    }
+
+    fn decisions_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let rep = nnx_core::decisions::report(&self.doc()?.model, &p.meta.decisions);
+        Ok(json!({ "inputs": p.meta.decisions, "csv": rep.csv(), "html": rep.html(), "report": rep }))
+    }
+
+    /// Replaces the stored decision log (`decisions`): ONE undoable edit. Every decision needs who made it (`decidedBy`), a real date,
+    /// a title and its text; element references must exist in the model; nothing is stored when any entry is refused.
+    fn decisions_set(&mut self, args: &Value) -> Result<Value, String> {
+        let log: nnx_core::decisions::DecisionLog = serde_json::from_value(json!({ "decisions": args.get("decisions").cloned().ok_or("decisions is required")? })).map_err(|e| format!("decisions: {e}"))?;
+        log.check()?;
+        nnx_core::decisions::validate_links(&self.doc()?.model, &log)?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "Design decisions", |p| {
+            p.meta.decisions = log.clone();
+            Ok(())
+        })?;
+        let mut v = self.decisions_report()?;
         v["changed"] = json!(out.changed);
         Ok(v)
     }
@@ -7617,6 +7641,30 @@ END-ISO-10303-21;
         assert_eq!(app.handle("site_photos_set", &ok).unwrap()["changed"], false);
         app.handle("undo", &json!({})).unwrap();
         assert!(app.handle("site_photos", &json!({})).unwrap()["inputs"]["photos"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn design_decisions_need_an_author_are_stored_as_one_undoable_edit_and_reported_by_decider() {
+        let mut app = started();
+        assert!(App::default().handle("decisions", &json!({})).is_err());
+        assert!(app.handle("decisions_set", &json!({})).is_err());
+        let d = |id: &str, date: &str, by: &str| json!({ "id": id, "date": date, "title": "t", "decision": "x", "decidedBy": by, "elements": ["COL-1"] });
+        assert!(app.handle("decisions_set", &json!({ "decisions": [d("d1", "2026-03-01", " ")] })).unwrap_err().contains("who made it"));
+        let bad = json!({ "decisions": [{ "id": "d1", "date": "2026-03-01", "title": "t", "decision": "x", "decidedBy": "Owner", "elements": ["NOPE-9"] }] });
+        assert!(app.handle("decisions_set", &bad).unwrap_err().contains("NOPE-9"));
+        assert!(app.handle("decisions", &json!({})).unwrap()["inputs"]["decisions"].as_array().unwrap().is_empty());
+        let mut second = d("d2", "2026-04-01", "Architect");
+        second["supersedes"] = json!("d1");
+        let ok = json!({ "decisions": [second, d("d1", "2026-03-01", "Owner")] });
+        let r = app.handle("decisions_set", &ok).unwrap();
+        assert_eq!(r["changed"], true);
+        assert_eq!(r["report"]["decisions"][0]["id"], "d1");
+        assert_eq!(r["report"]["decisions"][0]["status"], "superseded");
+        assert_eq!(r["report"]["active"], 1);
+        assert_eq!(r["csv"].as_str().unwrap().lines().count(), 3);
+        assert_eq!(app.handle("decisions_set", &ok).unwrap()["changed"], false);
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.handle("decisions", &json!({})).unwrap()["inputs"]["decisions"].as_array().unwrap().is_empty());
     }
 
     #[test]

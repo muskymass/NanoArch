@@ -126,6 +126,7 @@ pub mod procure;
 pub mod payment;
 pub mod progress;
 pub mod sitephotos;
+pub mod decisions;
 pub mod execution;
 pub mod schedule;
 pub mod structural;

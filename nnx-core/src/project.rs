@@ -89,6 +89,8 @@ pub struct ProjectMeta {
     pub as_built: crate::asbuilt::AsBuilt,
     /// Site progress photos (file references) linked to model elements.
     pub site_photos: crate::sitephotos::SitePhotos,
+    /// Design decision log: what was decided, by whom, when and why.
+    pub decisions: crate::decisions::DecisionLog,
     /// Milestone 6 inputs: the schedule setup, cost tiers, tender pack, payment milestones, long-lead items, QA/QC records and the apartment ROI.
     pub execution: crate::execution::ExecutionInputs,
 }
@@ -261,6 +263,7 @@ impl NanoArchProject {
         self.meta.finishes.check()?;
         self.meta.as_built.check()?;
         self.meta.site_photos.check()?;
+        self.meta.decisions.check()?;
         self.meta.execution.check()?;
         crate::snapshot::check_all(&self.snapshots)?;
         crate::overlay::check_all(&self.overlays)?;
