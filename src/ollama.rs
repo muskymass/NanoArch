@@ -183,6 +183,7 @@ pub fn handle(cmd: &str, args: &Value) -> Result<Value, String> {
             }
         }
         "ai_sketch" => ai_sketch(&endpoint, args),
+        "ai_deed" => ai_deed(&endpoint, args),
         other => Err(format!("unknown command '{other}'")),
     }
 }
@@ -207,6 +208,48 @@ fn arg_point(args: &Value, k: &str) -> Result<(f64, f64), String> {
     }
 }
 
+/// The model to read an image with: the one named in `model` if it is installed, else the first installed vision model.
+fn vision_model(installed: &[String], args: &Value, label: &str) -> Result<String, String> {
+    let list = if installed.is_empty() { "none".to_string() } else { installed.join(", ") };
+    match args.get("model").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) {
+        Some(m) if installed.iter().any(|i| i == m) => Ok(m.to_string()),
+        Some(m) => Err(format!("{label}: the model '{m}' is not installed (installed: {list})")),
+        None => installed.iter().find(|m| is_vision(m)).cloned().ok_or_else(|| format!("{label}: no installed model is a vision model (installed: {list}): run `ollama pull qwen2.5vl` or name one in `model`")),
+    }
+}
+
+/// `ai_deed`: a land title deed or a survey sketch (PNG, JPEG, BMP or a scanned PDF) transcribed by a vision model on this computer
+/// into an unconfirmed `DeedReading`. Arguments: `path` or `file_b64`, optional `tolerance_pct`, `model`, `endpoint`, `timeout_s`.
+/// There is no keyword fallback: an unreachable server or a missing vision model is an error that says so.
+fn ai_deed(endpoint: &str, args: &Value) -> Result<Value, String> {
+    use nnx_core::{deedread, sketchread};
+    let bytes = match (args.get("file_b64").and_then(Value::as_str).filter(|t| !t.trim().is_empty()), args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty())) {
+        (Some(b), _) => nnx_core::xlsx::base64_decode(b).map_err(|e| format!("deed: {e}"))?,
+        (None, Some(p)) => std::fs::read(p).map_err(|e| format!("deed: cannot read {p}: {e}"))?,
+        (None, None) => return Err("deed: give the file's path, or its content as file_b64".into()),
+    };
+    let tolerance_pct = match args.get("tolerance_pct") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_f64().ok_or("deed: tolerance_pct must be a number")?),
+    };
+    let (images, mut notes) = if bytes.starts_with(b"%PDF") {
+        deedread::images_from_pdf(&bytes).map_err(|e| format!("deed: {e}"))?
+    } else {
+        sketchread::image_size(&bytes).map_err(|e| format!("deed: {e}"))?;
+        (vec![bytes], Vec::new())
+    };
+    parse_endpoint(endpoint)?;
+    let installed = models(endpoint).map_err(|e| format!("deed: the local model server is not reachable at {endpoint}: {e}. A deed cannot be read without it: type the plot values on the brief instead"))?;
+    let model = vision_model(&installed, args, "deed")?;
+    let timeout = args.get("timeout_s").and_then(Value::as_u64).unwrap_or(DEFAULT_READ_TIMEOUT_S * 3);
+    let b64: Vec<String> = images.iter().map(|i| nnx_core::xlsx::base64_encode(i)).collect();
+    let v = chat_json_images(endpoint, &model, &deedread::system_prompt(), "Transcribe this deed.", &b64, &deedread::schema(), timeout).map_err(|e| format!("deed: {model}: {e}"))?;
+    let mut reading = deedread::from_model_json(&v, &model, tolerance_pct).map_err(|e| format!("deed: {model}: {e}"))?;
+    notes.append(&mut reading.notes);
+    reading.notes = notes;
+    Ok(json!({ "reading": reading, "model": model, "images_sent": images.len() }))
+}
+
 /// `ai_sketch`: a photographed or scanned hand sketch read into unconfirmed rooms by a vision model on this computer.
 /// Arguments: `image_b64` (or `path`), `scale_p1` and `scale_p2` (pixels) with `scale_real_mm`, `origin_px` (the south-west corner of
 /// the buildable area, in pixels), optional `tolerance_pct`, `model`, `endpoint`, `timeout_s`. There is no keyword fallback: a sketch
@@ -227,12 +270,7 @@ fn ai_sketch(endpoint: &str, args: &Value) -> Result<Value, String> {
     let frame = Frame { width_px, height_px, scale, origin_px: arg_point(args, "origin_px")?, tolerance_pct };
     parse_endpoint(endpoint)?;
     let installed = models(endpoint).map_err(|e| format!("sketch: the local model server is not reachable at {endpoint}: {e}. A sketch cannot be read without it; the manual tracing tool on the Draft sketch tab still works"))?;
-    let wanted = args.get("model").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
-    let model = match wanted {
-        Some(m) if installed.iter().any(|i| i == m) => m.to_string(),
-        Some(m) => return Err(format!("sketch: the model '{m}' is not installed (installed: {})", if installed.is_empty() { "none".to_string() } else { installed.join(", ") })),
-        None => installed.iter().find(|m| is_vision(m)).cloned().ok_or_else(|| format!("sketch: no installed model is a vision model (installed: {}): run `ollama pull qwen2.5vl` or name one in `model`", if installed.is_empty() { "none".to_string() } else { installed.join(", ") }))?,
-    };
+    let model = vision_model(&installed, args, "sketch")?;
     let timeout = args.get("timeout_s").and_then(Value::as_u64).unwrap_or(DEFAULT_READ_TIMEOUT_S * 3);
     let b64 = nnx_core::xlsx::base64_encode(&bytes);
     let v = chat_json_images(endpoint, &model, &sketchread::system_prompt(width_px, height_px), "Read the rooms of this floor plan.", &[b64], &sketchread::schema(), timeout).map_err(|e| format!("sketch: {model}: {e}"))?;
@@ -435,6 +473,38 @@ mod tests {
         let seen = srv.join().unwrap();
         assert!(seen[1].contains("\"images\":[\""), "the image is attached to the request");
         assert!(seen[1].contains("1000 x 800 pixels"));
+    }
+
+    fn fake_jpeg() -> Vec<u8> {
+        vec![0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x03, 0x20, 0x02, 0x58, 0x01, 0x01, 0x11, 0x00, 0x00, 0x00, 0xFF, 0xD9]
+    }
+
+    #[test]
+    fn a_scanned_pdf_deed_is_read_by_the_vision_model_and_comes_back_unconfirmed() {
+        let mut pdf = b"%PDF-1.4\n1 0 obj\n<< /Subtype /Image /Filter /DCTDecode /Length 19 >>\nstream\n".to_vec();
+        pdf.extend(fake_jpeg());
+        pdf.extend(b"\nendstream\nendobj\n%%EOF");
+        let answer = json!({ "city": "الجبيل", "area_m2": 600, "boundaries": [
+            { "direction": "north", "length_m": 20, "neighbour": "شارع" }, { "direction": "south", "length_m": 20, "neighbour": null },
+            { "direction": "east", "length_m": 30, "neighbour": null }, { "direction": "west", "length_m": 30, "neighbour": null }] });
+        let (port, srv) = serve(vec![ok(r#"{"models":[{"name":"qwen2.5vl:7b"}]}"#), ok(&chat_answer(&answer))]);
+        let args = json!({ "file_b64": nnx_core::xlsx::base64_encode(&pdf), "endpoint": format!("localhost:{port}"), "tolerance_pct": 1 });
+        let r = handle("ai_deed", &args).unwrap();
+        assert_eq!((r["reading"]["status"].as_str(), r["reading"]["area_check"].as_str(), r["images_sent"].as_u64()), (Some("unconfirmed"), Some("ok"), Some(1)));
+        assert!(srv.join().unwrap()[1].contains("\"images\":[\""));
+    }
+
+    #[test]
+    fn a_deed_without_a_readable_file_or_a_model_is_an_error_not_a_guess() {
+        assert!(handle("ai_deed", &json!({})).unwrap_err().contains("file's path"));
+        let pdf = b"%PDF-1.4\n%%EOF".to_vec();
+        assert!(handle("ai_deed", &json!({ "file_b64": nnx_core::xlsx::base64_encode(&pdf) })).unwrap_err().contains("no embedded JPEG"));
+        let (port, srv) = serve(vec![ok(r#"{"models":[{"name":"llama3:8b"}]}"#)]);
+        let e = handle("ai_deed", &json!({ "file_b64": png_b64(), "endpoint": format!("localhost:{port}") })).unwrap_err();
+        assert!(e.contains("deed: no installed model is a vision model"), "{e}");
+        srv.join().unwrap();
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        assert!(handle("ai_deed", &json!({ "file_b64": png_b64(), "endpoint": format!("localhost:{closed}") })).unwrap_err().contains("not reachable"));
     }
 
     #[test]

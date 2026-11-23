@@ -73,7 +73,7 @@ fn respond(app: &Shared, body: &str) -> String {
         "pick_sketch" => pick_sketch(),
         "sketch_pdfjs" => Ok(json!({ "lib": PDFJS, "worker": PDFJS_WORKER })),
         // The local model assistant talks to a server and may take a while: it runs outside the lock.
-        "ai_status" | "ai_brief" | "ai_sketch" => ollama::handle(cmd, &args),
+        "ai_status" | "ai_brief" | "ai_sketch" | "ai_deed" => ollama::handle(cmd, &args),
         // The lock is held only while the engines run, never while a dialog is open.
         _ => lock(app).handle(cmd, &args),
     };

@@ -392,6 +392,7 @@ impl App {
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
             "sketch_accept" => Self::sketch_accept(args),
+            "deed_accept" => Self::deed_accept(args),
             "prefs_learn" => Self::prefs_learn(args),
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
             "analysis" => self.analysis(args),
@@ -2986,6 +2987,35 @@ impl App {
         Ok(json!({ "accepted": acc, "draft": draft, "next": clarify::next_question(&draft), "missing": clarify::missing(&draft), "complete": clarify::is_complete(&draft) }))
     }
 
+    /// `deed_accept`: the facts of a deed reading the user confirms (`keys`: area, dimensions, city, with typed `edit` values where the
+    /// reading is flagged), put on the brief draft when one is given.
+    fn deed_accept(args: &Value) -> Result<Value, String> {
+        use nnx_core::{clarify, deedread};
+        let reading: deedread::DeedReading = serde_json::from_value(args.get("reading").cloned().ok_or("deed review: the reading is missing")?).map_err(|e| format!("deed review: the reading is not valid: {e}"))?;
+        let keys: Vec<String> = serde_json::from_value(args.get("keys").cloned().ok_or("deed review: give the facts you confirm (area, dimensions, city)")?).map_err(|e| format!("deed review: keys must be a list of text: {e}"))?;
+        let edit: deedread::Edit = match args.get("edit").filter(|e| !e.is_null()) {
+            Some(e) => serde_json::from_value(e.clone()).map_err(|e| format!("deed review: edit is not valid: {e}"))?,
+            None => Default::default(),
+        };
+        let acc = deedread::accept(&reading, &keys, &edit).map_err(|e| format!("deed review: {e}"))?;
+        let Some(d) = args.get("draft").filter(|d| !d.is_null()) else {
+            return Ok(json!({ "accepted": acc }));
+        };
+        let mut draft: nnx_core::briefai::BriefDraft = serde_json::from_value(d.clone()).map_err(|e| format!("deed review: the draft is not valid: {e}"))?;
+        if acc.plot_area_m2.is_some() {
+            draft.plot_area_m2 = acc.plot_area_m2;
+        }
+        if acc.plot_width_m.is_some() {
+            draft.plot_width_m = acc.plot_width_m;
+            draft.plot_length_m = acc.plot_length_m;
+        }
+        if acc.city.is_some() {
+            draft.city = acc.city.clone();
+        }
+        draft.notes.extend(acc.notes.iter().cloned());
+        Ok(json!({ "accepted": acc, "draft": draft, "next": clarify::next_question(&draft), "missing": clarify::missing(&draft), "complete": clarify::is_complete(&draft) }))
+    }
+
     fn plot_import_survey(args: &Value) -> Result<Value, String> {
         let text_arg = args.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty());
         let path_arg = args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty());
@@ -3996,6 +4026,14 @@ mod tests {
         assert!(app.handle("sketch_accept", &json!({ "reading": reading, "keys": ["s2"] })).unwrap_err().contains("floor is required"));
         assert!(app.handle("sketch_accept", &json!({ "reading": reading, "keys": ["zz"], "floor": 1 })).unwrap_err().contains("'zz' is not in the reading"));
         assert!(app.handle("sketch_accept", &json!({ "keys": ["s1"], "floor": 1 })).unwrap_err().contains("reading is missing"));
+        let deed = nnx_core::deedread::from_model_json(&json!({ "city": "الجبيل", "area_m2": 600, "boundaries": [
+            { "direction": "north", "length_m": 20, "neighbour": null }, { "direction": "south", "length_m": 20, "neighbour": null },
+            { "direction": "east", "length_m": 30, "neighbour": null }, { "direction": "west", "length_m": 30, "neighbour": null }] }), "m", Some(1.0)).unwrap();
+        let r = app.handle("deed_accept", &json!({ "reading": deed, "keys": ["area", "dimensions", "city"], "draft": {} })).unwrap();
+        assert_eq!((r["draft"]["plot_area_m2"].as_f64(), r["draft"]["plot_width_m"].as_f64(), r["draft"]["plot_length_m"].as_f64(), r["draft"]["city"].as_str()), (Some(600.0), Some(20.0), Some(30.0), Some("الجبيل")));
+        assert!(app.handle("deed_accept", &json!({ "reading": deed })).unwrap_err().contains("give the facts"));
+        assert!(app.handle("deed_accept", &json!({ "keys": ["area"] })).unwrap_err().contains("reading is missing"));
+        assert!(app.handle("deed_accept", &json!({ "reading": deed, "keys": ["owner"] })).unwrap_err().contains("not a fact"));
     }
 
     #[test]
