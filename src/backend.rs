@@ -200,6 +200,46 @@ impl App {
     }
 
     /// The revision-history table appended to an exported document.
+    /// The code-check statement printed with the plan set: which rule layers ran, how many checks, every finding, and every rule that
+    /// did NOT run with the parameter it lacks, so a sheet never reads as "complies" for what was not checked.
+    fn with_compliance(&self, html: String, arabic: bool) -> String {
+        let Ok(r) = self.check_rules(&json!({ "sourced": true })) else { return html };
+        let t = |ar: &'static str, en: &'static str| if arabic { ar } else { en };
+        let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        let findings = r["findings"].as_array().cloned().unwrap_or_default();
+        let skipped = r["skipped"].as_array().cloned().unwrap_or_default();
+        let layers = r["layers"].as_array().map(|l| l.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("; ")).unwrap_or_default();
+        let frows: String = findings.iter().map(|f| format!("<tr><td>{}</td><td>{}</td><td>{}</td></tr>", esc(f["rule"].as_str().unwrap_or("")), esc(f["clause"].as_str().unwrap_or("")), esc(f["message"].as_str().unwrap_or("")))).collect();
+        let srows: String = skipped.iter().map(|k| format!("<tr><td>{}</td><td>{}</td><td>{}</td></tr>", esc(k["rule"].as_str().unwrap_or("")), esc(k["param"].as_str().unwrap_or("")), k["elements"].as_array().map_or(0, Vec::len))).collect();
+        let frag = format!(
+            "<section class=\"sheet\" style=\"padding:8mm\"><h1>{}</h1><p>{}</p><p>{}: <bdi dir=\"ltr\">{}</bdi></p><p>{}: {} · {}: {} · {}: {}</p>             <h2>{}</h2><table><tr><th>{}</th><th>{}</th><th>{}</th></tr>{}</table><h2>{}</h2><table><tr><th>{}</th><th>{}</th><th>{}</th></tr>{}</table></section>",
+            t("بيان فحص الكود", "Code-check statement"),
+            t("فحص أولي لا يغني عن مهندس مرخّص ولا عن الجهة المعتمدة. «لم تُفحص» تعني أن القاعدة لم تعمل لنقص قيمة، ولا تعني الامتثال.", "A preliminary check; it does not replace a licensed engineer or the approving authority. \"Not run\" means the rule did not execute for a missing value; it does not mean compliance."),
+            t("الحزم المستعملة", "Rule layers used"),
+            esc(&layers),
+            t("عدد الفحوص", "Checks run"),
+            r["checked"],
+            t("المخالفات", "Findings"),
+            findings.len(),
+            t("قواعد لم تُفحص", "Rules not run"),
+            skipped.len(),
+            t("المخالفات", "Findings"),
+            t("القاعدة", "Rule"),
+            t("البند", "Clause"),
+            t("الرسالة", "Message"),
+            if frows.is_empty() { format!("<tr><td colspan=\"3\">{}</td></tr>", t("لا شيء", "None")) } else { frows },
+            t("قواعد لم تُفحص", "Rules not run"),
+            t("القاعدة", "Rule"),
+            t("القيمة الناقصة", "Missing value"),
+            t("الغرف غير المفحوصة", "Rooms unchecked"),
+            if srows.is_empty() { format!("<tr><td colspan=\"3\">{}</td></tr>", t("لا شيء", "None")) } else { srows },
+        );
+        match html.rfind("</body>") {
+            Some(i) => format!("{}{}{}", &html[..i], frag, &html[i..]),
+            None => format!("{html}{frag}"),
+        }
+    }
+
     fn with_history(&self, html: String, arabic: bool) -> String {
         let (Some(doc), Some(p)) = (self.doc.as_ref(), self.project()) else { return html };
         let ch = p.meta.baseline.as_ref().map(|b| nnx_core::revisions::changes(&doc.model, b)).unwrap_or_default();
@@ -578,7 +618,7 @@ impl App {
             show_mep: self.show_mep,
             date: utc_now().chars().take(10).collect(),
         };
-        let html = self.with_history(nnx_core::printdoc::print_html(&self.doc()?.model, &opts)?, arabic);
+        let html = self.with_history(self.with_compliance(nnx_core::printdoc::print_html(&self.doc()?.model, &opts)?, arabic), arabic);
         Ok(json!({ "html": html, "name": "plan.pdf" }))
     }
 
@@ -3786,6 +3826,7 @@ mod tests {
         let on = app.handle("pdf_html", &json!({ "lang": "en" })).unwrap();
         let on = on["html"].as_str().unwrap();
         assert!(on.contains("class=\"column\"") && on.contains("dir=\"ltr\"") && on.contains("Sheet <bdi dir=\"ltr\">1/2</bdi>"));
+        assert!(on.contains("Code-check statement") && on.contains("Rules not run"), "the sheets end with the code-check statement");
         assert!(on.contains("Door and window schedule (mm)") && on.contains("<td>D1</td>") && on.contains("<td>W1</td>"), "each sheet carries its door and window schedule");
         assert!(App::default().handle("pdf_html", &json!({})).is_err());
     }
