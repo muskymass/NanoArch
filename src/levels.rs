@@ -512,8 +512,16 @@ pub fn level_opts(model: &Model, base: &StructOpts, level: Option<Id>) -> Struct
     o.floors = 1;
     o.footings = idx == 0;
     if idx + 1 < lv.len() {
-        o.open_rooms = model.elements.values().filter(|e| e.kind == Space::KIND && e.level_id == Some(lid)).filter_map(|e| e.typed::<Space>().ok()).filter(|s| s.func == "stair").map(|s| s.requirement_key).collect();
         let above = lv[idx + 1].1;
+        let spaces_of = |l: Id| -> Vec<Space> { model.elements.values().filter(|e| e.kind == Space::KIND && e.level_id == Some(l)).filter_map(|e| e.typed::<Space>().ok()).collect() };
+        let up = spaces_of(above);
+        // A stair shaft is open in every slab but the top one. A lift shaft is open only where a lift shaft stands directly above it:
+        // at the last level it serves its roof slab stays closed.
+        o.open_rooms = spaces_of(lid)
+            .into_iter()
+            .filter(|s| s.func == "stair" || (s.func == "lift" && up.iter().any(|u| u.func == "lift" && (u.x, u.y, u.w, u.h) == (s.x, s.y, s.w, s.h))))
+            .map(|s| s.requirement_key)
+            .collect();
         let cols: Vec<Column> = model.elements.values().filter(|e| e.kind == Column::KIND && e.level_id == Some(above)).filter_map(|e| e.typed::<Column>().ok()).collect();
         o.forced_columns = cols.iter().map(|c| (c.x, c.y)).collect();
         o.extra_loads = cols.iter().filter_map(|c| Some((c.x, c.y, c.axial_service_kn?))).collect();
@@ -639,6 +647,9 @@ pub fn assemble(b: &Building, plan: &BuildingPlan, base: &StructOpts, project: O
         let tag = if multi { format!("{}: ", level_name(l)) } else { String::new() };
         warnings.extend(wplan.warnings.iter().chain(&wp.warnings).map(|w| format!("{tag}{w}")));
     }
+    // A lift shaft passes through every slab it serves, so it must stand at the same place on adjacent levels.
+    let lifts: Vec<(String, Vec<(String, layout::Rect)>)> = b.levels.iter().enumerate().map(|(l, lay)| (level_name(l), lay.rooms.iter().filter(|r| r.func == "lift").map(|r| (r.key.clone(), r.rect)).collect())).collect();
+    warnings.extend(building::unstacked_lifts(&lifts));
     // The structure is derived from the architecture as the MODEL holds it, exactly as a later sync does.
     let mut scratch = Document::default();
     scratch.commit("architecture", Origin::Generator, arch.clone()).map_err(|e| e.to_string())?;

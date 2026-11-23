@@ -499,7 +499,7 @@ ar: {
   activity:"النشاط", rate:"المعدل / الأيام", crews:"طواقم", source:"المصدر", run_sched:"احسب الجدول", export_csv:"تصدير CSV", rules_note:"الصق حزمة قواعد بصيغة JSON (قيم الكود من النص المعتمد). تُفحص على النموذج الحالي.", run_rules:"افحص", use_sourced:"استعمل الحزمة المصدرية (قيم مقروءة من ملفات الكود، لكل قيمة مصدرها)",
   working:"جارٍ العمل…", cheapest:"الأفضل", cost:"التكلفة", reserve:"ممرات", warnings:"تنبيهات", none:"لا شيء", rooms:"الفراغات", target:"المستهدف", actual:"الفعلي",
   qty:"الكمية", unit:"الوحدة", el:"عناصر", code:"البند", missing:"معدلات ناقصة", days:"يوم عمل", finish:"الانتهاء", saved:"تم الحفظ", cancelled:"أُلغي", error:"خطأ",
-  checked:"فُحص", findings:"مخالفات", skipped:"قواعد لم تُفحص", lim_value:"القيمة", lim_source:"المصدر (بند وطبعة ورقم صفحة)", lim_run:"شغّل بهذه القيمة", lim_need:"أدخل القيمة ومصدرها معاً", lim_clear:"أزل القيم المدخلة", func:{majlis:"مجلس",living:"صالة",dining:"طعام",kitchen:"مطبخ",bedroom:"نوم",bathroom:"حمام",other:"أخرى"},
+  checked:"فُحص", findings:"مخالفات", skipped:"قواعد لم تُفحص", lim_value:"القيمة", lim_source:"المصدر (بند وطبعة ورقم صفحة)", lim_run:"شغّل بهذه القيمة", lim_need:"أدخل القيمة ومصدرها معاً", lim_clear:"أزل القيم المدخلة", func:{majlis:"مجلس",living:"صالة",dining:"طعام",kitchen:"مطبخ",bedroom:"نوم",bathroom:"حمام",lift:"مصعد",other:"أخرى"},
   zone:{public:"عام",private:"خاص",service:"خدمات"}, days7:["اثنين","ثلاثاء","أربعاء","خميس","جمعة","سبت","أحد"], pick_days:"اختر أيام العمل", sync_done:"المزامنة: جديد {c}، محذوف {r}، بلا تغيير {u}",
   unsaved:"غير محفوظ", saved_state:"محفوظ", assump_h:"افتراضات التصميم (قيم مؤقتة)", assump_note:"هذه قيم افتراضية استعملتها المحركات لأنك لم تحدد غيرها. ليست قيماً نظامية؛ استبدلها بقيم مشروعك أو SBC.",
   i_wall:"حاجز بين", i_ext:"جدار خارجي: يحدد حدود المبنى ولا يُنقل", i_len:"الطول", i_move:"انقل (مم)", i_hint:"أو اسحب الحاجز بالفأرة. النقل يعيد توليد الجدران والأبواب والنوافذ ويزامن الإنشائي.",
@@ -546,7 +546,7 @@ en: {
   activity:"Activity", rate:"Rate / days", crews:"Crews", source:"Source", run_sched:"Compute schedule", export_csv:"Export CSV", rules_note:"Paste a rule pack (JSON; code values from the official text). It runs on the current model.", run_rules:"Check", use_sourced:"Use the sourced pack (values read from the code files, each with its source)",
   working:"Working…", cheapest:"Best", cost:"Cost", reserve:"Hall", warnings:"Warnings", none:"None", rooms:"Rooms", target:"Target", actual:"Actual",
   qty:"Quantity", unit:"Unit", el:"Elements", code:"Item", missing:"Missing rates", days:"working days", finish:"Finish", saved:"Saved", cancelled:"Cancelled", error:"Error",
-  checked:"Checked", findings:"Findings", skipped:"Rules not run", lim_value:"Value", lim_source:"Source (clause, edition, page)", lim_run:"Run with this value", lim_need:"Enter the value and its source together", lim_clear:"Clear entered values", func:{majlis:"Majlis",living:"Living",dining:"Dining",kitchen:"Kitchen",bedroom:"Bedroom",bathroom:"Bathroom",other:"Other"},
+  checked:"Checked", findings:"Findings", skipped:"Rules not run", lim_value:"Value", lim_source:"Source (clause, edition, page)", lim_run:"Run with this value", lim_need:"Enter the value and its source together", lim_clear:"Clear entered values", func:{majlis:"Majlis",living:"Living",dining:"Dining",kitchen:"Kitchen",bedroom:"Bedroom",bathroom:"Bathroom",lift:"Lift",other:"Other"},
   zone:{public:"Public",private:"Private",service:"Service"}, days7:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], pick_days:"Choose the working days", sync_done:"Sync: created {c}, removed {r}, unchanged {u}",
   unsaved:"Unsaved", saved_state:"Saved", assump_h:"Design assumptions (placeholders)", assump_note:"Defaults the engines used because you gave no value. They are not code values; replace them with your project or SBC values.",
   i_wall:"Partition between", i_ext:"Exterior wall: it sets the building outline and cannot be moved", i_len:"Length", i_move:"Move (mm)", i_hint:"Or drag the partition with the mouse. A move regenerates walls, doors and windows and syncs the structure.",
@@ -598,7 +598,7 @@ function applyLang() {
 // ---------------------------------------------------------------- state and helpers
 const state = { rooms: [{ key: "r1", name: "", func: "living", area: 30, zone: "public", light: true }], alts: [], sel: -1, notes: null, rooms_out: null, qto: null, sched: null, keys: [], rates: {} };
 const PHASES = ["EXISTING", "TO_BE_DEMOLISHED", "TO_BE_MODIFIED", "NEW", "TEMPORARY", "UNVERIFIED"];
-const FUNCS = ["majlis", "living", "dining", "kitchen", "bedroom", "bathroom", "other"], ZONES = ["public", "private", "service"];
+const FUNCS = ["majlis", "living", "dining", "kitchen", "bedroom", "bathroom", "lift", "other"], ZONES = ["public", "private", "service"];
 function toast(m) { const e = $("toast"); e.textContent = m; e.classList.add("on"); clearTimeout(toast.h); toast.h = setTimeout(() => e.classList.remove("on"), 3200); }
 async function busy(fn) {
   $("busy").classList.add("on"); await new Promise(r => setTimeout(r, 40));
@@ -661,6 +661,8 @@ const b64bytes = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
 const skMsg = (k, o = {}) => { let m = t(k); for (const [a, v] of Object.entries(o)) m = m.replace("{" + a + "}", v); $("sk-status").textContent = m; };
 $("sk-func").innerHTML = FUNCS.map(f => `<option value="${f}">${t("func")[f]}</option>`).join("");
 const ZONE_OF = { majlis: "public", living: "public", dining: "public", bedroom: "private" };
+// A bathroom has a small high window at most and a lift shaft none: neither needs daylight.
+const NEEDS_LIGHT = f => f !== "bathroom" && f !== "lift";
 function skDraw() {
   const cv = $("sk-cv"), c = cv.getContext("2d"), b = SK.base;
   if (!b) { c.clearRect(0, 0, cv.width, cv.height); return; }
@@ -802,7 +804,7 @@ $("sk-cv").addEventListener("click", ev => {
   } else {
     const area = Math.round(dx * dy / (SK.ppm * SK.ppm) * 10) / 10; if (area < 1) { skDraw(); skMsg("sk_small"); return; }
     const func = $("sk-func").value, name = $("sk-name").value.trim(), key = "r" + (Date.now() % 100000);
-    state.rooms.push({ key, name, func, area, zone: ZONE_OF[func] || "service", light: func !== "bathroom", floor: Number($("sk-floor").value) || 1 });
+    state.rooms.push({ key, name, func, area, zone: ZONE_OF[func] || "service", light: NEEDS_LIGHT(func), floor: Number($("sk-floor").value) || 1 });
     renderRooms(); SK.marks.push({ kind: "room", key, a, b, color: "#1565c0", label: `${name || t("func")[func]} ${area}` }); skDraw(); skMsg("sk_room_added", { a: area }); $("sk-name").value = "";
   }
 });
@@ -1522,7 +1524,7 @@ async function applyTemplate(id) {
   $("sbf").value = r.setbacks.front_m; $("sbb").value = r.setbacks.back_m; $("sbs").value = r.setbacks.side_m; $("entry").value = "south";
   $("floors").value = x.floors; if (x.stair) { $("stairw").value = x.stair[0]; $("stairl").value = x.stair[1]; $("stairside").value = x.stair[2]; } else { $("stairw").value = ""; $("stairl").value = ""; }
   $("p-btype").value = x.building_type; $("p-style").value = x.style; $("p-climate").value = x.city;
-  state.rooms = x.rooms.map(q => ({ key: q.key, name: q.name, func: q.func, area: q.area_m2, zone: q.zone, light: q.func !== "bathroom", floor: q.floor, suggested: true }));
+  state.rooms = x.rooms.map(q => ({ key: q.key, name: q.name, func: q.func, area: q.area_m2, zone: q.zone, light: NEEDS_LIGHT(q.func), floor: q.floor, suggested: true }));
   renderRooms();
   $("tpl-out").innerHTML = `<ul class="clean">${x.assumptions.map(a => `<li class="warn">${esc(a)}</li>`).join("")}</ul><div class="hint">${t("tpl_sb")}: ${r.sources.map(esc).join(" · ")}</div>`;
   toast(t("tpl_applied"));
@@ -1551,7 +1553,7 @@ $("ai-run").onclick = () => busy(async () => {
   if (d.smart_tech && d.smart_tech.length) $("p-smart").value = d.smart_tech.join(", ");
   if (d.rooms && d.rooms.length) {
     const have = new Set(state.rooms.map(x => x.key));
-    d.rooms.forEach((x, i) => { const key = "ai" + (Date.now() % 100000) + i; if (have.has(key)) return; state.rooms.push({ key, name: x.name || "", func: x.func, area: x.area_m2, suggested: !!x.area_suggested, zone: ZONE_OF[x.func] || "service", light: x.func !== "bathroom", floor: x.floor || 1, ai: true }); });
+    d.rooms.forEach((x, i) => { const key = "ai" + (Date.now() % 100000) + i; if (have.has(key)) return; state.rooms.push({ key, name: x.name || "", func: x.func, area: x.area_m2, suggested: !!x.area_suggested, zone: ZONE_OF[x.func] || "service", light: NEEDS_LIGHT(x.func), floor: x.floor || 1, ai: true }); });
     renderRooms();
   }
   $("ai-out").innerHTML = `<div class="badge">${t("ai_review")} · ${r.online ? t("ai_src_model") : t("ai_src_kw")}</div><ul class="clean">${(d.notes || []).map(n => `<li class="warn">${esc(n)}</li>`).join("")}</ul>${d.rooms && d.rooms.length ? `<div class="hint">${t("ai_rooms")}: ${d.rooms.map(x => `${esc(x.name || x.func)}${x.assumed ? ` (${t("ai_assumed")})` : ""}`).join("، ")}</div>` : ""}`;

@@ -69,7 +69,12 @@ pub(crate) fn room_reqs(rooms: &[&RoomIn]) -> Result<(Vec<RoomReq>, BTreeMap<Str
             other => return Err(format!("room '{}': unknown zone '{other}'", r.key)),
         };
         // Display minimum widths are design defaults the user can change; they are not code values.
-        let min_w = r.min_width_mm.unwrap_or(if r.func == "bathroom" { 1500 } else { 2000 });
+        let min_w = r.min_width_mm.unwrap_or(match r.func.as_str() {
+            "bathroom" => 1500,
+            // A shaft is sized by its area; this is only the narrowest the generator may make it.
+            "lift" => 1000,
+            _ => 2000,
+        });
         out.push(RoomReq { key: r.key.clone(), func: r.func.clone(), target_area_m2: r.area, min_width_mm: min_w, zone, needs_light: r.light });
         labels.insert(r.key.clone(), r.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| r.key.clone()));
     }
@@ -3077,6 +3082,33 @@ mod tests {
     fn of_level<'a>(app: &'a App, level: usize, kind: &'a str) -> Vec<&'a nnx_core::Element> {
         let lid = building::levels(&app.doc.as_ref().unwrap().model)[level].1;
         app.doc.as_ref().unwrap().model.elements.values().filter(|e| e.kind == kind && e.level_id == Some(lid)).collect()
+    }
+
+    #[test]
+    fn a_lift_on_each_floor_has_one_landing_door_no_window_and_is_counted_apart_from_the_doors() {
+        let mut brief = brief2();
+        let r = |key: &str, floor: u32| json!({ "key": key, "name": "مصعد", "func": "lift", "area": 4.0, "zone": "service", "light": false, "floor": floor });
+        brief["rooms"].as_array_mut().unwrap().extend([r("lift1", 1), r("lift2", 2)]);
+        let mut app = App::default();
+        app.handle("generate", &json!({ "brief": brief, "struct": loads2() })).unwrap();
+        let sel = app.handle("select", &json!({ "index": 0, "struct": loads2() })).unwrap();
+        let model = &app.doc.as_ref().unwrap().model;
+        for key in ["lift1", "lift2"] {
+            let doors = model.elements.values().filter(|e| e.kind == "Door" && (e.props["from"] == key || e.props["to"] == key)).count();
+            assert_eq!(doors, 1, "{key} has exactly one door");
+            let sp = model.elements.values().find(|e| e.kind == "Space" && e.props["requirementKey"] == key).unwrap();
+            assert_eq!(sp.props["glazingRatio"].as_f64(), Some(0.0), "{key} has no window");
+        }
+        let notes = sel["warnings"].to_string();
+        assert!(!notes.contains("'lift1' needs daylight") && !notes.contains("'lift2' needs daylight"), "a shaft needs no daylight: {notes}");
+        let q = app.handle("qto", &json!({})).unwrap();
+        let model = &app.doc.as_ref().unwrap().model;
+        let item = |code: &str| q["items"].as_array().unwrap().iter().find(|i| i["code"] == code).map(|i| i["quantity"].as_f64().unwrap());
+        assert_eq!(item("LIFT.SHAFT"), Some(2.0), "one shaft per level served");
+        assert_eq!(item("LIFT.LANDING"), Some(2.0), "the landing openings are counted apart");
+        let door_total: f64 = q["items"].as_array().unwrap().iter().filter(|i| i["code"].as_str().unwrap().starts_with("DOOR.")).map(|i| i["quantity"].as_f64().unwrap()).sum();
+        let all_doors = model.elements.values().filter(|e| e.kind == "Door").count() as f64;
+        assert_eq!(door_total, all_doors - 2.0, "no lift landing is priced as an interior door");
     }
 
     #[test]

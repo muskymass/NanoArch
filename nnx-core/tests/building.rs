@@ -296,3 +296,73 @@ fn openings_clear_of_every_column_are_never_touched() {
     off.commit("move", Origin::User, vec![Command::SetProp { id: col, key: "y".into(), value: Some(serde_json::json!(2000)) }]).unwrap();
     assert!(building::clear_openings(&off.model, &[None]).0.is_empty());
 }
+
+// ------------------------------------------------------------------ lift shafts (rooms are SYNTHETIC)
+
+fn placed(key: &str, func: &str, zone: nnx_core::layout::Zone, light: bool, rect: Rect) -> nnx_core::layout::PlacedRoom {
+    nnx_core::layout::PlacedRoom { key: key.into(), func: func.into(), zone, needs_light: light, rect, area_m2: rect.area_m2(), target_m2: rect.area_m2(), deviation_pct: 0.0 }
+}
+
+fn lift_layout() -> nnx_core::layout::Layout {
+    use nnx_core::layout::Zone::*;
+    let r = |x, y, w, h| Rect { x, y, w, h };
+    nnx_core::layout::Layout {
+        rooms: vec![
+            placed("hall", "hall", Public, true, r(0, 0, 6000, 3000)),
+            placed("living", "living", Public, true, r(6000, 0, 4000, 3000)),
+            placed("lift", "lift", Service, false, r(0, 3000, 2000, 2000)),
+            placed("bed", "bedroom", Private, true, r(2000, 3000, 8000, 3000)),
+            placed("store", "other", Service, false, r(0, 5000, 2000, 1000)),
+        ],
+        cost: 0.0,
+        breakdown: Default::default(),
+        reserve_m2: 0.0,
+    }
+}
+
+#[test]
+fn a_lift_shaft_gets_one_door_onto_the_hall_and_is_never_a_passage() {
+    let layout = lift_layout();
+    let env = Rect { x: 0, y: 0, w: 10000, h: 6000 };
+    let plan = nnx_core::walls::build(&layout, env, Side::South, &nnx_core::walls::WallOpts::default());
+    let lift = plan.room_keys.iter().position(|k| k == "lift").unwrap();
+    let hall = plan.room_keys.iter().position(|k| k == "hall").unwrap();
+    let on_lift: Vec<_> = plan.doors.iter().filter(|d| d.connects.0 == lift || d.connects.1 == Some(lift)).collect();
+    assert_eq!(on_lift.len(), 1, "exactly one door into the shaft");
+    let other = if on_lift[0].connects.0 == lift { on_lift[0].connects.1 } else { Some(on_lift[0].connects.0) };
+    assert_eq!(other, Some(hall), "the landing is on the hall, not on the bedroom that also touches the shaft");
+    assert_ne!(on_lift[0].opens_into, lift, "a landing door does not swing into the shaft");
+    assert!(plan.warnings.iter().all(|w| !w.contains("'lift'")), "a shaft behind one landing door is not a warning: {:?}", plan.warnings);
+    let wp = nnx_core::walls::place_windows(&layout, &plan, &nnx_core::walls::WallOpts::default(), &Default::default());
+    assert_eq!(wp.glazing_ratio[lift], 0.0, "a shaft has no window");
+}
+
+#[test]
+fn a_shaft_with_no_neighbour_wide_enough_is_reported_by_name() {
+    use nnx_core::layout::Zone::*;
+    let r = |x, y, w, h| Rect { x, y, w, h };
+    let layout = nnx_core::layout::Layout {
+        rooms: vec![placed("hall", "hall", Public, true, r(0, 0, 6000, 3000)), placed("lift", "lift", Service, false, r(6000, 0, 1000, 1000)), placed("bed", "bedroom", Private, true, r(6000, 1000, 1000, 2000))],
+        cost: 0.0,
+        breakdown: Default::default(),
+        reserve_m2: 0.0,
+    };
+    let plan = nnx_core::walls::build(&layout, Rect { x: 0, y: 0, w: 7000, h: 3000 }, Side::South, &nnx_core::walls::WallOpts::default());
+    assert!(plan.warnings.iter().any(|w| w.contains("shaft 'lift'") && w.contains("no neighbour")), "{:?}", plan.warnings);
+}
+
+#[test]
+fn lift_shafts_that_do_not_run_straight_are_reported_and_stacked_ones_are_not() {
+    let r = Rect { x: 0, y: 3000, w: 2000, h: 2000 };
+    let moved = Rect { x: 500, ..r };
+    let lv = |n: &str, rects: &[Rect]| (n.to_string(), rects.iter().enumerate().map(|(i, r)| (format!("lift{i}"), *r)).collect::<Vec<_>>());
+    assert!(building::unstacked_lifts(&[lv("Ground floor", &[r]), lv("Floor 1", &[r]), lv("Floor 2", &[r])]).is_empty());
+    let w = building::unstacked_lifts(&[lv("Ground floor", &[r]), lv("Floor 1", &[moved])]);
+    assert_eq!(w.len(), 2, "both shafts miss a partner: {w:?}");
+    assert!(w[0].starts_with("Ground floor") && w[0].contains("does not run straight"));
+    assert!(building::unstacked_lifts(&[lv("Ground floor", &[]), lv("Floor 1", &[])]).is_empty(), "no lift, nothing to report");
+    let gap = building::unstacked_lifts(&[lv("Ground floor", &[r]), lv("Floor 1", &[]), lv("Floor 2", &[r])]);
+    assert_eq!(gap.len(), 2, "a shaft that skips a level is not a straight shaft: {gap:?}");
+    let one = building::unstacked_lifts(&[lv("Ground floor", &[r])]);
+    assert!(one[0].contains("one-level"));
+}

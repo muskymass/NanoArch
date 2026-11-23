@@ -280,9 +280,21 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     acc.add("WALL.FACES.AREA", "Wall faces to finish (both sides, openings deducted)", Unit::M2, 2.0 * (ext_a + int_a), faces);
 
     // ---- openings ----
+    // A door into a lift shaft is a landing opening, not an interior door: it is counted apart and left out of the door items, so a
+    // lift landing is never priced as a door leaf. The car, the guides, the machine and the landing doors are the lift supplier's.
+    let lift_keys: std::collections::BTreeSet<&str> = spaces.iter().filter(|(_, s)| s.func == "lift").map(|(_, s)| s.requirement_key.as_str()).collect();
+    let (lift_doors, plain_doors): (Vec<_>, Vec<_>) = doors.iter().partition(|(_, d)| lift_keys.contains(d.from.as_str()) || lift_keys.contains(d.to.as_str()));
     let mut door_types: BTreeMap<(i64, i64), Vec<Id>> = BTreeMap::new();
-    for (e, d) in &doors {
+    for (e, d) in plain_doors {
         door_types.entry((d.width, d.height)).or_default().push(e.id);
+    }
+    if !lift_keys.is_empty() {
+        let shafts: Vec<(Id, f64)> = spaces.iter().filter(|(_, s)| s.func == "lift").map(|(e, s)| (e.id, s.area)).collect();
+        acc.add("LIFT.SHAFT", "Lift shafts, one per level served (car, guides, machine and landing doors are not quantified here)", Unit::Nr, shafts.len() as f64, shafts.iter().map(|(i, _)| *i).collect());
+        acc.add("LIFT.SHAFT.AREA", "Lift shaft plan area, all levels", Unit::M2, shafts.iter().map(|(_, a)| a).sum(), shafts.iter().map(|(i, _)| *i).collect());
+        if !lift_doors.is_empty() {
+            acc.add("LIFT.LANDING", "Lift landing openings (leaf supplied with the lift)", Unit::Nr, lift_doors.len() as f64, lift_doors.iter().map(|(e, _)| e.id).collect());
+        }
     }
     for ((w, h), ids) in door_types {
         acc.add(&format!("DOOR.{w}x{h}"), &format!("Door {w} x {h} mm"), Unit::Nr, ids.len() as f64, ids);

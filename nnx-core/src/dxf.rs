@@ -13,6 +13,7 @@
 //! | `S-FTNG` | footings (hidden line); their depth is not designed, only the plan size is drawn |
 //! | `A-ROOM`, `A-TEXT` | room outlines, names and areas |
 //! | `A-STAIR` | the stair shaft |
+//! | `A-LIFT` | the lift shaft (crossed box) |
 //! | `E-LITE`, `E-POWR`, `E-PANL`, `P-FIXT`, `M-HVAC` | MEP points (diffusers and grilles on `M-HVAC`) |
 //! | `M-DUCT`, `P-PIPE`, `P-DRAN`, `E-TRAY` | generated or entered runs at their plan width: ducts, supply pipes, drains, cable trays |
 //! | `S-TIEB` | tie beams between footings (hidden line) |
@@ -50,7 +51,7 @@ pub struct DxfOut {
 }
 
 /// Layer name, AutoCAD colour index, line type.
-const LAYERS: [(&str, i32, &str); 33] = [
+const LAYERS: [(&str, i32, &str); 34] = [
     ("A-WALL-EXT", 7, "CONTINUOUS"),
     ("A-WALL-INT", 8, "CONTINUOUS"),
     ("A-DOOR", 3, "CONTINUOUS"),
@@ -61,6 +62,7 @@ const LAYERS: [(&str, i32, &str); 33] = [
     ("A-ROOM", 9, "CONTINUOUS"),
     ("A-TEXT", 7, "CONTINUOUS"),
     ("A-STAIR", 4, "CONTINUOUS"),
+    ("A-LIFT", 6, "CONTINUOUS"),
     ("E-LITE", 2, "CONTINUOUS"),
     ("E-POWR", 5, "CONTINUOUS"),
     ("E-PANL", 6, "CONTINUOUS"),
@@ -332,6 +334,11 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
             if !tagged_keys.contains(&s.requirement_key) {
                 d.text("A-TEXT", (cx, cy + 120.0), 200.0, &name);
                 d.text("A-TEXT", (cx, cy - 200.0), 140.0, &format!("{:.1} m2", s.area));
+            }
+            if s.func == "lift" {
+                let (x0, y0, x1, y1) = (px(s.x), py(s.y), px(s.x + s.w), py(s.y + s.h));
+                d.line("A-LIFT", (x0, y0), (x1, y1));
+                d.line("A-LIFT", (x0, y1), (x1, y0));
             }
             if s.func == "stair" {
                 let (x0, y0, x1, y1) = (px(s.x), py(s.y), px(s.x + s.w), py(s.y + s.h));

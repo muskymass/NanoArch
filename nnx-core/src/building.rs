@@ -72,6 +72,24 @@ pub fn is_shaft(key: &str) -> bool {
     key == "stair" || key.starts_with("stair@")
 }
 
+/// Lift shafts that do not run straight. `levels` lists, bottom first, each level's name and the lift shafts on it as `(key, rect)`.
+/// A shaft is stacked when an identical rectangle stands on the level above or below. Nothing here is a code value: it is the
+/// geometry of a shaft that must pass through every slab it serves.
+pub fn unstacked_lifts(levels: &[(String, Vec<(String, Rect)>)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (l, (name, lifts)) in levels.iter().enumerate() {
+        let neighbour = |d: isize| -> Option<&Vec<(String, Rect)>> { l.checked_add_signed(d).and_then(|i| levels.get(i)).map(|x| &x.1) };
+        for (key, rect) in lifts {
+            let stacked = [-1isize, 1].iter().any(|&d| neighbour(d).is_some_and(|v| v.iter().any(|(_, r)| r == rect)));
+            if !stacked {
+                let why = if levels.len() > 1 { "no lift shaft of the same size and position stands on the level above or below it" } else { "a lift serves nothing on a one-level building" };
+                out.push(format!("{name}: lift shaft '{key}' does not run straight: {why}"));
+            }
+        }
+    }
+    out
+}
+
 /// Levels of the model as `(index, id)`, lowest first.
 pub fn levels(model: &Model) -> Vec<(i64, crate::model::Id)> {
     let mut v: Vec<(i64, crate::model::Id)> = model.elements.values().filter(|e| e.kind == Level::KIND).filter_map(|e| Some((e.typed::<Level>().ok()?.index, e.id))).collect();

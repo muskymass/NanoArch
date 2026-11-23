@@ -35,6 +35,9 @@ pub struct WallOpts {
     pub door_margin_mm: i64,
     /// `func` values treated as wet rooms: one door only, never a transit room.
     pub wet_funcs: Vec<String>,
+    /// `func` values that are shafts: exactly one door, onto a neighbour that is not itself a shaft or a wet room, never a transit room
+    /// (a lift shaft is entered from a landing and nobody passes through it).
+    pub dead_end_funcs: Vec<String>,
     /// Room functions the entry door should open into, most preferred first.
     /// Without a match the public room with the longest street wall is used.
     pub entry_funcs: Vec<String>,
@@ -67,6 +70,7 @@ impl Default for WallOpts {
             door_height_mm: 2100,
             door_margin_mm: 150,
             wet_funcs: vec!["bathroom".into(), "toilet".into()],
+            dead_end_funcs: vec!["lift".into()],
             entry_funcs: ["circulation_reserve", "hall", "living", "reception", "majlis"].map(String::from).to_vec(),
             hub_funcs: ["circulation_reserve", "hall", "corridor", "lobby", "living"].map(String::from).to_vec(),
             wanted: vec![],
@@ -269,6 +273,7 @@ pub fn build(layout: &Layout, envelope: Rect, entry: Side, opts: &WallOpts) -> P
     let idx = |k: &str| keys.iter().position(|x| x == k);
     let is_wet = |i: usize| opts.wet_funcs.contains(&rooms[i].func);
     let is_hub = |i: usize| opts.hub_funcs.contains(&rooms[i].func);
+    let is_dead = |i: usize| opts.dead_end_funcs.contains(&rooms[i].func);
     let forbidden: BTreeSet<(String, String)> = opts.forbidden.iter().map(|(a, b)| key_pair(a, b)).collect();
     let is_forbidden = |i: usize, j: usize| forbidden.contains(&key_pair(&rooms[i].key, &rooms[j].key));
 
@@ -314,7 +319,7 @@ pub fn build(layout: &Layout, envelope: Rect, entry: Side, opts: &WallOpts) -> P
     // 3a. spanning tree over non-wet rooms; the reserve (circulation) is the preferred hub.
     let mut edges: Vec<(i64, i64, usize, usize, usize)> = Vec::new(); // cost, -len, i, j, wall
     for (&(i, j), &wi) in &wall_of {
-        if is_wet(i) || is_wet(j) {
+        if is_wet(i) || is_wet(j) || is_dead(i) || is_dead(j) {
             continue;
         }
         if feasible(&plan, i, j, opts.interior_door_mm).is_none() {
@@ -375,10 +380,33 @@ pub fn build(layout: &Layout, envelope: Rect, entry: Side, opts: &WallOpts) -> P
         }
     }
 
+    // 3b'. each shaft gets exactly one door, onto a hub if it touches one, else onto the neighbour with the longest shared wall.
+    // The door opens into the neighbour: a lift door is a landing door, not a swing door into the shaft.
+    for s in (0..n).filter(|&i| is_dead(i)) {
+        let mut best: Option<(i32, i64, usize, usize)> = None; // score, len, neighbour, wall
+        for j in (0..n).filter(|&j| j != s && !is_wet(j) && !is_dead(j)) {
+            let Some(wi) = feasible(&plan, s, j, opts.interior_door_mm) else { continue };
+            let score = if is_hub(j) { 12 } else if rooms[j].zone != Zone::Private { 6 } else { 0 };
+            let cand = (score, plan.walls[wi].length(), j, wi);
+            if best.is_none_or(|b| (cand.0, cand.1) > (b.0, b.1)) {
+                best = Some(cand);
+            }
+        }
+        match best {
+            Some((_, _, j, wi)) => {
+                add_door(&mut plan, &mut doored, s, j, wi, opts.interior_door_mm);
+                if let Some(d) = plan.doors.last_mut() {
+                    d.opens_into = j;
+                }
+            }
+            None => plan.warnings.push(format!("shaft '{}' has no neighbour wide enough for a door", rooms[s].key)),
+        }
+    }
+
     // 3c. extra doors for wanted adjacencies.
     for (a, b) in &opts.wanted {
         let (Some(i), Some(j)) = (idx(a), idx(b)) else { continue };
-        if is_wet(i) || is_wet(j) || doored.contains(&(i.min(j), i.max(j))) {
+        if is_wet(i) || is_wet(j) || is_dead(i) || is_dead(j) || doored.contains(&(i.min(j), i.max(j))) {
             continue;
         }
         if let Some(wi) = feasible(&plan, i, j, opts.interior_door_mm) {
@@ -498,7 +526,7 @@ pub fn build(layout: &Layout, envelope: Rect, entry: Side, opts: &WallOpts) -> P
         }
     }
     // Non-private rooms (kitchen, dining...) must not be reached only through a bedroom.
-    for i in (0..n).filter(|&i| !is_wet(i) && !is_hub(i) && rooms[i].zone != Zone::Private) {
+    for i in (0..n).filter(|&i| !is_wet(i) && !is_dead(i) && !is_hub(i) && rooms[i].zone != Zone::Private) {
         let neighbours: Vec<usize> = plan
             .doors
             .iter()
