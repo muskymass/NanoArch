@@ -108,6 +108,7 @@ pub mod xlsx;
 pub mod walls;
 pub mod drift;
 pub mod deepfound;
+pub mod spalling;
 pub mod shearcore;
 pub mod wallload;
 

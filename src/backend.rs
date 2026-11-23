@@ -366,6 +366,7 @@ impl App {
             "wall_load" => Self::wall_load(args),
             "drift_check" => Self::drift_check(args),
             "deep_foundation_check" => Self::deep_foundation_check(args),
+            "spalling_check" => Self::spalling_check(args),
             "shear_core_check" => Self::shear_core_check(args),
             "savings_compare" => Self::savings_compare(args),
             "furniture_fit" => Self::furniture_fit(args),
@@ -2083,6 +2084,16 @@ impl App {
             .map_err(|e| format!("deep foundation check: inputs are malformed (see the field list for screen, mat, columns and piles): {e}"))?;
         let report = nnx_core::deepfound::check(&input)?;
         Ok(json!({ "deep_foundation": report }))
+    }
+
+    /// Explosive thermal spalling screen: `{ elements: [{ key, kind: column|beam|slab|wall|footing, b_mm, h_mm, cover_mm, fc_mpa,
+    /// exposed_sides, moisture_pct?, pp_fibre_kg_m3? }], max_moisture_pct?, max_fc_mpa?, max_cover_mm?, min_pp_fibre_kg_m3? }`.
+    /// Every threshold is the caller's input with its own source; a missing one leaves its check `unchecked`. Preliminary.
+    fn spalling_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::spalling::SpallInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("spalling check: inputs are malformed (see the field list for elements and limits): {e}"))?;
+        let report = nnx_core::spalling::check(&input)?;
+        Ok(json!({ "spalling": report }))
     }
 
     /// Shear-wall core around lifts and stairs:`{ walls: [{ key, x_mm, y_mm, w_mm, h_mm }], shafts?: [{ key, kind: lift|stair,
@@ -4571,6 +4582,26 @@ EOF
         assert!(app.handle("drift_check", &no_e).unwrap_err().contains("e_mpa is required"));
         assert!(app.handle("drift_check", &json!({})).unwrap_err().contains("nothing to check"));
         assert!(app.handle("drift_check", &json!({ "beams": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn spalling_check_screens_elements_and_never_passes_without_limits() {
+        let mut app = App::default();
+        let args = json!({
+            "elements": [
+                { "key": "c1", "kind": "column", "b_mm": 400, "h_mm": 400, "cover_mm": 40, "fc_mpa": 90, "exposed_sides": 4, "moisture_pct": 2.0, "pp_fibre_kg_m3": 2.0 },
+                { "key": "c2", "kind": "column", "b_mm": 400, "h_mm": 400, "cover_mm": 40, "fc_mpa": 90, "exposed_sides": 4, "moisture_pct": 2.0 }
+            ],
+            "max_moisture_pct": 3.0, "max_fc_mpa": 60.0, "max_cover_mm": 70.0, "min_pp_fibre_kg_m3": 2.0
+        });
+        let r = app.handle("spalling_check", &args).unwrap();
+        assert_eq!(r["spalling"]["elements"][0]["status"], "mitigated");
+        assert_eq!(r["spalling"]["elements"][1]["status"], "fails");
+        let no_limits = json!({ "elements": [args["elements"][0].clone()] });
+        let r = app.handle("spalling_check", &no_limits).unwrap();
+        assert_eq!(r["spalling"]["elements"][0]["status"], "unchecked");
+        assert!(app.handle("spalling_check", &json!({ "elements": [] })).unwrap_err().contains("nothing to check"));
+        assert!(app.handle("spalling_check", &json!({ "elements": 3 })).unwrap_err().contains("malformed"));
     }
 
     #[test]
