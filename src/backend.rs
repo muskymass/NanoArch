@@ -372,6 +372,7 @@ impl App {
             "cable_check" => Self::cable_check(args),
             "water_storage_check" => Self::water_storage_check(args),
             "insulation_options" => self.insulation_options(args),
+            "electricity_bill" => Self::electricity_bill(args),
             "fire_protection_check" => Self::fire_protection_check(args),
             "shear_core_check" => Self::shear_core_check(args),
             "savings_compare" => Self::savings_compare(args),
@@ -2162,6 +2163,17 @@ impl App {
             .ok_or("insulation options: enter the insulation assemblies in the MEP inputs first (the base assembly is the baseline)")?;
         let report = nnx_core::insulopt::compare(self.model()?, &lib, &input)?;
         Ok(json!({ "insulation_options": report }))
+    }
+
+    /// Yearly electricity bill from stated loads and a tariff: `{ loads: [{ name, kw, quantity, demand_factor, hours_per_day,
+    /// active_months, source }], tariff: { blocks: [{ up_to_kwh?, rate_per_kwh }], fixed_per_month, vat_pct, source, source_date },
+    /// generation_kwh_per_month?: [12], generation_source? }`. The tariff and every load figure are the caller's; none is assumed.
+    /// Preliminary estimate, not a utility bill.
+    fn electricity_bill(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::elecbill::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("electricity bill: inputs are malformed (see the field list for loads and tariff): {e}"))?;
+        let report = nnx_core::elecbill::estimate(&input)?;
+        Ok(json!({ "electricity_bill": report }))
     }
 
     /// Ground and roof water tanks plus the transfer pump: `{ persons, litres_per_person_day, demand_source, ground_storage_days,
@@ -4742,6 +4754,24 @@ EOF
         no_cop.as_object_mut().unwrap().remove("cop");
         assert!(app.handle("insulation_options", &no_cop).unwrap_err().contains("cop is required"));
         assert!(app.handle("insulation_options", &json!({ "cop": "x" })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn electricity_bill_estimates_from_stated_loads_and_tariff() {
+        let mut app = App::default();
+        let args = json!({
+            "loads": [{ "name": "ac", "kw": 2, "quantity": 2, "demand_factor": 0.5, "hours_per_day": 10, "active_months": [6, 7], "source": "test data" }],
+            "tariff": { "blocks": [{ "up_to_kwh": 300, "rate_per_kwh": 0.1 }, { "rate_per_kwh": 0.2 }],
+                        "fixed_per_month": 5, "vat_pct": 0, "source": "test tariff", "source_date": "2026-01-01" }
+        });
+        let r = app.handle("electricity_bill", &args).unwrap();
+        let rep = &r["electricity_bill"];
+        // June: 2 kW x 2 x 0.5 x 10 h x 30 d = 600 kWh -> 30 + 60 = 90 + 5.
+        assert_eq!(rep["months"][5]["total"].as_f64().unwrap(), 95.0);
+        let mut no_src = args.clone();
+        no_src["tariff"].as_object_mut().unwrap().remove("source");
+        assert!(app.handle("electricity_bill", &no_src).unwrap_err().contains("tariff.source is required"));
+        assert!(app.handle("electricity_bill", &json!({ "loads": "x" })).unwrap_err().contains("malformed"));
     }
 
     #[test]
