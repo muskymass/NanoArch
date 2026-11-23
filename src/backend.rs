@@ -384,6 +384,8 @@ impl App {
             "wind_check" => Self::wind_check(args),
             "courtyard_check" => Self::courtyard_check(args),
             "room_shape_check" => Self::room_shape_check(args),
+            "room_capture" => Self::room_capture(args),
+            "room_capture_accept" => Self::room_capture_accept(args),
             "mezzanine_check" => Self::mezzanine_check(args),
             "rooftop_check" => Self::rooftop_check(args),
             "basement_check" => Self::basement_check(args),
@@ -2829,6 +2831,28 @@ impl App {
         };
         let report = nnx_core::roomshape::check_room_shape(&layout, &envelope, key, &outline, min_wall)?;
         Ok(json!({ "room_shape": report }))
+    }
+
+    /// Measures a room from one phone photo: `{ capture: { reference: [4 pixel points], reference_width_mm, reference_depth_mm,
+    /// corners: [pixel points], pixel_tolerance? } }`. The result is `unconfirmed` and `approximate`; nothing enters the project.
+    fn room_capture(args: &Value) -> Result<Value, String> {
+        let cap: nnx_core::roomcapture::Capture = serde_json::from_value(args.get("capture").cloned().ok_or("room capture: 'capture' is required")?).map_err(|e| format!("room capture: the capture is not valid (four reference corners, their real width and depth in mm, and the room corners, in pixels): {e}"))?;
+        let report = nnx_core::roomcapture::capture_room(&cap).map_err(|e| format!("room capture: {e}"))?;
+        Ok(json!({ "room_capture": report }))
+    }
+
+    /// Turns a reviewed capture into a whole-mm width and length: `{ report, confirmed, angle_tolerance_deg, width_mm?, length_mm? }`.
+    fn room_capture_accept(args: &Value) -> Result<Value, String> {
+        let report: nnx_core::roomcapture::Report = serde_json::from_value(args.get("report").cloned().ok_or("room capture: 'report' is required")?).map_err(|e| format!("room capture: the report is not valid: {e}"))?;
+        let opt = |k: &str| -> Result<Option<f64>, String> {
+            match args.get(k) {
+                None | Some(Value::Null) => Ok(None),
+                Some(v) => v.as_f64().map(Some).ok_or(format!("room capture: '{k}' must be a number")),
+            }
+        };
+        let confirmed = args.get("confirmed").and_then(Value::as_bool).unwrap_or(false);
+        let acc = nnx_core::roomcapture::accept(&report, confirmed, opt("angle_tolerance_deg")?, opt("width_mm")?, opt("length_mm")?).map_err(|e| format!("room capture: {e}"))?;
+        Ok(json!({ "accepted": acc }))
     }
 
     /// Checks a mezzanine or partial floor: `{ rooms, envelope, outline: [{ x, y }], storey_height_mm, level_mm, slab_mm,
@@ -6255,6 +6279,28 @@ EOF
         cost["criterion"] = json!("cost");
         assert!(app.handle("savings_compare", &cost).unwrap_err().contains("needs prices"));
         assert!(app.handle("savings_compare", &json!({ "criterion": "steel_kg" })).unwrap_err().contains("alternatives need"));
+    }
+
+    #[test]
+    fn room_capture_measures_a_photo_and_needs_confirmation_to_accept() {
+        let mut app = App::default();
+        // Fronto-parallel photo: 0.5 px per mm, so a 4000 x 3000 mm room is 2000 x 1500 px; reference is 600 x 400 mm.
+        let capture = json!({
+            "reference": [{ "x": 100.0, "y": 100.0 }, { "x": 400.0, "y": 100.0 }, { "x": 400.0, "y": 300.0 }, { "x": 100.0, "y": 300.0 }],
+            "reference_width_mm": 600.0, "reference_depth_mm": 400.0,
+            "corners": [{ "x": 100.0, "y": 100.0 }, { "x": 2100.0, "y": 100.0 }, { "x": 2100.0, "y": 1600.0 }, { "x": 100.0, "y": 1600.0 }]
+        });
+        let r = app.handle("room_capture", &json!({ "capture": capture })).unwrap();
+        assert_eq!(r["room_capture"]["status"], "unconfirmed");
+        assert_eq!(r["room_capture"]["bounds"], "unchecked");
+        assert!((r["room_capture"]["sides"][0]["length_mm"].as_f64().unwrap() - 4000.0).abs() < 0.01);
+        let report = r["room_capture"].clone();
+        let no = json!({ "report": report, "angle_tolerance_deg": 2.0 });
+        assert!(app.handle("room_capture_accept", &no).unwrap_err().contains("unconfirmed"));
+        let yes = json!({ "report": report, "confirmed": true, "angle_tolerance_deg": 2.0 });
+        let a = app.handle("room_capture_accept", &yes).unwrap();
+        assert_eq!((a["accepted"]["width_mm"].as_i64(), a["accepted"]["length_mm"].as_i64()), (Some(4000), Some(3000)));
+        assert!(app.handle("room_capture", &json!({})).unwrap_err().contains("'capture'"));
     }
 
     #[test]

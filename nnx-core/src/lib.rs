@@ -151,6 +151,7 @@ pub mod plugins;
 pub mod assistant;
 pub mod sketchread;
 pub mod deedread;
+pub mod roomcapture;
 
 pub use command::{Command, CommandError, Origin};
 pub use history::{Document, Step, TxError};
