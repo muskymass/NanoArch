@@ -346,6 +346,7 @@ impl App {
             }
             "presets" => Ok(nnx_core::presets::presets_json()),
             "site_analyze" => Self::site_analyze(args),
+            "plot_import_dxf" => Self::plot_import_dxf(args),
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
             "analysis" => self.analysis(args),
             "materials" => Ok(nnx_core::materials::catalog_json()),
@@ -1856,6 +1857,20 @@ impl App {
         let r = nnx_core::site::analyse(&input).map_err(|e| e.join("; "))?;
         let svg = nnx_core::site::site_svg(&r, "Site plan");
         Ok(json!({ "result": r, "svg": svg, "rule_source": nnx_core::site::RULE_SOURCE }))
+    }
+
+    /// Reads plot boundary candidates from a DXF drawing: `{ path, units?, index? }`. A drawing without a unit needs `units`;
+    /// several boundaries need `index`. A DWG is refused with the reason.
+    fn plot_import_dxf(args: &Value) -> Result<Value, String> {
+        let path = args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty()).ok_or("plot import: the path of the DXF file is missing")?;
+        let bytes = std::fs::read(path).map_err(|e| format!("plot import: cannot read {path}: {e}"))?;
+        let units = args.get("units").and_then(Value::as_str);
+        let index = match args.get("index") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(v.as_u64().ok_or("plot import: index must be a whole number")? as usize),
+        };
+        let r = nnx_core::plot_import::import_dxf(&bytes, units, index).map_err(|e| format!("plot import: {e}"))?;
+        Ok(json!({ "result": r }))
     }
 
     /// Every advanced structural analysis of the open project in one answer (inputs are the project's own).
@@ -3945,6 +3960,63 @@ mod tests {
         assert!((app.project().unwrap().plot_area_m2().unwrap() - (18.0 * 10.0 + 8.0 * 12.0)).abs() < 1e-9);
         let skipped = app.handle("sbc_check", &json!({})).unwrap()["skipped"].to_string();
         assert!(skipped.contains("not a rectangle"), "{skipped}");
+    }
+
+    #[test]
+    fn a_dxf_plot_boundary_is_imported_through_the_backend() {
+        let mut app = App::default();
+        let dir = std::env::temp_dir().join(format!("nnx_plot_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("plot.dxf");
+        std::fs::write(&f, "0
+SECTION
+2
+HEADER
+9
+$INSUNITS
+70
+6
+0
+ENDSEC
+0
+SECTION
+2
+ENTITIES
+0
+LWPOLYLINE
+8
+P
+90
+4
+70
+1
+10
+0
+20
+0
+10
+18
+20
+0
+10
+18
+20
+22
+10
+0
+20
+22
+0
+ENDSEC
+0
+EOF
+").unwrap();
+        let r = app.handle("plot_import_dxf", &json!({ "path": f.to_str().unwrap() })).unwrap();
+        assert_eq!(r["result"]["selected"], 0);
+        assert!((r["result"]["candidates"][0]["area_m2"].as_f64().unwrap() - 396.0).abs() < 1e-9);
+        assert!(app.handle("plot_import_dxf", &json!({})).unwrap_err().contains("path"));
+        assert!(app.handle("plot_import_dxf", &json!({ "path": dir.join("none.dxf").to_str().unwrap() })).unwrap_err().contains("cannot read"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
