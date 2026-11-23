@@ -89,6 +89,19 @@ const LAYERS: [(&str, i32, &str); 34] = [
 ];
 const DIMS_LAYER: (&str, i32, &str) = ("A-DIMS", 2, "CONTINUOUS");
 
+/// The line types the file defines in its LTYPE table.
+const LINETYPES: [&str; 3] = ["CONTINUOUS", "DASHED", "HIDDEN"];
+
+/// Every layer the plan, view and dimension export draws, with its colour index and line type.
+pub fn layer_table() -> Vec<(String, i32, &'static str)> {
+    LAYERS.iter().copied().chain(std::iter::once(DIMS_LAYER)).map(|(n, c, l)| (n.to_string(), c, l)).collect()
+}
+
+/// Names of the line types the file defines.
+pub fn linetype_names() -> Vec<&'static str> {
+    LINETYPES.to_vec()
+}
+
 /// DXF number: plain decimal, no exponent.
 pub(crate) fn n(v: f64) -> String {
     let v = if v.abs() < 5e-4 { 0.0 } else { v };
@@ -634,8 +647,7 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
     }
 
     // Assemble the file.
-    let layers: Vec<(String, i32, &str)> = LAYERS.iter().copied().chain(std::iter::once(DIMS_LAYER)).map(|(n, c, l)| (n.to_string(), c, l)).collect();
-    let out = assemble(&d, layers, (gx0, gy0, gx1, gy1));
+    let out = assemble(&d, layer_table(),(gx0, gy0, gx1, gy1));
     Ok(DxfOut { text: out, counts: d.counts })
 }
 

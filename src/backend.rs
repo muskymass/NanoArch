@@ -526,7 +526,7 @@ impl App {
             "assembly_assign" => self.assembly_assign(args),
             "precheck" => Ok(json!(nnx_core::precheck::run(&self.doc()?.model))),
             "export_ifc" => self.gate(args).and_then(|_| self.export_ifc(args)),
-            "export_dxf" => self.gate(args).and_then(|_| self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false))),
+            "export_dxf" => self.gate(args).and_then(|_| self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false), args.get("layer_style"))),
             "report_html" => {
                 let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
                 self.report(args).map(|(html, _)| json!({ "html": self.with_history(html, arabic), "name": "engineering-report.pdf" }))
@@ -707,8 +707,9 @@ impl App {
         Ok(json!({ "html": html, "name": "plan.pdf" }))
     }
 
-    /// The plan as a DXF file: the level on screen, or every level side by side when `all` is true.
-    fn export_dxf(&self, all: bool, views: bool) -> Result<Value, String> {
+    /// The plan as a DXF file: the level on screen, or every level side by side when `all` is true. An optional `layer_style`
+    /// (the office's layer names, colours and line types, with the document they come from) restyles the finished file.
+    fn export_dxf(&self, all: bool, views: bool, layer_style: Option<&Value>) -> Result<Value, String> {
         let model = &self.doc()?.model;
         let levels: Vec<Option<nnx_core::Id>> = if all {
             let l = building::levels(model);
@@ -727,6 +728,11 @@ impl App {
             Vec::new()
         };
         let out = nnx_core::dxf::export_dxf_views(model, &levels, &specs, &self.view_opts(), &opts)?;
+        if let Some(raw) = layer_style.filter(|v| !v.is_null()) {
+            let style: nnx_core::layerstyle::LayerStyle = serde_json::from_value(raw.clone()).map_err(|e| format!("layer_style: {e}"))?;
+            let styled = nnx_core::layerstyle::apply(&out, &style)?;
+            return Ok(json!({ "dxf": styled.out.text, "counts": styled.out.counts, "levels": levels.len(), "views": specs.len(), "layer_style": { "name": style.name, "source": style.source, "applied": styled.applied } }));
+        }
         Ok(json!({ "dxf": out.text, "counts": out.counts, "levels": levels.len(), "views": specs.len() }))
     }
 
@@ -4712,6 +4718,25 @@ mod tests {
         if let Ok(path) = std::env::var("NANOARCH_IFC_OUT") {
             std::fs::write(path, text).unwrap();
         }
+    }
+
+    #[test]
+    fn dxf_export_applies_an_office_layer_style_and_refuses_a_bad_one() {
+        let mut app = started2();
+        app.handle("mep", &json!({ "inputs": mep_inputs(), "apply": true })).unwrap();
+        let plain = app.handle("export_dxf", &json!({})).unwrap();
+        let style = json!({ "name": "Office", "source": "Office CAD manual, section 4", "layers": [{ "layer": "S-COLS", "name": "STR-COLUMN", "color": 11, "linetype": "HIDDEN" }] });
+        let styled = app.handle("export_dxf", &json!({ "layer_style": style })).unwrap();
+        assert_eq!(styled["counts"]["STR-COLUMN"], plain["counts"]["S-COLS"]);
+        assert!(styled["counts"].get("S-COLS").is_none());
+        assert!(styled["dxf"].as_str().unwrap().contains("STR-COLUMN") && !styled["dxf"].as_str().unwrap().contains("S-COLS"));
+        assert_eq!(styled["layer_style"]["applied"][0]["used"], true);
+        assert_eq!(styled["layer_style"]["source"], "Office CAD manual, section 4");
+        // no style: the engine's own layers
+        assert!(plain.get("layer_style").is_none());
+        let no_source = json!({ "name": "Office", "source": "", "layers": [{ "layer": "S-COLS", "color": 11 }] });
+        assert!(app.handle("export_dxf", &json!({ "layer_style": no_source })).unwrap_err().contains("source"));
+        assert!(app.handle("export_dxf", &json!({ "layer_style": { "name": "x" } })).unwrap_err().contains("layer_style"));
     }
 
     #[test]

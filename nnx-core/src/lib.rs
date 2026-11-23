@@ -65,6 +65,7 @@ pub mod spanalt;
 pub mod sun;
 pub mod wind;
 pub mod model;
+pub mod layerstyle;
 pub mod malath;
 pub mod merger;
 pub mod materials;
