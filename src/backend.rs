@@ -2901,13 +2901,20 @@ impl App {
     /// The permit package as numbered A3 sheets with a title-block header and the engineer's stamp box: `{ engineer: { name,
     /// licence_no, licensing_body, discipline? }, project_no, sheet_prefix, revision, issued_for?, lang? }`. Nothing is defaulted:
     /// a missing input is named. The stamp has an empty seal and signature area; the package is never marked approved.
+    /// `lang: "both"` returns the Arabic and English packages as a matched pair (`ar`, `en`, shared `sheets`).
     fn permit_pack(&self, args: &Value) -> Result<Value, String> {
         let input: nnx_core::permitpack::Input = serde_json::from_value(args.clone())
             .map_err(|e| format!("permit pack: inputs are malformed (engineer {{ name, licence_no, licensing_body, discipline? }}, project_no, sheet_prefix, revision, issued_for?): {e}"))?;
-        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        let lang = args.get("lang").and_then(Value::as_str);
+        let arabic = lang != Some("en");
         let date: String = utc_now().chars().take(10).collect();
         let title = self.display_title();
         let ctx = nnx_core::permitpack::Context { model: &self.doc()?.model, title: &title, labels: self.labels(), arabic, show_structure: self.show_structure, show_mep: self.show_mep, date: &date };
+        if lang == Some("both") {
+            let b = nnx_core::permitpack::build_bilingual(&ctx, &input)?;
+            let part = |p: &nnx_core::permitpack::Pack, name: &str| json!({ "html": p.html, "name": name, "sheets": p.sheets, "notes": p.notes });
+            return Ok(json!({ "bilingual": true, "ar": part(&b.ar, "permit_pack_ar.pdf"), "en": part(&b.en, "permit_pack_en.pdf"), "sheets": b.sheets, "notes": b.notes }));
+        }
         let pack = nnx_core::permitpack::build(&ctx, &input)?;
         Ok(json!({ "html": pack.html, "name": "permit_pack.pdf", "sheets": pack.sheets, "notes": pack.notes }))
     }
@@ -5358,6 +5365,21 @@ EOF
         lh["letterhead"]["logo_data_uri"] = json!("https://example.test/x.png");
         assert!(app.handle("permit_pack", &lh).unwrap_err().contains("letterhead.logo_data_uri"));
         assert!(App::default().handle("permit_pack", &args).is_err());
+        // lang "both": a matched Arabic/English pair with the same sheet numbers.
+        let mut both = args.clone();
+        both["lang"] = json!("both");
+        let r = app.handle("permit_pack", &both).unwrap();
+        assert_eq!(r["bilingual"], true);
+        let (ar, en) = (r["ar"]["html"].as_str().unwrap(), r["en"]["html"].as_str().unwrap());
+        assert!(ar.contains("dir=\"rtl\"") && ar.contains("غير نافذة حتى يختمها") && en.contains("dir=\"ltr\"") && en.contains("Not valid until stamped"));
+        let nk = |v: &Value| v.as_array().unwrap().iter().map(|s| (s["number"].clone(), s["kind"].clone())).collect::<Vec<_>>();
+        assert_eq!(nk(&r["ar"]["sheets"]), nk(&r["en"]["sheets"]), "same numbers and kinds; titles are translated");
+        assert_eq!(nk(&r["sheets"]), nk(&r["en"]["sheets"]));
+        assert_ne!(r["ar"]["sheets"][0]["title"], r["en"]["sheets"][0]["title"]);
+        assert_eq!(r["ar"]["name"], "permit_pack_ar.pdf");
+        assert_eq!(r["en"]["name"], "permit_pack_en.pdf");
+        both["project_no"] = json!("");
+        assert!(app.handle("permit_pack", &both).unwrap_err().contains("project_no"));
     }
 
     #[test]

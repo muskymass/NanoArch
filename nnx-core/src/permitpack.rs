@@ -270,6 +270,38 @@ impl Chrome<'_> {
     }
 }
 
+/// The same package in both languages: one Arabic (RTL) and one English (LTR) document with identical sheet numbers, kinds,
+/// drawings and room measurements, so the two can be filed side by side.
+#[derive(Debug, Clone, Serialize)]
+pub struct BilingualPack {
+    pub ar: Pack,
+    pub en: Pack,
+    /// The numbering both documents share.
+    pub sheets: Vec<SheetInfo>,
+    pub notes: Vec<String>,
+}
+
+/// Builds the Arabic and the English package from one input and one model state. `ctx.arabic` is ignored: both are built. Refuses
+/// as `build` does, and also if the two documents ever disagree on sheet numbers or kinds, since a paired set must match.
+pub fn build_bilingual(ctx: &Context, input: &Input) -> Result<BilingualPack, String> {
+    let make = |arabic: bool| {
+        build(&Context { model: ctx.model, title: ctx.title, labels: ctx.labels.clone(), arabic, show_structure: ctx.show_structure, show_mep: ctx.show_mep, date: ctx.date }, input)
+    };
+    let ar = make(true)?;
+    let en = make(false)?;
+    let key = |p: &Pack| p.sheets.iter().map(|s| (s.number.clone(), s.kind)).collect::<Vec<_>>();
+    if key(&ar) != key(&en) {
+        return Err("permit pack: the Arabic and English packages disagree on sheet numbers; no pair was produced".into());
+    }
+    let sheets = en.sheets.clone();
+    let mut notes = vec![
+        "تُترجم نصوص الواجهة والجداول فقط؛ ما أدخله المستخدم (اسم المهندس وجهة الترخيص والغرض وبيانات الترويسة وأسماء الفراغات المعدَّلة) يُطبع كما أُدخل في النسختين.".to_string(),
+        "Interface text and tables are translated; text the user entered (engineer, licensing body, purpose, letterhead, custom room names) prints as entered in both copies.".to_string(),
+    ];
+    notes.extend(en.notes.iter().cloned());
+    Ok(BilingualPack { ar, en, sheets, notes })
+}
+
 /// Builds the package. Refuses, naming them, when an input is missing or the date is malformed, and when the model has no rooms to draw.
 pub fn build(ctx: &Context, input: &Input) -> Result<Pack, String> {
     let miss = missing(input);

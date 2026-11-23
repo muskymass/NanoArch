@@ -104,6 +104,37 @@ fn refuses_missing_inputs_bad_dates_and_an_empty_model() {
     assert!(build(&ctx(&Model::default(), "2026-11-23", false), &input()).unwrap_err().contains("no rooms"));
 }
 
+#[test]
+fn bilingual_pack_pairs_arabic_and_english_with_the_same_numbers_and_measurements() {
+    let mut doc = Document::default();
+    let l0 = element_of(&Level { name: "L0".into(), index: 0, extra: Default::default() }, Source::User);
+    let l1 = element_of(&Level { name: "L1".into(), index: 1, extra: Default::default() }, Source::User);
+    let (i0, i1) = (l0.id, l1.id);
+    doc.commit("levels", Origin::User, vec![Command::Create(l0), Command::Create(l1), room("a", 4000, Some(i0)), room("b", 6000, Some(i1))]).unwrap();
+    // `ctx.arabic` is ignored: both are built whichever way it is set.
+    for flag in [true, false] {
+        let b = nnx_core::permitpack::build_bilingual(&ctx(&doc.model, "2026-11-23", flag), &input()).unwrap();
+        assert!(b.ar.html.contains("dir=\"rtl\"") && b.ar.html.contains("الدور الأرضي") && !b.ar.html.contains("Ground floor"));
+        assert!(b.en.html.contains("dir=\"ltr\"") && b.en.html.contains("Ground floor") && !b.en.html.contains("الدور الأرضي"));
+        let nums = |p: &nnx_core::permitpack::Pack| p.sheets.iter().map(|s| (s.number.clone(), s.kind)).collect::<Vec<_>>();
+        assert_eq!(nums(&b.ar), nums(&b.en));
+        assert_eq!(b.sheets.iter().map(|s| s.number.as_str()).collect::<Vec<_>>(), ["S-01", "S-02", "S-03"]);
+        for h in [&b.ar.html, &b.en.html] {
+            assert_eq!(h.matches("<section class=\"sheet\">").count(), 3);
+            assert!(h.contains("<td class=\"n\">20.0</td></tr></table>") && h.contains("<td class=\"n\">30.0</td></tr></table>"), "same measured totals");
+        }
+        assert!(b.notes.iter().any(|n| n.contains("as entered")) && b.notes.iter().any(|n| n.contains("كما أُدخل")));
+    }
+}
+
+#[test]
+fn bilingual_pack_refuses_like_the_single_build() {
+    let doc = one_room_doc();
+    let e = nnx_core::permitpack::build_bilingual(&ctx(&doc.model, "2026-11-23", false), &Input::default()).unwrap_err();
+    assert!(e.contains("project_no"), "{e}");
+    assert!(nnx_core::permitpack::build_bilingual(&ctx(&Model::default(), "2026-11-23", true), &input()).unwrap_err().contains("no rooms"));
+}
+
 const PNG_1PX: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
 
 #[test]
