@@ -373,6 +373,7 @@ impl App {
             "water_storage_check" => Self::water_storage_check(args),
             "insulation_options" => self.insulation_options(args),
             "electricity_bill" => Self::electricity_bill(args),
+            "energy_certificate" => Self::energy_certificate(args),
             "fire_protection_check" => Self::fire_protection_check(args),
             "shear_core_check" => Self::shear_core_check(args),
             "savings_compare" => Self::savings_compare(args),
@@ -2174,6 +2175,17 @@ impl App {
             .map_err(|e| format!("electricity bill: inputs are malformed (see the field list for loads and tariff): {e}"))?;
         let report = nnx_core::elecbill::estimate(&input)?;
         Ok(json!({ "electricity_bill": report }))
+    }
+
+    /// Preliminary energy rating: `{ end_uses: [{ name, kwh_per_year, source }], conditioned_area_m2, area_source,
+    /// bands: [{ label, up_to_kwh_m2? }] (best first, last has no bound), scheme_source, scheme_date,
+    /// generation_kwh_per_year?, generation_source?, emission_factor_kg_per_kwh?, emission_source? }`. The rating scale is the
+    /// caller's; none is built in. Not an official energy certificate.
+    fn energy_certificate(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::energycert::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("energy certificate: inputs are malformed (see the field list for end uses and bands): {e}"))?;
+        let report = nnx_core::energycert::estimate(&input)?;
+        Ok(json!({ "energy_certificate": report }))
     }
 
     /// Ground and roof water tanks plus the transfer pump: `{ persons, litres_per_person_day, demand_source, ground_storage_days,
@@ -4772,6 +4784,25 @@ EOF
         no_src["tariff"].as_object_mut().unwrap().remove("source");
         assert!(app.handle("electricity_bill", &no_src).unwrap_err().contains("tariff.source is required"));
         assert!(app.handle("electricity_bill", &json!({ "loads": "x" })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn energy_certificate_rates_from_entered_scale_and_refuses_missing_inputs() {
+        let mut app = App::default();
+        let args = json!({
+            "end_uses": [{ "name": "cooling", "kwh_per_year": 6000, "source": "test data" }, { "name": "lighting", "kwh_per_year": 2000, "source": "test data" }],
+            "conditioned_area_m2": 100, "area_source": "model",
+            "bands": [{ "label": "A", "up_to_kwh_m2": 50 }, { "label": "B", "up_to_kwh_m2": 100 }, { "label": "C" }],
+            "scheme_source": "test scheme", "scheme_date": "2026-01-01"
+        });
+        let r = app.handle("energy_certificate", &args).unwrap();
+        let rep = &r["energy_certificate"];
+        assert_eq!(rep["band"], "B");
+        assert_eq!(rep["next_better"]["reduction_kwh_per_year"].as_f64().unwrap(), 3000.0);
+        let mut no_src = args.clone();
+        no_src.as_object_mut().unwrap().remove("scheme_source");
+        assert!(app.handle("energy_certificate", &no_src).unwrap_err().contains("scheme_source is required"));
+        assert!(app.handle("energy_certificate", &json!({ "end_uses": "x" })).unwrap_err().contains("malformed"));
     }
 
     #[test]

@@ -43,6 +43,7 @@ pub mod ifc;
 pub mod ifc_review;
 pub mod insulation;
 pub mod elecbill;
+pub mod energycert;
 pub mod insulopt;
 pub mod layout;
 pub mod lighting;
