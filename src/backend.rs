@@ -433,6 +433,7 @@ impl App {
             "features" => self.features_json(args),
             "mep" => self.mep(args),
             "sizing" => self.sizing(args),
+            "rebar_drawings" => self.rebar_drawings(),
             "boq" => self.boq(args),
             "model3d" => self.model3d(),
             "finishes" => self.finishes_report(),
@@ -747,6 +748,18 @@ impl App {
             "report": r, "members_csv": r.members_csv(), "concrete_csv": r.concrete_csv(), "bbs_csv": r.bbs_csv(), "soil_kpa": soil,
             "bbs": bbs, "bbs_lines_csv": bbs.as_ref().map(|b| b.lines_csv()), "bbs_summary_csv": bbs.as_ref().map(|b| b.summary_csv()), "bbs_error": bbs_error,
         }))
+    }
+
+    /// Reinforcement detail drawings (DXF) of the sizing inputs stored in the project: sections and elevations of the columns,
+    /// beams, tie beams and footings, with the bars of your templates or of the design. Read-only: it changes nothing. Members that
+    /// cannot be drawn come back in `skipped` with the reason.
+    fn rebar_drawings(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let inputs = p.sizing.clone().ok_or("no structural sizing inputs yet: run `sizing` first")?;
+        let loaded = inputs.with_floor_load(&p.structure);
+        let rep = nnx_core::sizing::compute(&self.doc()?.model, p.structure.bearing_kpa, &loaded);
+        let d = nnx_core::rebardraw::build(&rep, &p.meta.title)?;
+        Ok(json!({ "dxf": d.dxf, "sheets": d.sheets, "skipped": d.skipped, "notes": d.notes, "counts": d.counts }))
     }
 
     /// The construction phases an element can carry. Nothing is assumed: an element with no phase stays unset.
@@ -5732,6 +5745,32 @@ END-ISO-10303-21;
                 "column": { "bar_dia_mm": 16, "count": 8, "tie_dia_mm": 8, "tie_spacing_mm": 200 },
                 "footing": { "bar_dia_mm": 12, "spacing_mm": 150 },
                 "beam": { "top_dia_mm": 16, "top_count": 2, "bottom_dia_mm": 16, "bottom_count": 3, "stirrup_dia_mm": 8, "stirrup_spacing_mm": 150 } } })
+    }
+
+    #[test]
+    fn the_rebar_drawings_command_draws_the_stored_sizing_inputs_and_changes_nothing() {
+        let mut app = sized_app();
+        assert!(app.handle("rebar_drawings", &json!({})).unwrap_err().contains("run `sizing` first"));
+        app.handle("sizing", &json!({ "inputs": sizing_inputs() })).unwrap();
+        let h = hash(&app);
+        let r = app.handle("rebar_drawings", &json!({})).unwrap();
+        assert_eq!(hash(&app), h, "drawing must not edit the project");
+        // A beam the template cannot fit (a 100 mm deep member with 16 mm bars, 8 mm stirrups and 40 mm cover) is listed with its
+        // reason and not drawn; nothing else is skipped.
+        for s in r["skipped"].as_array().unwrap() {
+            assert!(s["reason"].as_str().unwrap().contains("overlap"), "{s}");
+            assert!(s["members"].as_array().unwrap().iter().all(|m| m.as_str().unwrap().starts_with("BM-") || m.as_str().unwrap().starts_with("TB-")), "{s}");
+        }
+        let kinds: Vec<&str> = r["sheets"].as_array().unwrap().iter().map(|s| s["kind"].as_str().unwrap()).collect();
+        assert!(kinds.contains(&"column") && kinds.contains(&"footing") && kinds.contains(&"beam"), "{kinds:?}");
+        let dxf = r["dxf"].as_str().unwrap();
+        assert!(dxf.starts_with("0\nSECTION") && dxf.ends_with("0\nEOF\n") && dxf.contains("S-RBAR-LINK"));
+        // Every column of the report is on a sheet.
+        let rep = app.handle("sizing", &json!({ "inputs": sizing_inputs() })).unwrap();
+        let drawn: Vec<&str> = r["sheets"].as_array().unwrap().iter().flat_map(|s| s["members"].as_array().unwrap()).map(|m| m.as_str().unwrap()).collect();
+        for c in rep["report"]["columns"].as_array().unwrap() {
+            assert!(drawn.contains(&c["name"].as_str().unwrap()), "{} is not drawn", c["name"]);
+        }
     }
 
     #[test]
