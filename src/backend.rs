@@ -91,6 +91,17 @@ pub(crate) fn adjacency_of(rooms: &[RoomReq]) -> Vec<Adjacency> {
 }
 
 /// `{room key: {x, y, w, h}}` in millimetres.
+/// Declared scores of one alternative: every level is counted against the whole building envelope and the counts are added,
+/// so a level with more rooms weighs more.
+fn score_building(alt: &Building, plan: &levels::BuildingPlan, w: &nnx_core::scoring::ScoreWeights) -> Result<nnx_core::scoring::Scores, String> {
+    let hubs = nnx_core::layout::Options::default().hub_funcs;
+    let mut total = nnx_core::scoring::Tallies::default();
+    for (layout, lp) in alt.levels.iter().zip(&plan.levels) {
+        total.add(&nnx_core::scoring::tally_level(layout, &plan.merged.envelope, plan.merged.entry, &lp.brief.adjacency, &hubs));
+    }
+    nnx_core::scoring::scores_from(&total, w)
+}
+
 fn parse_locked(v: Option<&Value>) -> Result<std::collections::BTreeMap<String, nnx_core::layout::Rect>, String> {
     let mut out = std::collections::BTreeMap::new();
     for (k, r) in v.and_then(Value::as_object).into_iter().flatten() {
@@ -485,7 +496,16 @@ impl App {
         let s: StructIn = serde_json::from_value(args.get("struct").cloned().unwrap_or(json!({}))).map_err(|e| format!("structure inputs: {e}"))?;
         let mut plan = levels::plan_building(&b, s.floors.unwrap_or(1))?;
         let locked = parse_locked(args.get("locked"))?;
+        let weights: nnx_core::scoring::ScoreWeights = match args.get("score_weights").filter(|v| !v.is_null()) {
+            Some(v) => serde_json::from_value(v.clone()).map_err(|e| format!("score_weights: {e}"))?,
+            None => Default::default(),
+        };
+        weights.validate()?;
         let mut alts = levels::generate_building_locked(&plan, b.seed.unwrap_or(1), &locked)?;
+        // Ranked by the declared overall score (lighting, connectivity, privacy), best first; the generator cost breaks ties.
+        let mut scored = alts.drain(..).map(|a| score_building(&a, &plan, &weights).map(|s| (a, s))).collect::<Result<Vec<_>, _>>()?;
+        scored.sort_by(|x, y| nnx_core::scoring::rank_order((&x.1, x.0.levels[0].cost), (&y.1, y.0.levels[0].cost)));
+        let (mut alts, mut all_scores): (Vec<Building>, Vec<nnx_core::scoring::Scores>) = scored.into_iter().unzip();
         // Rooms marked on a sketch become the first alternative; the generated ones follow for comparison.
         let from_sketch = match args.get("placement").filter(|p| p.as_object().is_some_and(|o| !o.is_empty())) {
             Some(p) => {
@@ -495,6 +515,7 @@ impl App {
                     plan.merged.entry_at = Some((f("x")?.round() as i64, f("y")?.round() as i64));
                 }
                 let placed = levels::placed_building(&plan, p, &alts[0])?;
+                all_scores.insert(0, score_building(&placed, &plan, &weights)?);
                 alts.insert(0, placed);
                 true
             }
@@ -518,7 +539,7 @@ impl App {
             let ground = building::levels(&doc.model).first().map(|(_, id)| *id);
             let svg = plan_svg(&doc.model, ground, &opts).map_err(|e| e.to_string())?;
             let ground_layout = &alt.levels[0];
-            thumbs.push(json!({ "index": i, "cost": (ground_layout.cost * 100.0).round() / 100.0, "reserve_m2": (ground_layout.reserve_m2 * 10.0).round() / 10.0, "from_sketch": from_sketch && i == 0, "svg": svg }));
+            thumbs.push(json!({ "index": i, "cost": (ground_layout.cost * 100.0).round() / 100.0, "reserve_m2": (ground_layout.reserve_m2 * 10.0).round() / 10.0, "from_sketch": from_sketch && i == 0, "scores": all_scores[i], "svg": svg }));
         }
         self.draft = Some(draft);
         self.alternatives = alts;
@@ -2727,6 +2748,28 @@ mod tests {
         assert!(svg.starts_with("<svg") && svg.contains("المجلس"));
     }
 
+    #[test]
+    fn alternatives_carry_declared_scores_and_are_ranked_best_first() {
+        let mut app = App::default();
+        let g = app.handle("generate", &json!({ "brief": brief() })).unwrap();
+        let alts = g["alternatives"].as_array().unwrap();
+        let overall: Vec<f64> = alts.iter().map(|a| a["scores"]["overall"].as_f64().expect("every alternative of this brief is scored")).collect();
+        assert!(overall.windows(2).all(|w| w[0] >= w[1]), "not ranked best first: {overall:?}");
+        for a in alts {
+            for k in ["lighting", "connectivity", "privacy"] {
+                let v = a["scores"][k].as_f64().unwrap_or_else(|| panic!("{k} missing"));
+                assert!((0.0..=100.0).contains(&v), "{k} = {v}");
+            }
+            assert_eq!(a["scores"]["weights"]["lighting"], 1.0);
+        }
+        // Weighting only lighting ranks by lighting alone.
+        let g = app.handle("generate", &json!({ "brief": brief(), "score_weights": { "lighting": 1.0, "connectivity": 0.0, "privacy": 0.0 } })).unwrap();
+        let light: Vec<f64> = g["alternatives"].as_array().unwrap().iter().map(|a| a["scores"]["lighting"].as_f64().unwrap()).collect();
+        assert!(light.windows(2).all(|w| w[0] >= w[1]), "not ranked by lighting: {light:?}");
+        let err = app.handle("generate", &json!({ "brief": brief(), "score_weights": { "lighting": -1.0, "connectivity": 1.0, "privacy": 1.0 } })).unwrap_err();
+        assert!(err.contains("lighting"), "{err}");
+    }
+
     /// Two rooms on a 14 x 18 m buildable area (plot 18 x 22 m, 2 m setbacks). Synthetic.
     fn two_room_brief() -> Value {
         json!({ "title": "t", "width_m": 18.0, "length_m": 22.0, "setback_front_m": 2.0, "setback_back_m": 2.0, "setback_side_m": 2.0, "entry": "south",
@@ -3968,9 +4011,16 @@ mod tests {
     fn started_with_project() -> App {
         let mut app = App::default();
         let meta = json!({ "title": "x", "buildingType": "villa", "style": "najdi", "smartTech": ["lighting"], "climateZone": "zone-a" });
-        app.handle("generate", &json!({ "brief": brief(), "struct": {}, "meta": meta })).unwrap();
-        app.handle("select", &json!({ "index": 0, "struct": {} })).unwrap();
+        let g = app.handle("generate", &json!({ "brief": brief(), "struct": {}, "meta": meta })).unwrap();
+        app.handle("select", &json!({ "index": generator_best(&g), "struct": {} })).unwrap();
         app
+    }
+
+    /// Alternatives are ranked by the declared scores; some tests assert things about the generator's own best layout
+    /// (lowest annealing cost), which is not always the top-scored one.
+    fn generator_best(g: &Value) -> usize {
+        let alts = g["alternatives"].as_array().unwrap();
+        (0..alts.len()).min_by(|&a, &b| alts[a]["cost"].as_f64().unwrap().total_cmp(&alts[b]["cost"].as_f64().unwrap())).unwrap()
     }
 
     fn setbacks(front: f64, back: f64, side: f64) -> Value {
@@ -4897,12 +4947,12 @@ END-ISO-10303-21;
                 let key = v["en"].as_str().unwrap().split(' ').next().unwrap();
                 assert!(sel["warnings"].to_string().contains(&format!("room '{key}' cannot reach")), "alternative {i}: {v} is not explained by {}", sel["warnings"]);
             }
-            if i == 0 {
-                assert!(bad.is_empty(), "the first alternative reaches the ratio everywhere: {bad:?}");
+            if i == generator_best(&g) {
+                assert!(bad.is_empty(), "the generator's best alternative reaches the ratio everywhere: {bad:?}");
             }
         }
         // Moving a partition rebuilds the windows with the same target.
-        app.handle("select", &json!({ "index": 0, "struct": {} })).unwrap();
+        app.handle("select", &json!({ "index": generator_best(&g), "struct": {} })).unwrap();
         let wall = app.doc.as_ref().unwrap().model.elements.values().find(|e| e.kind == "Wall" && e.props["isExterior"] == json!(false)).map(|e| e.id.to_string()).unwrap();
         for delta in [300, -300] {
             if let Ok(r) = app.handle("move_partition", &json!({ "wall": wall, "delta_mm": delta })) {

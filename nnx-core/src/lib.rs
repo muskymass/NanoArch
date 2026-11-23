@@ -52,6 +52,7 @@ pub mod report;
 pub mod routing;
 pub mod rules;
 pub mod sbc;
+pub mod scoring;
 pub mod finishes;
 pub mod furniture;
 pub mod greywater;
