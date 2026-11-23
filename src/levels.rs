@@ -72,6 +72,16 @@ pub fn plan_building(b: &BriefIn, n: u32) -> Result<BuildingPlan, String> {
     }
     let n = n.max(1) as usize;
     let (envelope, entry) = envelope_and_entry(b)?;
+    for rule in &b.adjacency {
+        if !(-3..=3).contains(&rule.weight) || rule.weight == 0 {
+            return Err(format!("neighbour rule '{}' - '{}': the weight must be from -3 to 3 and not 0, not {}", rule.a, rule.b, rule.weight));
+        }
+        for k in [&rule.a, &rule.b] {
+            if !b.rooms.iter().any(|r| &r.key == k) {
+                return Err(format!("neighbour rule '{}' - '{}' names room '{k}', which is not in the brief", rule.a, rule.b));
+            }
+        }
+    }
     if let Some(r) = b.rooms.iter().find(|r| r.floor.unwrap_or(1) == 0 || r.floor.unwrap_or(1) as usize > n) {
         return Err(format!("room '{}' is on floor {} but the building has {n} floor(s)", r.key, r.floor.unwrap_or(1)));
     }
@@ -122,7 +132,15 @@ pub fn plan_building(b: &BriefIn, n: u32) -> Result<BuildingPlan, String> {
                 return Err(format!("room key '{}' is used on floor {prev} and floor {}: keys must be unique", r.key, l + 1));
             }
         }
-        let adjacency = adjacency_of(&reqs);
+        let mut adjacency = adjacency_of(&reqs);
+        for rule in &b.adjacency {
+            let here = |base: &str| if repeats { format!("{base}@{l}") } else { base.to_string() };
+            let (ka, kb) = (here(&rule.a), here(&rule.b));
+            let has = |k: &str| reqs.iter().any(|r| r.key == k);
+            if has(&ka) && has(&kb) && !adjacency.iter().any(|x| (x.a == ka && x.b == kb) || (x.a == kb && x.b == ka)) {
+                adjacency.push(nnx_core::layout::Adjacency { a: ka, b: kb, weight: rule.weight });
+            }
+        }
         let (main_env, block) = match &stair {
             Some(s) => {
                 let blk = building::stair_block(envelope, entry, s, &suffix)?;

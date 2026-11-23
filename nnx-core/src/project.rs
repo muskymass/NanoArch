@@ -130,6 +130,16 @@ pub struct StairIn {
     pub side: String,
 }
 
+/// A neighbour rule between two rooms of the brief: a positive weight asks for them to share a wall and a door, a negative one
+/// keeps them apart. Absent from the brief means no preference; nothing is assumed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdjIn {
+    pub a: String,
+    pub b: String,
+    /// -3 (never next to each other) to 3 (always next to each other); 0 is refused.
+    pub weight: i32,
+}
+
 /// The architectural brief exactly as the user entered it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BriefIn {
@@ -154,6 +164,9 @@ pub struct BriefIn {
     /// Wall height = storey height (mm). None keeps the engine's default (3000); it must be positive.
     #[serde(default)]
     pub wall_height_mm: Option<i64>,
+    /// Neighbour rules by room key. A rule applies on every floor where both rooms stand (a repeated floor included).
+    #[serde(default)]
+    pub adjacency: Vec<AdjIn>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

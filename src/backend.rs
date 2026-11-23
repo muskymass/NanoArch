@@ -3127,6 +3127,23 @@ mod tests {
     }
 
     #[test]
+    fn a_neighbour_rule_is_validated_and_a_wanted_pair_shares_a_wall_and_a_door() {
+        let mut brief = brief2();
+        brief["adjacency"] = json!([{ "a": "majlis", "b": "bath1", "weight": 0 }]);
+        let mut app = App::default();
+        assert!(app.handle("generate", &json!({ "brief": brief.clone(), "struct": loads2() })).unwrap_err().contains("not 0"));
+        brief["adjacency"] = json!([{ "a": "majlis", "b": "nobody", "weight": 2 }]);
+        assert!(app.handle("generate", &json!({ "brief": brief.clone(), "struct": loads2() })).unwrap_err().contains("not in the brief"));
+        brief["adjacency"] = json!([{ "a": "living", "b": "majlis", "weight": 3 }, { "a": "master", "b": "bed1", "weight": -3 }]);
+        app.handle("generate", &json!({ "brief": brief, "struct": loads2() })).unwrap();
+        app.handle("select", &json!({ "index": 0, "struct": loads2() })).unwrap();
+        let model = &app.doc.as_ref().unwrap().model;
+        let door_between = |a: &str, b: &str| model.elements.values().any(|e| e.kind == "Door" && ((e.props["from"] == a && e.props["to"] == b) || (e.props["from"] == b && e.props["to"] == a)));
+        assert!(door_between("living", "majlis"), "a wanted pair that touches gets a door");
+        assert!(!door_between("master", "bed1"), "a forbidden pair never shares a door");
+    }
+
+    #[test]
     fn the_precheck_passes_a_generated_model_and_stops_exports_when_the_model_contradicts_itself() {
         let mut app = started2();
         let r = app.handle("precheck", &json!({})).unwrap();
