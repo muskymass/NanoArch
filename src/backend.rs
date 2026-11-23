@@ -359,6 +359,7 @@ impl App {
             "site_analyze" => Self::site_analyze(args),
             "plot_import_dxf" => Self::plot_import_dxf(args),
             "ifc_review" => Self::ifc_review(args),
+            "entrances_check" => Self::entrances_check(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
@@ -1892,6 +1893,56 @@ impl App {
         let bytes = std::fs::read(path).map_err(|e| format!("ifc review: cannot read {path}: {e}"))?;
         let r = nnx_core::ifc_review::review_ifc(&bytes).map_err(|e| format!("ifc review: {e}"))?;
         Ok(json!({ "review": r }))
+    }
+
+    /// Checks that the guest door and the family door can be kept apart on the street side of a level:
+    /// `{ rooms: [{ key, func, zone, x, y, w, h }], envelope: { w, h }, entry, guest_funcs?, min_separation_mm? }` (mm).
+    /// `guest_funcs` defaults to `["majlis"]`. Without `min_separation_mm` the distance is reported and the check is skipped.
+    fn entrances_check(args: &Value) -> Result<Value, String> {
+        use nnx_core::layout::{Breakdown, Layout, PlacedRoom};
+        let num = |v: &Value, k: &str, what: &str| v.get(k).and_then(Value::as_i64).ok_or_else(|| format!("entrances: {what} '{k}' must be a whole number of millimetres"));
+        let rooms_in = args.get("rooms").and_then(Value::as_array).filter(|r| !r.is_empty()).ok_or("entrances: rooms are required")?;
+        let mut rooms = Vec::new();
+        for r in rooms_in {
+            let key = r.get("key").and_then(Value::as_str).ok_or("entrances: every room needs a key")?;
+            let zone = match r.get("zone").and_then(Value::as_str) {
+                Some("public") => Zone::Public,
+                Some("private") => Zone::Private,
+                Some("service") => Zone::Service,
+                other => return Err(format!("entrances: room '{key}' has an unknown zone {other:?}")),
+            };
+            let rect = Rect { x: num(r, "x", key)?, y: num(r, "y", key)?, w: num(r, "w", key)?, h: num(r, "h", key)? };
+            rooms.push(PlacedRoom {
+                key: key.to_string(),
+                func: r.get("func").and_then(Value::as_str).ok_or_else(|| format!("entrances: room '{key}' has no func"))?.to_string(),
+                zone,
+                needs_light: false,
+                rect,
+                area_m2: rect.area_m2(),
+                target_m2: rect.area_m2(),
+                deviation_pct: 0.0,
+            });
+        }
+        let env = args.get("envelope").ok_or("entrances: envelope is required")?;
+        let envelope = Rect { x: 0, y: 0, w: num(env, "w", "envelope")?, h: num(env, "h", "envelope")? };
+        let entry = match args.get("entry").and_then(Value::as_str) {
+            Some("south") => Side::South,
+            Some("north") => Side::North,
+            Some("east") => Side::East,
+            Some("west") => Side::West,
+            other => return Err(format!("entrances: entry must be south, north, east or west, not {other:?}")),
+        };
+        let guest_funcs: Vec<String> = match args.get("guest_funcs").filter(|v| !v.is_null()) {
+            Some(v) => serde_json::from_value(v.clone()).map_err(|e| format!("entrances: guest_funcs must be a list of room functions: {e}"))?,
+            None => vec!["majlis".to_string()],
+        };
+        let min = match args.get("min_separation_mm").filter(|v| !v.is_null()) {
+            Some(v) => Some(v.as_i64().ok_or("entrances: min_separation_mm must be a whole number of millimetres")?),
+            None => None,
+        };
+        let layout = Layout { rooms, cost: 0.0, breakdown: Breakdown::default(), reserve_m2: 0.0 };
+        let report = nnx_core::entrances::check_entrances(&layout, &envelope, entry, &guest_funcs, min)?;
+        Ok(json!({ "entrances": report }))
     }
 
     /// Reads plot boundary candidates from a DXF drawing: `{ path, units?, index? }`. A drawing without a unit needs `units`;
@@ -4159,6 +4210,23 @@ EOF
         assert!(app.handle("plot_import_dxf", &json!({})).unwrap_err().contains("path"));
         assert!(app.handle("plot_import_dxf", &json!({ "path": dir.join("none.dxf").to_str().unwrap() })).unwrap_err().contains("cannot read"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn entrances_check_separates_guest_and_family_doors_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([
+            { "key": "majlis", "func": "majlis", "zone": "public", "x": 0, "y": 0, "w": 5000, "h": 4000 },
+            { "key": "hall", "func": "hall", "zone": "public", "x": 5000, "y": 0, "w": 7000, "h": 4000 }
+        ]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 10000 }, "entry": "south", "min_separation_mm": 6000 });
+        let r = app.handle("entrances_check", &base).unwrap();
+        assert_eq!(r["entrances"]["status"], "separated");
+        assert_eq!(r["entrances"]["separation_mm"], 10800);
+        let skipped = app.handle("entrances_check", &json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 10000 }, "entry": "south" })).unwrap();
+        assert_eq!(skipped["entrances"]["status"], "unchecked");
+        assert!(app.handle("entrances_check", &json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 10000 }, "entry": "up" })).unwrap_err().contains("entry"));
+        assert!(app.handle("entrances_check", &json!({ "envelope": { "w": 1, "h": 1 }, "entry": "south" })).unwrap_err().contains("rooms are required"));
     }
 
     #[test]

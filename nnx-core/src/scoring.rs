@@ -133,7 +133,7 @@ fn touches_outside(r: &Rect, e: &Rect) -> bool {
     r.x == e.x || r.y == e.y || r.x + r.w == e.x + e.w || r.y + r.h == e.y + e.h
 }
 
-fn on_street_side(r: &Rect, e: &Rect, side: Side) -> bool {
+pub(crate) fn on_street_side(r: &Rect, e: &Rect, side: Side) -> bool {
     match side {
         Side::South => r.y == e.y,
         Side::North => r.y + r.h == e.y + e.h,
