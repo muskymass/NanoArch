@@ -470,6 +470,7 @@ impl App {
             "asbuilt_set" => self.asbuilt_set(args),
             "asbuilt_svg" => self.asbuilt_svg(),
             "tour_export" => self.tour_export(args),
+            "client_view_export" => self.client_view_export(args),
             "stl_export" => self.stl_export(args),
             "exec" => self.exec_state(),
             "cost" => self.cost_report(),
@@ -3230,14 +3231,27 @@ impl App {
 
     /// The standalone HTML tour: one file with the 3D scene and a viewer inside.
     fn tour_export(&self, args: &Value) -> Result<Value, String> {
+        self.tour_file(args, false)
+    }
+
+    /// The client presentation page: the same single offline file without the structure, the services or any engineering control.
+    fn client_view_export(&self, args: &Value) -> Result<Value, String> {
+        self.tour_file(args, true)
+    }
+
+    fn tour_file(&self, args: &Value, client: bool) -> Result<Value, String> {
         let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
         let scene = nnx_core::model3d::build_styled(&self.doc()?.model, self.style());
         let (facade, floor) = match self.project() {
             Some(p) => (p.meta.finishes.facade.as_deref().and_then(|i| nnx_core::finishes::find("facade", i)).map(|f| f.color), p.meta.finishes.floor.as_deref().and_then(|i| nnx_core::finishes::find("floor", i)).map(|f| f.color)),
             None => (None, None),
         };
-        let html = nnx_core::tour::tour_html(&scene, &self.display_title(), arabic, facade, floor)?;
-        Ok(json!({ "html": html, "name": "tour.html" }))
+        let (html, name) = if client {
+            (nnx_core::tour::tour_client_html(&scene, &self.display_title(), arabic, facade, floor)?, "client-view.html")
+        } else {
+            (nnx_core::tour::tour_html(&scene, &self.display_title(), arabic, facade, floor)?, "tour.html")
+        };
+        Ok(json!({ "html": html, "name": name }))
     }
 
     /// A binary STL of the solids at the scale entered (`scale: 100` is 1:100), optionally one level.
@@ -7303,6 +7317,11 @@ END-ISO-10303-21;
         let html = t["html"].as_str().unwrap();
         assert!(html.contains("<canvas id=\"gl\">") && html.contains("\"k\":\"Wall\"") && !html.contains("src=\"http"));
         assert_eq!(t["name"], "tour.html");
+        let c = app.handle("client_view_export", &json!({ "lang": "en" })).unwrap();
+        assert_eq!(c["name"], "client-view.html");
+        let ch = c["html"].as_str().unwrap();
+        assert!(ch.contains("\"client\":true") && !ch.contains("\"k\":\"Column\"") && ch.contains("\"k\":\"Wall\""));
+        assert!(App::default().handle("client_view_export", &json!({})).is_err());
         assert!(App::default().handle("tour_export", &json!({})).is_err() && App::default().handle("stl_export", &json!({ "scale": 100.0 })).is_err());
     }
 

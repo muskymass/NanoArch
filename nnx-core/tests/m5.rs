@@ -212,3 +212,20 @@ fn an_empty_scene_has_no_tour() {
     let scene = model3d::build(&doc.model);
     assert!(tour::tour_html(&scene, "x", false, None, None).is_err());
 }
+
+#[test]
+fn the_client_tour_carries_no_structure_or_services_and_no_engineering_controls() {
+    let doc = plan();
+    let scene = model3d::build(&doc.model);
+    let full = tour::tour_html(&scene, "Villa", false, None, None).unwrap();
+    let client = tour::tour_client_html(&scene, "Villa", false, None, None).unwrap();
+    assert!(full.contains("\"client\":false") && client.contains("\"client\":true"));
+    assert!(full.contains("\"k\":\"Column\""), "the design-team tour keeps the structure");
+    let data = &client[client.find("const D=").unwrap()..client.find("(function(){").unwrap()];
+    for kind in ["Column", "Beam", "Footing", "TieBeam", "Slab", "MepRun", "MepPoint"] {
+        assert!(!data.contains(&format!("\"k\":\"{kind}\"")), "{kind} must not be in the client data");
+    }
+    assert!(data.contains("\"k\":\"Wall\""), "the building itself stays");
+    assert!(client.contains("canvas id=\"gl\"") && !client.contains("src=\"http"));
+    assert!(client.len() < full.len());
+}
