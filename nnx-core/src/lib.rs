@@ -33,6 +33,7 @@ pub mod mezzanine;
 pub mod rooftop;
 pub mod basement;
 pub mod parking;
+pub mod terrain;
 pub mod expr;
 pub mod history;
 pub mod ifc;

@@ -369,6 +369,7 @@ impl App {
             "rooftop_check" => Self::rooftop_check(args),
             "basement_check" => Self::basement_check(args),
             "parking_plan" => Self::parking_plan(args),
+            "terrain_check" => Self::terrain_check(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
@@ -2082,6 +2083,20 @@ impl App {
             .map_err(|e| format!("parking: give area (x, y, w, h), stall_width_mm, stall_length_mm and aisle_width_mm in whole millimetres; turn needs vehicle_width_mm, wheelbase_mm, front_overhang_mm and centre_radius_mm; limits must be numbers: {e}"))?;
         let report = nnx_core::parking::plan_parking(&bounds, &spec)?;
         Ok(json!({ "parking": report }))
+    }
+
+    /// Fits sloping ground to surveyed spot levels and checks platforms, steps and ramps: `{ envelope: { w, h }, spots: [{ x, y, z_mm }],
+    /// platforms?: [{ key, x, y, w, h, level_mm }], ramps?: [{ key, from, to, run_mm, width_mm }], max_site_slope_pct?,
+    /// max_plane_residual_mm?, max_platform_ground_range_mm?, max_cut_mm?, max_fill_mm?, max_step_mm?, max_ramp_slope_pct?,
+    /// min_ramp_width_mm? }` (mm). At least three spot levels off one line are required; each limit left out is `unchecked`.
+    fn terrain_check(args: &Value) -> Result<Value, String> {
+        let env = args.get("envelope").ok_or("terrain: envelope is required")?;
+        let side = |k: &str| env.get(k).and_then(Value::as_i64).ok_or_else(|| format!("terrain: envelope '{k}' must be a whole number of millimetres"));
+        let bounds = Rect { x: 0, y: 0, w: side("w")?, h: side("h")? };
+        let spec: nnx_core::terrain::TerrainSpec = serde_json::from_value(args.clone())
+            .map_err(|e| format!("terrain: give spots (x, y, z_mm), platforms (key, x, y, w, h, level_mm) and ramps (key, from, to, run_mm, width_mm) in whole millimetres; limits must be numbers: {e}"))?;
+        let report = nnx_core::terrain::check_terrain(&bounds, &spec)?;
+        Ok(json!({ "terrain": report }))
     }
 
     /// Checks a courtyard of any simple outline: `{ rooms, envelope, outline: [{ x, y }] }` (mm). Reports area, perimeter, a
@@ -4532,6 +4547,28 @@ EOF
         let mut zero = base.clone();
         zero["aisle_width_mm"] = json!(0);
         assert!(app.handle("parking_plan", &zero).unwrap_err().contains("aisle_width_mm is required"));
+    }
+
+    #[test]
+    fn terrain_check_fits_ground_and_names_bad_input() {
+        let mut app = App::default();
+        let base = json!({ "envelope": { "w": 20000, "h": 20000 },
+            "spots": [{ "x": 0, "y": 0, "z_mm": 100000 }, { "x": 20000, "y": 0, "z_mm": 101000 }, { "x": 0, "y": 20000, "z_mm": 100000 }],
+            "platforms": [{ "key": "A", "x": 0, "y": 0, "w": 10000, "h": 10000, "level_mm": 100250 }],
+            "max_cut_mm": 300 });
+        let r = app.handle("terrain_check", &base).unwrap();
+        assert_eq!(r["terrain"]["ground"]["fall_side"], "x_min");
+        assert_eq!(r["terrain"]["cut_check"], "pass");
+        assert_eq!(r["terrain"]["fill_check"], "unchecked");
+        let mut no_env = base.clone();
+        no_env.as_object_mut().unwrap().remove("envelope");
+        assert!(app.handle("terrain_check", &no_env).unwrap_err().contains("envelope is required"));
+        let mut few = base.clone();
+        few["spots"] = json!([{ "x": 0, "y": 0, "z_mm": 1 }]);
+        assert!(app.handle("terrain_check", &few).unwrap_err().contains("at least 3 spot levels"));
+        let mut bad = base.clone();
+        bad["spots"][0].as_object_mut().unwrap().remove("z_mm");
+        assert!(app.handle("terrain_check", &bad).unwrap_err().contains("z_mm"));
     }
 
     #[test]
