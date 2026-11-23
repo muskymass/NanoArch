@@ -365,6 +365,7 @@ impl App {
             "span_compare" => Self::span_compare(args),
             "wall_load" => Self::wall_load(args),
             "drift_check" => Self::drift_check(args),
+            "deep_foundation_check" => Self::deep_foundation_check(args),
             "shear_core_check" => Self::shear_core_check(args),
             "savings_compare" => Self::savings_compare(args),
             "furniture_fit" => Self::furniture_fit(args),
@@ -2072,7 +2073,19 @@ impl App {
         Ok(json!({ "drift": report }))
     }
 
-    /// Shear-wall core around lifts and stairs: `{ walls: [{ key, x_mm, y_mm, w_mm, h_mm }], shafts?: [{ key, kind: lift|stair,
+    /// Mat and pile-group screen: `{ screen?: { isolated_area_m2, building_area_m2, max_coverage_ratio? }, mat?: { x_mm, y_mm,
+    /// w_mm, l_mm, thickness_mm?, unit_weight_kn_m3?, allowable_kpa? }, columns?: [{ key, x_mm, y_mm, load_kn, mx_knm?, my_knm? }],
+    /// piles?: [{ key, load_kn, mx_knm?, my_knm?, capacity_kn, uplift_capacity_kn?, spacing_mm?, positions?: [[x, y]],
+    /// min_spacing_mm? }] }`. Every capacity and limit is the caller's input; a missing limit leaves its check `unchecked`.
+    /// Preliminary, not a design.
+    fn deep_foundation_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::deepfound::DeepInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("deep foundation check: inputs are malformed (see the field list for screen, mat, columns and piles): {e}"))?;
+        let report = nnx_core::deepfound::check(&input)?;
+        Ok(json!({ "deep_foundation": report }))
+    }
+
+    /// Shear-wall core around lifts and stairs:`{ walls: [{ key, x_mm, y_mm, w_mm, h_mm }], shafts?: [{ key, kind: lift|stair,
     /// x_mm, y_mm, w_mm, h_mm, open_sides?, min_clear_x_mm?, min_clear_y_mm? }], e_mpa?, stiffness_factor?, levels?: [{ height_mm,
     /// fx_kn?, fy_kn? }], axial_kn?, min_wall_thickness_mm?, max_drift_ratio?, max_top_ratio?, max_shear_mpa?,
     /// max_compression_mpa?, max_tension_mpa? }`. `e_mpa` is required when `levels` are given; a missing limit leaves its check
@@ -4558,6 +4571,31 @@ EOF
         assert!(app.handle("drift_check", &no_e).unwrap_err().contains("e_mpa is required"));
         assert!(app.handle("drift_check", &json!({})).unwrap_err().contains("nothing to check"));
         assert!(app.handle("drift_check", &json!({ "beams": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn deep_foundation_check_screens_mat_and_piles_and_names_missing_input() {
+        let mut app = App::default();
+        let args = json!({
+            "mat": { "x_mm": 0, "y_mm": 0, "w_mm": 10000, "l_mm": 10000, "allowable_kpa": 150.0 },
+            "columns": [
+                { "key": "a", "x_mm": 2000, "y_mm": 2000, "load_kn": 1000 },
+                { "key": "b", "x_mm": 8000, "y_mm": 2000, "load_kn": 1000 },
+                { "key": "c", "x_mm": 2000, "y_mm": 8000, "load_kn": 1000 },
+                { "key": "d", "x_mm": 8000, "y_mm": 8000, "load_kn": 1000 }
+            ],
+            "piles": [{ "key": "C1", "load_kn": 1600, "capacity_kn": 500, "positions": [[-750, -750], [750, -750], [-750, 750], [750, 750]] }]
+        });
+        let r = app.handle("deep_foundation_check", &args).unwrap();
+        assert_eq!(r["deep_foundation"]["mat"]["max_kpa"], 40.0);
+        assert_eq!(r["deep_foundation"]["mat"]["status"], "ok");
+        assert_eq!(r["deep_foundation"]["piles"][0]["max_kn"], 400.0);
+        assert_eq!(r["deep_foundation"]["piles"][0]["spacing_status"], "unchecked");
+        let mut no_spacing = args.clone();
+        no_spacing["piles"][0].as_object_mut().unwrap().remove("positions");
+        assert!(app.handle("deep_foundation_check", &no_spacing).unwrap_err().contains("spacing_mm is required"));
+        assert!(app.handle("deep_foundation_check", &json!({})).unwrap_err().contains("nothing to check"));
+        assert!(app.handle("deep_foundation_check", &json!({ "piles": 3 })).unwrap_err().contains("malformed"));
     }
 
     #[test]
