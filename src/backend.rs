@@ -369,6 +369,7 @@ impl App {
             "spalling_check" => Self::spalling_check(args),
             "lighting_plan" => Self::lighting_plan(args),
             "panel_schedule" => Self::panel_schedule(args),
+            "cable_check" => Self::cable_check(args),
             "shear_core_check" => Self::shear_core_check(args),
             "savings_compare" => Self::savings_compare(args),
             "furniture_fit" => Self::furniture_fit(args),
@@ -2131,6 +2132,17 @@ impl App {
             .map_err(|e| format!("panel schedule: inputs are malformed (see the field list for boards and loads): {e}"))?;
         let report = nnx_core::panels::check(&input)?;
         Ok(json!({ "panels": report }))
+    }
+
+    /// Cable routes and voltage drop: `{ voltage_v, power_factor, three_phase, derating_factor, allowance_mm, catalogue: [{ key,
+    /// area_mm2, r_ohm_km, x_ohm_km, ampacity_a, source }], obstacles?: [{ key, x_mm, y_mm, w_mm, h_mm }], clearance_mm?,
+    /// circuits: [{ id, from: {x_mm,y_mm}, to, via?, rise_mm?, watts | current_a, phases: 1|3, cable? }], max_drop_pct? }`. Every
+    /// value is the caller's; none is assumed. Preliminary check, not an electrical design.
+    fn cable_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::cables::CableInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("cable check: inputs are malformed (see the field list for catalogue and circuits): {e}"))?;
+        let report = nnx_core::cables::check(&input)?;
+        Ok(json!({ "cables": report }))
     }
 
     /// Shear-wall core around lifts and stairs:`{ walls: [{ key, x_mm, y_mm, w_mm, h_mm }], shafts?: [{ key, kind: lift|stair,
@@ -4642,6 +4654,27 @@ EOF
         no_v.as_object_mut().unwrap().remove("voltage_v");
         assert!(app.handle("panel_schedule", &no_v).unwrap_err().contains("voltage_v is required"));
         assert!(app.handle("panel_schedule", &json!({ "boards": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn cable_check_sizes_by_drop_and_refuses_missing_inputs() {
+        let mut app = App::default();
+        let args = json!({
+            "voltage_v": 230, "power_factor": 1, "three_phase": false, "derating_factor": 1, "allowance_mm": 0,
+            "catalogue": [
+                { "key": "c4", "area_mm2": 4, "r_ohm_km": 5, "x_ohm_km": 0, "ampacity_a": 30, "source": "test data" },
+                { "key": "c10", "area_mm2": 10, "r_ohm_km": 2, "x_ohm_km": 0, "ampacity_a": 60, "source": "test data" }
+            ],
+            "circuits": [{ "id": "C1", "from": { "x_mm": 0, "y_mm": 0 }, "to": { "x_mm": 50000, "y_mm": 0 }, "current_a": 25, "phases": 1 }],
+            "max_drop_pct": 3
+        });
+        let r = app.handle("cable_check", &args).unwrap();
+        assert_eq!(r["cables"]["circuits"][0]["cable"], "c10");
+        assert_eq!(r["cables"]["circuits"][0]["status"], "ok");
+        let mut no_v = args.clone();
+        no_v.as_object_mut().unwrap().remove("voltage_v");
+        assert!(app.handle("cable_check", &no_v).unwrap_err().contains("voltage_v is required"));
+        assert!(app.handle("cable_check", &json!({ "circuits": 3 })).unwrap_err().contains("malformed"));
     }
 
     #[test]

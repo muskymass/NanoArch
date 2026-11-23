@@ -45,6 +45,7 @@ pub mod insulation;
 pub mod layout;
 pub mod lighting;
 pub mod mep;
+pub mod cables;
 pub mod panels;
 pub mod privacy;
 pub mod spanalt;
