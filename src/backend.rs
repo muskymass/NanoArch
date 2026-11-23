@@ -362,6 +362,7 @@ impl App {
             "entrances_check" => Self::entrances_check(args),
             "privacy_check" => Self::privacy_check(args),
             "sun_check" => Self::sun_check(args),
+            "span_compare" => Self::span_compare(args),
             "wind_check" => Self::wind_check(args),
             "courtyard_check" => Self::courtyard_check(args),
             "room_shape_check" => Self::room_shape_check(args),
@@ -1996,6 +1997,28 @@ impl App {
         let sleeping_funcs: Vec<String> = serde_json::from_value(args.get("sleeping_funcs").cloned().unwrap_or(Value::Null)).map_err(|e| format!("sun: sleeping_funcs must be a list of room functions: {e}"))?;
         let report = nnx_core::sun::check_sun(&layout, &envelope, &sleeping_funcs)?;
         Ok(json!({ "sun": report }))
+    }
+
+    /// Compares layout alternatives by how many large structural spans each asks for: `{ envelope: { w, h }, max_span_mm,
+    /// alternatives: [{ label?, rooms: [{ key, func, zone, x, y, w, h }] }] }` (mm). `max_span_mm` is a design input with no
+    /// default; without it nothing is compared. Ranks on counted support lines, not on prices.
+    fn span_compare(args: &Value) -> Result<Value, String> {
+        let alts_in = args.get("alternatives").and_then(Value::as_array).filter(|a| !a.is_empty()).ok_or("span: alternatives are required")?;
+        let limit = match args.get("max_span_mm").filter(|v| !v.is_null()) {
+            Some(v) => Some(v.as_i64().ok_or("span: max_span_mm must be a whole number of millimetres")?),
+            None => None,
+        };
+        let mut layouts = Vec::new();
+        for (i, a) in alts_in.iter().enumerate() {
+            let label = a.get("label").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("#{}", i + 1));
+            let mut one = json!({ "rooms": a.get("rooms").cloned().unwrap_or(Value::Null) });
+            one["envelope"] = args.get("envelope").cloned().unwrap_or(Value::Null);
+            let (layout, _) = Self::layout_from_args(&one, "span")?;
+            layouts.push((label, layout));
+        }
+        let refs: Vec<(String, &nnx_core::layout::Layout)> = layouts.iter().map(|(l, lay)| (l.clone(), lay)).collect();
+        let report = nnx_core::spanalt::compare(&refs, limit)?;
+        Ok(json!({ "span": report }))
     }
 
     /// Classes habitable rooms by cross ventilation against the prevailing wind:
@@ -4404,6 +4427,24 @@ EOF
         bad_side["neighbours"] = json!([{ "side": "up", "distance_mm": 1 }]);
         assert!(app.handle("privacy_check", &bad_side).unwrap_err().contains("neighbour side"));
         assert!(app.handle("privacy_check", &json!({ "rooms": rooms, "envelope": { "w": 1, "h": 1 } })).unwrap_err().contains("neighbours are required"));
+    }
+
+    #[test]
+    fn span_compare_ranks_alternatives_and_names_bad_input() {
+        let mut app = App::default();
+        let wide = json!([{ "key": "hall", "func": "hall", "zone": "public", "x": 0, "y": 0, "w": 13000, "h": 5000 }]);
+        let split = json!([
+            { "key": "a", "func": "hall", "zone": "public", "x": 0, "y": 0, "w": 6000, "h": 5000 },
+            { "key": "b", "func": "hall", "zone": "public", "x": 6000, "y": 0, "w": 6000, "h": 5000 }
+        ]);
+        let base = json!({ "envelope": { "w": 13000, "h": 5000 }, "max_span_mm": 6000, "alternatives": [{ "label": "A", "rooms": wide }, { "label": "B", "rooms": split }] });
+        let r = app.handle("span_compare", &base).unwrap();
+        assert_eq!(r["span"]["best"], 1);
+        assert_eq!(r["span"]["support_lines_saved_vs_first"], 2);
+        let mut no_limit = base.clone();
+        no_limit.as_object_mut().unwrap().remove("max_span_mm");
+        assert!(app.handle("span_compare", &no_limit).unwrap_err().contains("max_span_mm is required"));
+        assert!(app.handle("span_compare", &json!({ "envelope": { "w": 1, "h": 1 }, "max_span_mm": 6000 })).unwrap_err().contains("alternatives are required"));
     }
 
     #[test]

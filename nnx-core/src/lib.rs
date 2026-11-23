@@ -43,6 +43,7 @@ pub mod insulation;
 pub mod layout;
 pub mod mep;
 pub mod privacy;
+pub mod spanalt;
 pub mod sun;
 pub mod wind;
 pub mod model;
