@@ -3112,6 +3112,25 @@ mod tests {
     }
 
     #[test]
+    fn a_courtyard_has_no_walls_slab_ceiling_or_door_and_its_neighbours_get_windows_onto_it() {
+        let mut brief = brief2();
+        brief["rooms"].as_array_mut().unwrap().push(json!({ "key": "court", "name": "فناء", "func": "courtyard", "area": 16.0, "zone": "service", "light": false, "floor": 1 }));
+        let mut app = App::default();
+        app.handle("generate", &json!({ "brief": brief, "struct": loads2() })).unwrap();
+        let sel = app.handle("select", &json!({ "index": 0, "struct": loads2() })).unwrap();
+        let model = &app.doc.as_ref().unwrap().model;
+        assert!(model.elements.values().filter(|e| e.kind == "Wall").all(|e| e.props["roomA"] != "court" && e.props.get("roomB").is_none_or(|v| v != "court")), "no wall belongs to the courtyard");
+        assert!(model.elements.values().filter(|e| e.kind == "Door").all(|e| e.props["from"] != "court" && e.props["to"] != "court"), "nobody enters the courtyard");
+        assert!(model.elements.values().filter(|e| e.kind == "Slab").all(|e| e.props["room"] != "court"), "no slab over a courtyard");
+        let notes = sel["warnings"].to_string();
+        assert!(!notes.contains("'court'"), "no note about the courtyard: {notes}");
+        let q = app.handle("qto", &json!({})).unwrap();
+        let item = |code: &str| q["items"].as_array().unwrap().iter().find(|i| i["code"] == code).map(|i| i["quantity"].as_f64().unwrap());
+        assert!(item("COURT.AREA").is_some_and(|a| a > 10.0), "the courtyard area is counted apart");
+        assert!(item("CEILING.AREA.courtyard").is_none() && item("SKIRTING.courtyard").is_none());
+    }
+
+    #[test]
     fn a_lift_shaft_is_open_in_the_slab_only_where_an_identical_shaft_stands_above() {
         let mut brief = brief2();
         let r = |key: &str, floor: u32| json!({ "key": key, "name": "مصعد", "func": "lift", "area": 4.0, "zone": "service", "light": false, "floor": floor });

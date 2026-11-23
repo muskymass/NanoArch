@@ -420,6 +420,10 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
         f.0 += area;
         f.1.push(e.id);
 
+        // A courtyard has paving but no walls of its own and no ceiling: no skirting, no ceiling, not part of the floor area.
+        if s.func == "courtyard" {
+            continue;
+        }
         let door_widths: f64 = all_doors.iter().filter(|(_, d)| d.from == s.requirement_key || d.to == s.requirement_key).map(|(_, d)| d.width as f64).sum();
         let open: f64 = separators.iter().map(|(_, sep)| along_edges(sep, s)).sum();
         open_edge_mm += open;
@@ -430,7 +434,9 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     }
     for (func, (area, ids)) in floor {
         acc.add(&format!("FLOOR.AREA.{func}"), &format!("Floor finish, {func} (net area)"), Unit::M2, area, ids.clone());
-        acc.add(&format!("CEILING.AREA.{func}"), &format!("Ceiling, {func} (net area)"), Unit::M2, area, ids);
+        if func != "courtyard" {
+            acc.add(&format!("CEILING.AREA.{func}"), &format!("Ceiling, {func} (net area)"), Unit::M2, area, ids);
+        }
     }
     if open_edge_mm > 0.0 {
         warnings.push(format!("skirting leaves out {:.2} m of room edge that lies along room separators (no wall there)", open_edge_mm / 1000.0));
@@ -438,8 +444,13 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     for (func, (len, ids)) in skirting {
         acc.add(&format!("SKIRTING.{func}"), &format!("Skirting, {func} (perimeter minus doors)"), Unit::M, len, ids);
     }
-    let all_spaces: Vec<Id> = spaces.iter().map(|(e, _)| e.id).collect();
-    acc.add("SPACE.GROSS.AREA", "Total gross floor area", Unit::M2, spaces.iter().map(|(_, s)| s.area).sum(), all_spaces);
+    let covered = |s: &Space| s.func != "courtyard";
+    let all_spaces: Vec<Id> = spaces.iter().filter(|(_, s)| covered(s)).map(|(e, _)| e.id).collect();
+    acc.add("SPACE.GROSS.AREA", "Total gross floor area (roofed spaces)", Unit::M2, spaces.iter().filter(|(_, s)| covered(s)).map(|(_, s)| s.area).sum(), all_spaces);
+    let courts: Vec<(Id, f64)> = spaces.iter().filter(|(_, s)| !covered(s)).map(|(e, s)| (e.id, s.area)).collect();
+    if !courts.is_empty() {
+        acc.add("COURT.AREA", "Courtyard (open to the sky)", Unit::M2, courts.iter().map(|c| c.1).sum(), courts.iter().map(|c| c.0).collect());
+    }
 
     Qto { items: acc.items, warnings }
 }

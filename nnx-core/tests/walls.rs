@@ -471,3 +471,31 @@ fn every_bathroom_door_opens_into_its_own_bedroom() {
         hosts.push(host);
     }
 }
+
+fn placed(key: &str, func: &str, light: bool, x: i64, w: i64) -> PlacedRoom {
+    PlacedRoom { key: key.into(), func: func.into(), zone: Zone::Private, needs_light: light, rect: Rect { x, y: 0, w, h: 6000 }, area_m2: w as f64 * 6.0 / 1000.0, target_m2: 0.0, deviation_pct: 0.0 }
+}
+
+#[test]
+fn a_courtyard_has_no_walls_and_the_rooms_around_it_get_outside_walls_and_windows_on_it() {
+    let layout = Layout {
+        rooms: vec![placed("bed", "bedroom", true, 0, 6000), placed("court", "courtyard", false, 6000, 3000), placed("living", "living", true, 9000, 6000)],
+        cost: 0.0,
+        breakdown: Default::default(),
+        reserve_m2: 0.0,
+    };
+    let env = Rect { x: 0, y: 0, w: 15_000, h: 6000 };
+    let opts = WallOpts { entry: false, ..WallOpts::default() };
+    let plan = walls::build(&layout, env, Side::South, &opts);
+    let court_walls: Vec<_> = plan.walls.iter().filter(|w| w.court).collect();
+    assert_eq!(court_walls.len(), 2, "one wall on each side of the courtyard");
+    assert!(court_walls.iter().all(|w| w.exterior && w.rooms.0 != 1 && w.rooms.1.is_none()), "outside walls of the neighbours, none of the courtyard");
+    assert!(plan.walls.iter().all(|w| w.rooms.0 != 1 && w.rooms.1 != Some(1)), "the courtyard owns no wall");
+    // The bedroom's wall sits inside the bedroom (its edge at x = 6000 moves in by half the thickness).
+    let bed_side = court_walls.iter().find(|w| w.rooms.0 == 0).unwrap();
+    assert_eq!(bed_side.a.0, 6000 - opts.exterior_mm / 2);
+    assert!(plan.doors.is_empty() || plan.doors.iter().all(|d| d.connects.0 != 1 && d.connects.1 != Some(1)), "nobody enters the courtyard");
+    assert!(!plan.warnings.iter().any(|m| m.contains("'court'")), "no note about the courtyard: {:?}", plan.warnings);
+    let wp = walls::place_windows(&layout, &plan, &opts, &walls::WindowOpts::default());
+    assert!(wp.windows.iter().any(|w| plan.walls[w.wall].court), "a window opens onto the courtyard");
+}

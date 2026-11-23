@@ -37,6 +37,7 @@ fn func_ar(f: &str) -> &str {
         "bathroom" => "حمام",
         "stair" => "درج",
         "lift" => "مصعد",
+        "courtyard" => "فناء",
         "hall" => "ردهة",
         "circulation_reserve" => "حركة وتنقل",
         other => other,

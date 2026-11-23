@@ -38,6 +38,9 @@ pub struct WallOpts {
     /// `func` values that are shafts: exactly one door, onto a neighbour that is not itself a shaft or a wet room, never a transit room
     /// (a lift shaft is entered from a landing and nobody passes through it).
     pub dead_end_funcs: Vec<String>,
+    /// `func` values open to the sky (a courtyard, a light well): the room has no walls of its own, the walls of the rooms around it
+    /// face it as outside walls (so they take windows), and nobody enters it as a room.
+    pub open_funcs: Vec<String>,
     /// Room functions the entry door should open into, most preferred first.
     /// Without a match the public room with the longest street wall is used.
     pub entry_funcs: Vec<String>,
@@ -71,6 +74,7 @@ impl Default for WallOpts {
             door_margin_mm: 150,
             wet_funcs: vec!["bathroom".into(), "toilet".into()],
             dead_end_funcs: vec!["lift".into()],
+            open_funcs: vec!["courtyard".into()],
             entry_funcs: ["circulation_reserve", "hall", "living", "reception", "majlis"].map(String::from).to_vec(),
             hub_funcs: ["circulation_reserve", "hall", "corridor", "lobby", "living"].map(String::from).to_vec(),
             wanted: vec![],
@@ -108,6 +112,8 @@ pub struct WallSpec {
     pub end: i64,
     /// Room indices into `Layout::rooms`.
     pub rooms: (usize, Option<usize>),
+    /// True when the wall faces an open-to-sky room (a courtyard) instead of the street.
+    pub court: bool,
 }
 
 impl WallSpec {
@@ -186,7 +192,18 @@ pub fn build(layout: &Layout, envelope: Rect, entry: Side, opts: &WallOpts) -> P
 
     // ---- 1. cut room edges into wall pieces ----
     let mut groups: BTreeMap<(bool, i64), Vec<Edge>> = BTreeMap::new();
-    for (i, r) in rooms.iter().enumerate() {
+    let is_open = |i: usize| opts.open_funcs.contains(&rooms[i].func);
+    // Edges of the open rooms, to tell which outside walls face one.
+    let court_edges: Vec<(bool, i64, i64, i64)> = rooms
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| is_open(*i))
+        .flat_map(|(_, r)| {
+            let b = r.rect;
+            [(true, b.y, b.x, b.x + b.w), (true, b.y + b.h, b.x, b.x + b.w), (false, b.x, b.y, b.y + b.h), (false, b.x + b.w, b.y, b.y + b.h)]
+        })
+        .collect();
+    for (i, r) in rooms.iter().enumerate().filter(|(i, _)| !is_open(*i)) {
         let b = r.rect;
         let mut add = |horiz: bool, line: i64, a: i64, bb: i64, side: usize| {
             groups.entry((horiz, line)).or_default().push(Edge { a, b: bb, room: i, side });
@@ -227,8 +244,12 @@ pub fn build(layout: &Layout, envelope: Rect, entry: Side, opts: &WallOpts) -> P
                 inset_sum[room][side] += (end - start) as f64 * inset;
             }
             // Exterior walls sit fully inside the envelope; partitions are centred on the edge.
+            let court = exterior && court_edges.iter().any(|&(h, l, a, b)| h == horiz && l == line && start < b && end > a);
             let cl = if !exterior {
                 line
+            } else if court {
+                // A wall facing a courtyard sits inside its room, like an outside wall at the envelope.
+                if cover[0].1 % 2 == 0 { line + t / 2 } else { line - t / 2 }
             } else {
                 let (lo, hi) = if horiz { (envelope.y, envelope.y + envelope.h) } else { (envelope.x, envelope.x + envelope.w) };
                 if line == lo {
@@ -253,6 +274,7 @@ pub fn build(layout: &Layout, envelope: Rect, entry: Side, opts: &WallOpts) -> P
                 start,
                 end,
                 rooms: (first, rs.next()),
+                court,
             });
         }
     }
@@ -426,7 +448,7 @@ pub fn build(layout: &Layout, envelope: Rect, entry: Side, opts: &WallOpts) -> P
     };
     let mut entry_pick: Option<(usize, u8, i64, usize)> = None; // preference, public?, len, wall
     for (wi, w) in plan.walls.iter().enumerate().filter(|_| opts.entry) {
-        if !on_entry_side(w) || w.length() < opts.entry_door_mm + 2 * opts.door_margin_mm {
+        if w.court || !on_entry_side(w) || w.length() < opts.entry_door_mm + 2 * opts.door_margin_mm {
             continue;
         }
         let room = w.rooms.0;
@@ -444,7 +466,7 @@ pub fn build(layout: &Layout, envelope: Rect, entry: Side, opts: &WallOpts) -> P
     if let (true, Some((px, py))) = (opts.entry, opts.entry_at) {
         let mut best: Option<(i64, usize, i64)> = None;
         for (wi, w) in plan.walls.iter().enumerate() {
-            if !w.exterior || w.length() < opts.entry_door_mm + 2 * opts.door_margin_mm || is_wet(w.rooms.0) {
+            if !w.exterior || w.court || w.length() < opts.entry_door_mm + 2 * opts.door_margin_mm || is_wet(w.rooms.0) {
                 continue;
             }
             let (along, across) = if w.horizontal { (px, py) } else { (py, px) };
@@ -501,7 +523,7 @@ pub fn build(layout: &Layout, envelope: Rect, entry: Side, opts: &WallOpts) -> P
                 }
             }
         }
-        for i in (0..n).filter(|&i| !seen[i]) {
+        for i in (0..n).filter(|&i| !seen[i] && !is_open(i)) {
             plan.warnings.push(format!("room '{}' cannot be reached from the entry", rooms[i].key));
         }
     }

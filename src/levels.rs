@@ -511,17 +511,19 @@ pub fn level_opts(model: &Model, base: &StructOpts, level: Option<Id>) -> Struct
     let mut o = base.clone();
     o.floors = 1;
     o.footings = idx == 0;
+    // A courtyard is open to the sky: no slab over it on any level, the top one included.
+    let spaces_here: Vec<Space> = model.elements.values().filter(|e| e.kind == Space::KIND && e.level_id == Some(lid)).filter_map(|e| e.typed::<Space>().ok()).collect();
+    o.open_rooms = spaces_here.iter().filter(|s| s.func == "courtyard").map(|s| s.requirement_key.clone()).collect();
     if idx + 1 < lv.len() {
         let above = lv[idx + 1].1;
         let spaces_of = |l: Id| -> Vec<Space> { model.elements.values().filter(|e| e.kind == Space::KIND && e.level_id == Some(l)).filter_map(|e| e.typed::<Space>().ok()).collect() };
         let up = spaces_of(above);
         // A stair shaft is open in every slab but the top one. A lift shaft is open only where a lift shaft stands directly above it:
         // at the last level it serves its roof slab stays closed.
-        o.open_rooms = spaces_of(lid)
+        o.open_rooms.extend(spaces_of(lid)
             .into_iter()
             .filter(|s| s.func == "stair" || (s.func == "lift" && up.iter().any(|u| u.func == "lift" && (u.x, u.y, u.w, u.h) == (s.x, s.y, s.w, s.h))))
-            .map(|s| s.requirement_key)
-            .collect();
+            .map(|s| s.requirement_key));
         let cols: Vec<Column> = model.elements.values().filter(|e| e.kind == Column::KIND && e.level_id == Some(above)).filter_map(|e| e.typed::<Column>().ok()).collect();
         o.forced_columns = cols.iter().map(|c| (c.x, c.y)).collect();
         o.extra_loads = cols.iter().filter_map(|c| Some((c.x, c.y, c.axial_service_kn?))).collect();
