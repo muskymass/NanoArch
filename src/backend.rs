@@ -418,6 +418,7 @@ impl App {
             "permit_documents_check" => self.permit_documents_check(args),
             "room_finishes_schedule" => self.room_finishes_schedule(args),
             "wet_room_detail" => self.wet_room_detail(args),
+            "site_fence_plan" => self.site_fence_plan(args),
             "number_audit" => self.number_audit(),
             "lock" => self.lock(args),
             "regenerate" => self.regenerate(args),
@@ -3122,6 +3123,17 @@ impl App {
     /// the setbacks entered for it.
     fn site_plan(&self) -> Result<Value, String> {
         let p = self.project().ok_or("choose a layout first")?;
+        let r = self.site_result()?;
+        let layout = match &p.meta.site_layout {
+            Some(l) => Some(nnx_core::site_layout::layout(&r, l)?),
+            None => None,
+        };
+        Ok(json!({ "svg": nnx_core::site::site_svg_with(&r, &self.display_title(), layout.as_ref()), "name": "site-plan.svg", "result": r, "layout": layout }))
+    }
+
+    /// The site analysis of the open project (plot outline, edges, setbacks, building).
+    fn site_result(&self) -> Result<nnx_core::site::SiteResult, String> {
+        let p = self.project().ok_or("choose a layout first")?;
         let input = match p.site_input() {
             Some(i) => i,
             None => {
@@ -3131,12 +3143,18 @@ impl App {
                 i
             }
         };
-        let r = nnx_core::site::analyse(&input).map_err(|e| e.join("; "))?;
-        let layout = match &p.meta.site_layout {
-            Some(l) => Some(nnx_core::site_layout::layout(&r, l)?),
-            None => None,
-        };
-        Ok(json!({ "svg": nnx_core::site::site_svg_with(&r, &self.display_title(), layout.as_ref()), "name": "site-plan.svg", "result": r, "layout": layout }))
+        nnx_core::site::analyse(&input).map_err(|e| e.join("; "))
+    }
+
+    /// The site plan with the user's fences and gates (read-only): `{ title?, fences: [{ edge, kind?, height_m, thickness_m,
+    /// source }], gates?: [{ key, edge, kind (vehicle | pedestrian), offset_m, width_m, operation? (swing_in | swing_out |
+    /// sliding), source }] }`. Edge numbers follow `site_plan`'s `result.edges`. Returns the drawing, the fence and gate
+    /// schedule and the fenced lengths.
+    fn site_fence_plan(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::siteplan::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("site fence plan: inputs are malformed (fences [{{ edge, height_m, thickness_m, source }}], gates? [{{ key, edge, kind, offset_m, width_m, source }}]): {e}"))?;
+        let plan = nnx_core::siteplan::build(&self.site_result()?, &input)?;
+        serde_json::to_value(&plan).map_err(|e| e.to_string())
     }
 
     /// The architectural style the project names (`meta.style`), if it names one of the four.
@@ -5327,6 +5345,22 @@ EOF
         assert!(e.contains("fixtures"), "{e}");
         assert!(app.handle("wet_room_detail", &json!({ "fixtures": "x" })).unwrap_err().contains("malformed"));
         assert!(App::default().handle("wet_room_detail", &json!({})).is_err());
+    }
+
+    #[test]
+    fn site_fence_plan_cuts_the_users_gates_into_the_users_fences() {
+        let mut app = started_with_project();
+        let e = app.handle("site_fence_plan", &json!({})).unwrap_err();
+        assert!(e.contains("fences"), "{e}");
+        assert!(app.handle("site_fence_plan", &json!({ "fences": "x" })).unwrap_err().contains("malformed"));
+        let n = app.handle("site_plan", &json!({})).unwrap()["result"]["edges"].as_array().unwrap().len();
+        let fences: Vec<Value> = (0..n).map(|e| json!({ "edge": e, "kind": "solid wall", "height_m": 2.4, "thickness_m": 0.2, "source": "Brief" })).collect();
+        let out = app.handle("site_fence_plan", &json!({ "fences": fences, "gates": [{ "key": "G1", "edge": 0, "kind": "vehicle", "offset_m": 1.0, "width_m": 3.0, "source": "Brief" }] })).unwrap();
+        assert_eq!((out["vehicle_gates"].as_u64(), out["fences"][0]["gates"].as_u64()), (Some(1), Some(1)));
+        assert!(out["svg"].as_str().unwrap().starts_with("<svg"));
+        let e = app.handle("site_fence_plan", &json!({ "fences": [{ "edge": 0, "height_m": 2.4, "thickness_m": 0.2 }] })).unwrap_err();
+        assert!(e.contains("source"), "{e}");
+        assert!(App::default().handle("site_fence_plan", &json!({})).is_err());
     }
 
     #[test]

@@ -132,6 +132,7 @@ pub mod permitpack;
 pub mod signoff;
 pub mod doccheck;
 pub mod changereport;
+pub mod siteplan;
 
 pub use command::{Command, CommandError, Origin};
 pub use history::{Document, TxError};
