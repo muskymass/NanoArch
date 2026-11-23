@@ -365,6 +365,7 @@ impl App {
             "span_compare" => Self::span_compare(args),
             "wall_load" => Self::wall_load(args),
             "drift_check" => Self::drift_check(args),
+            "shear_core_check" => Self::shear_core_check(args),
             "savings_compare" => Self::savings_compare(args),
             "furniture_fit" => Self::furniture_fit(args),
             "wind_check" => Self::wind_check(args),
@@ -2069,6 +2070,18 @@ impl App {
             .map_err(|e| format!("drift check: inputs are malformed (see the field list for beams, storeys, footings and pairs): {e}"))?;
         let report = nnx_core::drift::check(&input)?;
         Ok(json!({ "drift": report }))
+    }
+
+    /// Shear-wall core around lifts and stairs: `{ walls: [{ key, x_mm, y_mm, w_mm, h_mm }], shafts?: [{ key, kind: lift|stair,
+    /// x_mm, y_mm, w_mm, h_mm, open_sides?, min_clear_x_mm?, min_clear_y_mm? }], e_mpa?, stiffness_factor?, levels?: [{ height_mm,
+    /// fx_kn?, fy_kn? }], axial_kn?, min_wall_thickness_mm?, max_drift_ratio?, max_top_ratio?, max_shear_mpa?,
+    /// max_compression_mpa?, max_tension_mpa? }`. `e_mpa` is required when `levels` are given; a missing limit leaves its check
+    /// `unchecked`. Preliminary, not a design.
+    fn shear_core_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::shearcore::CoreInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("shear core check: inputs are malformed (see the field list for walls, shafts and levels): {e}"))?;
+        let report = nnx_core::shearcore::check(&input)?;
+        Ok(json!({ "shear_core": report }))
     }
 
     /// Compares structural alternatives on concrete and steel: `{ criterion: steel_kg|concrete_m3|cost, baseline?, prices?: {
@@ -4545,6 +4558,34 @@ EOF
         assert!(app.handle("drift_check", &no_e).unwrap_err().contains("e_mpa is required"));
         assert!(app.handle("drift_check", &json!({})).unwrap_err().contains("nothing to check"));
         assert!(app.handle("drift_check", &json!({ "beams": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn shear_core_check_reports_enclosure_section_and_lateral_and_names_missing_input() {
+        let mut app = App::default();
+        let args = json!({
+            "walls": [
+                { "key": "S", "x_mm": 0, "y_mm": 0, "w_mm": 3000, "h_mm": 200 },
+                { "key": "N", "x_mm": 0, "y_mm": 2800, "w_mm": 3000, "h_mm": 200 },
+                { "key": "W", "x_mm": 0, "y_mm": 200, "w_mm": 200, "h_mm": 2600 },
+                { "key": "E", "x_mm": 2800, "y_mm": 200, "w_mm": 200, "h_mm": 2600 }
+            ],
+            "shafts": [{ "key": "L1", "kind": "lift", "x_mm": 200, "y_mm": 200, "w_mm": 2600, "h_mm": 2600 }],
+            "e_mpa": 25000.0,
+            "levels": [{ "height_mm": 12000, "fx_kn": 100.0 }],
+            "max_shear_mpa": 1.0
+        });
+        let r = app.handle("shear_core_check", &args).unwrap();
+        assert_eq!(r["shear_core"]["shafts"][0]["enclosure"], "enclosed");
+        assert_eq!(r["shear_core"]["section"]["area_mm2"], 2_240_000.0);
+        assert_eq!(r["shear_core"]["lateral"]["base_moment_about_y_knm"], 1200.0);
+        assert_eq!(r["shear_core"]["lateral"]["shear_status"], "ok");
+        assert_eq!(r["shear_core"]["lateral"]["top_status"], "unchecked");
+        let mut no_e = args.clone();
+        no_e.as_object_mut().unwrap().remove("e_mpa");
+        assert!(app.handle("shear_core_check", &no_e).unwrap_err().contains("e_mpa is required"));
+        assert!(app.handle("shear_core_check", &json!({ "walls": [] })).unwrap_err().contains("no walls"));
+        assert!(app.handle("shear_core_check", &json!({ "walls": 3 })).unwrap_err().contains("malformed"));
     }
 
     #[test]
