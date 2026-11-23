@@ -127,6 +127,7 @@ pub mod shearcore;
 pub mod wallload;
 pub mod permitpack;
 pub mod signoff;
+pub mod doccheck;
 pub mod changereport;
 
 pub use command::{Command, CommandError, Origin};

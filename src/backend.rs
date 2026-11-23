@@ -415,6 +415,7 @@ impl App {
             "certificate_html" => self.certificate(args),
             "permit_pack" => self.permit_pack(args),
             "signoff_form" => self.signoff_form(args),
+            "permit_documents_check" => self.permit_documents_check(args),
             "number_audit" => self.number_audit(),
             "lock" => self.lock(args),
             "regenerate" => self.regenerate(args),
@@ -2905,6 +2906,19 @@ impl App {
         Ok(json!({ "html": form.html, "name": "engineer_signoff.pdf", "notes": form.notes }))
     }
 
+    /// The missing permit-documents checklist (read-only): `{ required: [{ key, name, group? }], list_source, submitted: [{ key,
+    /// reference, date? }] }`. The required list is the user's, with its source; none is built in. Returns the rows, the
+    /// unmatched submitted keys, the counts, the verdict and a CSV (`name`: `permit_documents.csv`).
+    fn permit_documents_check(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::doccheck::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("documents checklist: inputs are malformed (required [{{ key, name, group? }}], list_source, submitted [{{ key, reference, date? }}]): {e}"))?;
+        self.doc()?;
+        let report = nnx_core::doccheck::check(&input)?;
+        let mut v = serde_json::to_value(&report).map_err(|e| e.to_string())?;
+        v["name"] = json!("permit_documents.csv");
+        Ok(v)
+    }
+
     /// The number audit file of the open project: every number with the source and date entered beside it, and the list of
     /// numbers that have none. Read-only; returns the entries, the counts and a CSV text (`name`: `number_audit.csv`).
     fn number_audit(&self) -> Result<Value, String> {
@@ -5230,6 +5244,25 @@ EOF
         assert!(e.contains("statement") && e.contains("scope") && !e.contains("revision"), "{e}");
         assert!(app.handle("signoff_form", &json!({ "engineer": "x" })).unwrap_err().contains("malformed"));
         assert!(App::default().handle("signoff_form", &args).is_err());
+    }
+
+    #[test]
+    fn permit_documents_check_lists_missing_items_and_names_bad_input() {
+        let mut app = started_with_project();
+        let args = json!({
+            "required": [{ "key": "deed", "name": "Title deed" }, { "key": "arch", "name": "Architectural drawings" }],
+            "list_source": "Municipality form 3, 2026-01-01",
+            "submitted": [{ "key": "arch", "reference": "A-01", "date": "2026-02-03" }]
+        });
+        let r = app.handle("permit_documents_check", &args).unwrap();
+        assert_eq!(r["name"], "permit_documents.csv");
+        assert_eq!((r["missing"].as_u64(), r["overall"].as_str()), (Some(1), Some("incomplete")));
+        assert_eq!(r["rows"][0]["status"], "missing");
+        assert_eq!(r["rows"][1]["status"], "submitted");
+        let e = app.handle("permit_documents_check", &json!({ "required": [] })).unwrap_err();
+        assert!(e.contains("list_source") && e.contains("required"), "{e}");
+        assert!(app.handle("permit_documents_check", &json!({ "required": "x" })).unwrap_err().contains("malformed"));
+        assert!(App::default().handle("permit_documents_check", &args).is_err());
     }
 
     #[test]
