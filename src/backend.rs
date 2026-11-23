@@ -366,6 +366,7 @@ impl App {
             "courtyard_check" => Self::courtyard_check(args),
             "room_shape_check" => Self::room_shape_check(args),
             "mezzanine_check" => Self::mezzanine_check(args),
+            "rooftop_check" => Self::rooftop_check(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
@@ -2038,6 +2039,19 @@ impl App {
         let spec: nnx_core::mezzanine::MezzanineSpec = serde_json::from_value(args.clone()).map_err(|e| format!("mezzanine: limits must be numbers (min_clear_*_mm in whole millimetres, max_area_share between 0 and 1): {e}"))?;
         let report = nnx_core::mezzanine::check_mezzanine(&layout, &envelope, &outline, &spec)?;
         Ok(json!({ "mezzanine": report }))
+    }
+
+    /// Checks the usable roof: `{ envelope: { w, h }, items: [{ key, kind: room|canopy|tank, x, y, w, h, height_mm,
+    /// water_depth_mm? }], parapet_mm?, min_parapet_mm?, min_edge_setback_mm?, min_gap_mm?, min_clear_mm?, max_room_share? }`
+    /// (mm). Each limit left out is reported as `unchecked`; tanks need `water_depth_mm`.
+    fn rooftop_check(args: &Value) -> Result<Value, String> {
+        let env = args.get("envelope").ok_or("rooftop: envelope is required")?;
+        let side = |k: &str| env.get(k).and_then(Value::as_i64).ok_or_else(|| format!("rooftop: envelope '{k}' must be a whole number of millimetres"));
+        let roof = Rect { x: 0, y: 0, w: side("w")?, h: side("h")? };
+        let spec: nnx_core::rooftop::RooftopSpec = serde_json::from_value(args.clone())
+            .map_err(|e| format!("rooftop: items need key, kind (room, canopy or tank), x, y, w, h and height_mm in whole millimetres, and limits must be numbers (max_room_share between 0 and 1): {e}"))?;
+        let report = nnx_core::rooftop::check_rooftop(&roof, &spec)?;
+        Ok(json!({ "rooftop": report }))
     }
 
     /// Checks a courtyard of any simple outline: `{ rooms, envelope, outline: [{ x, y }] }` (mm). Reports area, perimeter, a
@@ -4417,6 +4431,28 @@ EOF
         let mut deep = base.clone();
         deep["slab_mm"] = json!(3000);
         assert!(app.handle("mezzanine_check", &deep).unwrap_err().contains("thinner"));
+    }
+
+    #[test]
+    fn rooftop_check_measures_the_roof_and_names_bad_input() {
+        let mut app = App::default();
+        let base = json!({ "envelope": { "w": 10000, "h": 10000 }, "min_edge_setback_mm": 500,
+            "items": [{ "key": "stair", "kind": "room", "x": 1000, "y": 1000, "w": 3000, "h": 4000, "height_mm": 2600 },
+                      { "key": "t1", "kind": "tank", "x": 6000, "y": 6000, "w": 2000, "h": 2000, "height_mm": 1500, "water_depth_mm": 1200 }] });
+        let r = app.handle("rooftop_check", &base).unwrap();
+        assert!((r["rooftop"]["free_m2"].as_f64().unwrap() - 84.0).abs() < 1e-9);
+        assert!((r["rooftop"]["tank_water_kg"].as_f64().unwrap() - 4800.0).abs() < 1e-6);
+        assert_eq!(r["rooftop"]["edge_check"], "pass");
+        assert_eq!(r["rooftop"]["gap_check"], "unchecked");
+        let mut no_env = base.clone();
+        no_env.as_object_mut().unwrap().remove("envelope");
+        assert!(app.handle("rooftop_check", &no_env).unwrap_err().contains("envelope is required"));
+        let mut bad = base.clone();
+        bad["items"][0]["kind"] = json!("garden");
+        assert!(app.handle("rooftop_check", &bad).unwrap_err().contains("kind (room, canopy or tank)"));
+        let mut dry = base.clone();
+        dry["items"][1].as_object_mut().unwrap().remove("water_depth_mm");
+        assert!(app.handle("rooftop_check", &dry).unwrap_err().contains("needs water_depth_mm"));
     }
 
     #[test]
