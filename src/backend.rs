@@ -418,6 +418,7 @@ impl App {
             "permit_documents_check" => self.permit_documents_check(args),
             "room_finishes_schedule" => self.room_finishes_schedule(args),
             "wet_room_detail" => self.wet_room_detail(args),
+            "stair_detail" => self.stair_detail(args),
             "site_fence_plan" => self.site_fence_plan(args),
             "number_audit" => self.number_audit(),
             "lock" => self.lock(args),
@@ -2947,6 +2948,17 @@ impl App {
         serde_json::to_value(&detail).map_err(|e| e.to_string())
     }
 
+    /// The stair detail (read-only): `{ rise_mm, riser_count, going_mm, width_mm, nosing_mm?, landing_after_riser?, landing_length_mm?,
+    /// room?, level?, run_axis?, limits?: { min_riser_mm?, max_riser_mm?, ..., source }, title? }`. Every figure is the user's;
+    /// returns the numbered step table, the flights, the section + plan SVG and the riser / going / width / landing / 2R+G / pitch /
+    /// fit checks (`unchecked` when their limit is absent).
+    fn stair_detail(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::stairdetail::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("stair detail: inputs are malformed (rise_mm, riser_count, going_mm, width_mm, nosing_mm?, landing_after_riser?, landing_length_mm?, room?, run_axis?, limits?): {e}"))?;
+        let detail = nnx_core::stairdetail::build(&self.doc()?.model, &input)?;
+        serde_json::to_value(&detail).map_err(|e| e.to_string())
+    }
+
     /// The number audit file of the open project: every number with the source and date entered beside it, and the list of
     /// numbers that have none. Read-only; returns the entries, the counts and a CSV text (`name`: `number_audit.csv`).
     fn number_audit(&self) -> Result<Value, String> {
@@ -5334,6 +5346,18 @@ EOF
         assert!(e.contains("finishes") && e.contains("assignments"), "{e}");
         assert!(app.handle("room_finishes_schedule", &json!({ "finishes": "x" })).unwrap_err().contains("malformed"));
         assert!(App::default().handle("room_finishes_schedule", &args).is_err());
+    }
+
+    #[test]
+    fn stair_detail_needs_the_users_dimensions_and_reports_unentered_limits_as_unchecked() {
+        let mut app = started_with_project();
+        let e = app.handle("stair_detail", &json!({})).unwrap_err();
+        assert!(e.contains("rise_mm") && e.contains("riser_count"), "{e}");
+        assert!(app.handle("stair_detail", &json!({ "rise_mm": "x" })).unwrap_err().contains("malformed"));
+        let v = app.handle("stair_detail", &json!({ "rise_mm": 3000, "riser_count": 15, "going_mm": 250, "width_mm": 1200 })).unwrap();
+        assert_eq!((v["riser_height_mm"].as_f64(), v["tread_count"].as_u64(), v["overall"].as_str()), (Some(200.0), Some(14), Some("incomplete")));
+        assert!(v["svg"].as_str().unwrap().starts_with("<svg"));
+        assert!(App::default().handle("stair_detail", &json!({})).is_err());
     }
 
     #[test]
