@@ -454,6 +454,7 @@ impl App {
             "status" => Ok(json!({ "has_doc": self.doc.is_some(), "dirty": self.is_dirty() })),
             "assumptions" => Ok(assumptions()),
             "qto" => self.qto(args),
+            "qto_elements" => self.qto_elements(args),
             "set_phase" => self.set_phase(args),
             "add_feature" => self.add_feature(args),
             "features" => self.features_json(args),
@@ -1058,6 +1059,45 @@ impl App {
             .map(|i| json!({ "code": i.code, "description": i.description, "unit": i.unit.label(), "quantity": i.quantity, "sources": i.sources.len() }))
             .collect();
         Ok(json!({ "items": items, "warnings": q.warnings, "csv": q.to_csv() }))
+    }
+
+    /// The quantities of the model grouped by the element they were measured on: `{ phase?, element? }`. Read-only.
+    /// Each row is one element's share of an item; the shares of one code add up to that item (checked in the tests).
+    /// Items other modules add (MEP, insulation, finishes) have no per-element breakdown and are named in `not_linked`.
+    fn qto_elements(&self, args: &Value) -> Result<Value, String> {
+        let phase = args.get("phase").and_then(Value::as_str).filter(|p| !p.is_empty()).map(String::from);
+        if let Some(p) = phase.as_ref().filter(|p| *p != "UNSET" && !Self::PHASES.contains(&p.as_str())) {
+            return Err(format!("'{p}' is not a phase"));
+        }
+        let only = match args.get("element").filter(|v| !v.is_null()) {
+            None => None,
+            Some(v) => Some(v.as_str().and_then(|s| s.parse::<nnx_core::Id>().ok()).ok_or("element must be an element id")?),
+        };
+        let doc = self.doc()?;
+        if let Some(id) = only
+            && doc.model.get(&id).is_none()
+        {
+            return Err(format!("element {id} is not in the model"));
+        }
+        let q = qto::compute(&doc.model, &QtoOpts { phase: phase.clone(), ..QtoOpts::default() });
+        let extra = self.extra_items_for_phase(&doc.model, phase.as_deref());
+        let mut by_element: std::collections::BTreeMap<nnx_core::Id, Vec<&nnx_core::qto::ElementQty>> = std::collections::BTreeMap::new();
+        for r in &q.element_rows {
+            if only.is_none_or(|id| id == r.element) {
+                by_element.entry(r.element).or_default().push(r);
+            }
+        }
+        let elements: Vec<Value> = by_element
+            .iter()
+            .filter_map(|(id, rows)| {
+                let e = doc.model.get(id)?;
+                let quantities: Vec<Value> = rows.iter().map(|r| json!({ "code": r.code, "unit": r.unit.label(), "quantity": r.quantity })).collect();
+                Some(json!({ "id": id.to_string(), "kind": e.kind, "level_id": e.level_id.map(|l| l.to_string()), "phase": e.props.get("phase"), "quantities": quantities }))
+            })
+            .collect();
+        let mut not_linked: Vec<String> = q.unlinked_codes().into_iter().map(String::from).collect();
+        not_linked.extend(extra.iter().map(|i| i.code.clone()));
+        Ok(json!({ "elements": elements, "not_linked": not_linked, "warnings": q.warnings }))
     }
 
     /// The take-off the schedule is built from: the model's quantities, insulation, MEP devices and runs, and the concrete and steel of
@@ -3688,6 +3728,35 @@ mod tests {
         let q = app.handle("qto", &json!({})).unwrap();
         assert!(q["items"].as_array().unwrap().iter().any(|i| i["code"] == "FOOTING.COUNT"));
         assert!(q["csv"].as_str().unwrap().contains("preliminary"));
+    }
+
+    #[test]
+    fn quantities_by_element_add_up_to_the_items_and_name_what_has_no_breakdown() {
+        let mut app = App::default();
+        app.handle("generate", &json!({ "brief": brief() })).unwrap();
+        app.handle("select", &json!({ "index": 0 })).unwrap();
+        let q = app.handle("qto", &json!({})).unwrap();
+        let r = app.handle("qto_elements", &json!({})).unwrap();
+        let elements = r["elements"].as_array().unwrap();
+        assert!(!elements.is_empty());
+        for item in q["items"].as_array().unwrap() {
+            let code = item["code"].as_str().unwrap();
+            if r["not_linked"].as_array().unwrap().iter().any(|c| c == code) {
+                continue;
+            }
+            let sum: f64 = elements.iter().flat_map(|e| e["quantities"].as_array().unwrap()).filter(|x| x["code"] == code).map(|x| x["quantity"].as_f64().unwrap()).sum();
+            assert!((sum - item["quantity"].as_f64().unwrap()).abs() < 0.01, "{code}: {sum} vs {}", item["quantity"]);
+        }
+        // One element on its own returns only its rows.
+        let id = elements[0]["id"].as_str().unwrap();
+        let one = app.handle("qto_elements", &json!({ "element": id })).unwrap();
+        assert_eq!(one["elements"].as_array().unwrap().len(), 1);
+        assert_eq!(one["elements"][0]["quantities"], elements[0]["quantities"]);
+        // Bad input is refused by name.
+        assert!(app.handle("qto_elements", &json!({ "element": "nonsense" })).unwrap_err().contains("element id"));
+        assert!(app.handle("qto_elements", &json!({ "element": "00000000-0000-0000-0000-000000000000" })).unwrap_err().contains("not in the model"));
+        assert!(app.handle("qto_elements", &json!({ "phase": "BOGUS" })).is_err());
+        assert!(App::default().handle("qto_elements", &json!({})).is_err());
     }
 
     #[test]

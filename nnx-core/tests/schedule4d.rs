@@ -82,7 +82,7 @@ fn house(with_extras: bool) -> House {
         items.extend(m.insulation_items.clone());
         items.extend(sizing::schedule_items(&rep));
     }
-    House { doc, qto: Qto { items, warnings: Vec::new() } }
+    House { doc, qto: Qto { items, warnings: Vec::new(), element_rows: Vec::new() } }
 }
 
 fn lib() -> RateLib {
