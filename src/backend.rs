@@ -3112,6 +3112,29 @@ mod tests {
     }
 
     #[test]
+    fn a_lift_shaft_is_open_in_the_slab_only_where_an_identical_shaft_stands_above() {
+        let mut brief = brief2();
+        let r = |key: &str, floor: u32| json!({ "key": key, "name": "مصعد", "func": "lift", "area": 4.0, "zone": "service", "light": false, "floor": floor });
+        brief["rooms"].as_array_mut().unwrap().extend([r("lift1", 1), r("lift2", 2)]);
+        let mut app = App::default();
+        app.handle("generate", &json!({ "brief": brief, "struct": loads2() })).unwrap();
+        app.handle("select", &json!({ "index": 0, "struct": loads2() })).unwrap();
+        let lid0 = building::levels(&app.doc.as_ref().unwrap().model)[0].1;
+        let open = |app: &App| levels::level_opts(&app.doc.as_ref().unwrap().model, &StructOpts::default(), Some(lid0)).open_rooms;
+        assert!(!open(&app).contains(&"lift1".to_string()), "the generator does not stack the shafts, so the slab stays closed");
+        let rect: Vec<Value> = {
+            let sp = app.doc.as_ref().unwrap().model.elements.values().find(|e| e.kind == "Space" && e.props["requirementKey"] == "lift1").unwrap();
+            ["x", "y", "w", "h"].iter().map(|k| sp.props[*k].clone()).collect()
+        };
+        let up = app.doc.as_mut().unwrap().model.elements.values_mut().find(|e| e.kind == "Space" && e.props["requirementKey"] == "lift2").unwrap();
+        for (k, v) in ["x", "y", "w", "h"].iter().zip(rect) {
+            up.props.insert((*k).into(), v);
+        }
+        let o = open(&app);
+        assert!(o.contains(&"lift1".to_string()) && o.contains(&"stair".to_string()), "a stacked shaft opens its slab beside the stair: {o:?}");
+    }
+
+    #[test]
     fn two_floors_make_two_levels_with_the_stair_stacked_one_entrance_and_footings_only_below() {
         let mut app = App::default();
         let g = app.handle("generate", &json!({ "brief": brief2(), "struct": loads2() })).unwrap();
