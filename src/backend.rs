@@ -736,7 +736,16 @@ impl App {
         let first = nnx_core::sizing::compute(&self.doc()?.model, soil, &loaded);
         nnx_core::sizing::apply_tie_beams(self.doc.as_mut().ok_or("choose a layout first")?, &first)?;
         let r = nnx_core::sizing::compute(&self.doc()?.model, soil, &loaded);
-        Ok(json!({ "report": r, "members_csv": r.members_csv(), "concrete_csv": r.concrete_csv(), "bbs_csv": r.bbs_csv(), "soil_kpa": soil }))
+        // The bar bending schedule with shapes, bends, type marks and the per-diameter summary. When it cannot be built the reason
+        // comes back by name next to the report; the sizing itself is not hidden by it.
+        let (bbs, bbs_error) = match nnx_core::bbs::build(&r, &loaded) {
+            Ok(b) => (Some(b), None),
+            Err(e) => (None, Some(e)),
+        };
+        Ok(json!({
+            "report": r, "members_csv": r.members_csv(), "concrete_csv": r.concrete_csv(), "bbs_csv": r.bbs_csv(), "soil_kpa": soil,
+            "bbs": bbs, "bbs_lines_csv": bbs.as_ref().map(|b| b.lines_csv()), "bbs_summary_csv": bbs.as_ref().map(|b| b.summary_csv()), "bbs_error": bbs_error,
+        }))
     }
 
     /// The construction phases an element can carry. Nothing is assumed: an element with no phase stays unset.
@@ -5715,6 +5724,11 @@ END-ISO-10303-21;
         assert!(!rep["tie_beams"].as_array().unwrap().is_empty() && rep["concrete_total_m3"].as_f64().unwrap() > 0.0 && rep["steel_total_kg"].as_f64().unwrap() > 0.0);
         assert!(rep["bars"].as_array().unwrap().iter().filter(|b| !b["element"].as_str().unwrap().starts_with("TB-")).all(|b| b["id"].is_string()));
         assert!(r["bbs_csv"].as_str().unwrap().contains("COL-1/V") && r["concrete_csv"].as_str().unwrap().contains("TOTAL") && r["members_csv"].as_str().unwrap().contains("FND-1"));
+        // The schedule with shapes and bends agrees with the report's own steel total and carries a type mark on every line.
+        assert!(r["bbs_error"].is_null(), "{}", r["bbs_error"]);
+        assert!((r["bbs"]["total_kg"].as_f64().unwrap() - rep["steel_total_kg"].as_f64().unwrap()).abs() < 0.01);
+        assert!(r["bbs"]["lines"].as_array().unwrap().iter().all(|l| l["type_mark"].as_str().unwrap().starts_with('M')));
+        assert!(r["bbs_summary_csv"].as_str().unwrap().contains("unit_kg_m") && r["bbs_lines_csv"].as_str().unwrap().contains("TOTAL"));
         // The inputs live in the project: undo takes them out, the same inputs again are not a change.
         assert!(app.project().unwrap().sizing.is_some());
         let h = hash(&app);
