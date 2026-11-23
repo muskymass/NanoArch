@@ -479,6 +479,7 @@ impl App {
             "snapshot_save" => self.snapshot_save(args),
             "snapshot_delete" => self.snapshot_delete(args),
             "snapshot_diff" => self.snapshot_diff(args),
+            "snapshot_report" => self.snapshot_report(args),
             "snapshot_svg" => self.snapshot_svg(args),
             "overlays" => self.overlays_report(),
             "overlay_review" => self.overlay_review(args),
@@ -1412,6 +1413,24 @@ impl App {
         let d = nnx_core::snapshot::compare(&a, &b);
         let statuses: BTreeMap<&str, &str> = d.elements.iter().filter(|e| e.status != "removed").map(|e| (e.id.as_str(), e.status)).collect();
         Ok(json!({ "diff": d, "statuses": statuses, "on_plan": args.get("b").and_then(Value::as_str).is_none_or(|b| b == "current") }))
+    }
+
+    /// The printable change report (`html`, bilingual) and its CSV between snapshot `a` and `b` (default: the current model).
+    /// Read-only. `lang` is `en` for English, anything else Arabic.
+    fn snapshot_report(&self, args: &Value) -> Result<Value, String> {
+        let a = self.snapshot_or_current(args.get("a").and_then(Value::as_str).ok_or("choose the first snapshot")?)?;
+        let b = self.snapshot_or_current(args.get("b").and_then(Value::as_str).unwrap_or("current"))?;
+        let d = nnx_core::snapshot::compare(&a, &b);
+        let date: String = utc_now().chars().take(10).collect();
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        Ok(json!({
+            "html": nnx_core::changereport::html(&d, &self.display_title(), &date, arabic),
+            "csv": nnx_core::changereport::csv(&d),
+            "name": "change_report.pdf",
+            "csv_name": "change_report.csv",
+            "has_changes": nnx_core::changereport::has_changes(&d),
+            "added": d.added, "removed": d.removed, "modified": d.modified,
+        }))
     }
 
     /// The plan of the level on screen with revision clouds around what changed from snapshot `a` to the current model.
@@ -5115,6 +5134,22 @@ EOF
         assert!(app.handle("shear_core_check", &no_e).unwrap_err().contains("e_mpa is required"));
         assert!(app.handle("shear_core_check", &json!({ "walls": [] })).unwrap_err().contains("no walls"));
         assert!(app.handle("shear_core_check", &json!({ "walls": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn snapshot_report_builds_html_and_csv_between_two_versions() {
+        let mut app = started_with_project();
+        app.handle("snapshot_save", &json!({ "name": "Rev A" })).unwrap();
+        let same = app.handle("snapshot_report", &json!({ "a": "S1", "lang": "en" })).unwrap();
+        assert_eq!(same["has_changes"], false);
+        assert!(same["html"].as_str().unwrap().contains("No difference between the two versions"));
+        let ar = app.handle("snapshot_report", &json!({ "a": "S1" })).unwrap();
+        assert!(ar["html"].as_str().unwrap().contains("dir=\"rtl\""));
+        assert!(ar["csv"].as_str().unwrap().starts_with("section,id,"));
+        assert_eq!(ar["name"], "change_report.pdf");
+        assert!(app.handle("snapshot_report", &json!({})).is_err());
+        assert!(app.handle("snapshot_report", &json!({ "a": "S9" })).is_err());
+        assert!(App::default().handle("snapshot_report", &json!({ "a": "S1" })).is_err());
     }
 
     #[test]
