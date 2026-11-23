@@ -4469,7 +4469,7 @@ EOF
     fn every_starter_template_applies_and_generates_a_plan_with_no_empty_room_area() {
         let list = App::default().handle("templates", &json!({})).unwrap();
         let ids: Vec<String> = list["templates"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap().to_string()).collect();
-        assert_eq!(ids, vec!["villa_jubail", "palace", "apartments_4"]);
+        assert_eq!(ids, vec!["villa_jubail", "palace", "apartments_4", "duplex", "annex"]);
         assert!(App::default().handle("template_apply", &json!({ "id": "nope" })).is_err());
         for id in ids {
             let r = App::default().handle("template_apply", &json!({ "id": id })).unwrap();
@@ -4478,9 +4478,11 @@ EOF
             // The page sends exactly this: the plot, the setbacks from the rule, the rooms with their areas.
             let rooms: Vec<Value> = t["rooms"].as_array().unwrap().iter().map(|x| json!({ "key": x["key"], "name": x["name"], "func": x["func"], "area": x["area_m2"], "zone": x["zone"], "light": x["func"] != "bathroom", "floor": x["floor"] })).collect();
             assert!(rooms.iter().all(|x| x["area"].as_f64().unwrap() > 0.0));
-            let st = t["stair"].as_array().unwrap();
-            let brief = json!({ "title": t["project_title"], "width_m": t["plot_width_m"], "length_m": t["plot_length_m"], "setback_front_m": r["setbacks"]["front_m"], "setback_back_m": r["setbacks"]["back_m"], "setback_side_m": r["setbacks"]["side_m"], "entry": "south", "rooms": rooms,
-                "stair": { "width_m": st[0], "length_m": st[1], "side": st[2] } });
+            // A single-storey template (the annex) has no stair, as the page sends it.
+            let mut brief = json!({ "title": t["project_title"], "width_m": t["plot_width_m"], "length_m": t["plot_length_m"], "setback_front_m": r["setbacks"]["front_m"], "setback_back_m": r["setbacks"]["back_m"], "setback_side_m": r["setbacks"]["side_m"], "entry": "south", "rooms": rooms });
+            if let Some(st) = t["stair"].as_array() {
+                brief["stair"] = json!({ "width_m": st[0], "length_m": st[1], "side": st[2] });
+            }
             let meta = json!({ "buildingType": t["building_type"], "style": t["style"], "climateZone": t["city"] });
             let mut app = App::default();
             let g = app.handle("generate", &json!({ "brief": brief, "struct": { "floors": t["floors"] }, "meta": meta })).unwrap_or_else(|e| panic!("{id}: {e}"));

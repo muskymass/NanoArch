@@ -50,14 +50,14 @@ fn keyword_and_model_rooms_never_come_back_with_an_empty_area() {
 }
 
 #[test]
-fn the_three_templates_are_the_ones_asked_for_and_their_setbacks_come_from_the_ministry_rule() {
+fn the_starter_templates_are_the_ones_asked_for_and_their_setbacks_come_from_the_ministry_rule() {
     let all = templates::all();
-    assert_eq!(all.iter().map(|t| t.id).collect::<Vec<_>>(), vec!["villa_jubail", "palace", "apartments_4"]);
+    assert_eq!(all.iter().map(|t| t.id).collect::<Vec<_>>(), vec!["villa_jubail", "palace", "apartments_4", "duplex", "annex"]);
     assert_eq!(all[0].title_ar, "فيلا سكنية - الجبيل (600 م² - طراز نجدي حديث)");
     assert_eq!(all[1].title_ar, "قصر سكني (1,500 م² - كلاسيكي حديث)");
     assert_eq!(all[2].title_ar, "عمارة سكنية 4 أدوار (900 م² - معاصر)");
     assert_eq!([all[0].plot_width_m * all[0].plot_length_m, all[1].plot_width_m * all[1].plot_length_m, all[2].plot_width_m * all[2].plot_length_m], [600.0, 1500.0, 900.0]);
-    assert_eq!(all.iter().map(|t| t.style).collect::<Vec<_>>(), vec!["modern_najdi", "neo_classical", "contemporary"]);
+    assert_eq!(all.iter().map(|t| t.style).collect::<Vec<_>>(), vec!["modern_najdi", "neo_classical", "contemporary", "contemporary", "contemporary"]);
     assert_eq!(all[2].floors, 4);
     // Villa: street 15 m -> front 3 m (a fifth, not less than 3 m); neighbours 1.5 m.
     let (sb, src) = templates::setbacks(&all[0]).unwrap();
@@ -91,4 +91,22 @@ fn a_rectangular_plot_with_its_setbacks_draws_the_same_site_plan_as_a_polygon() 
         assert!(svg.contains(needle), "{needle}");
     }
     assert!(svg.starts_with("<svg") && svg.trim_end().ends_with("</svg>"));
+}
+
+#[test]
+fn the_duplex_and_the_annex_are_complete_starting_points_with_ministry_setbacks() {
+    let duplex = templates::find("duplex").unwrap();
+    assert_eq!((duplex.floors, duplex.plot_width_m * duplex.plot_length_m), (2, 400.0));
+    for f in 1..=2 {
+        assert!(duplex.rooms.iter().any(|r| r.floor == f && r.func == "kitchen") && duplex.rooms.iter().filter(|r| r.floor == f && r.func == "bedroom").count() == 3);
+    }
+    assert_eq!(templates::setbacks(&duplex).unwrap().0, [3.0, 1.5, 1.5]);
+    let annex = templates::find("annex").unwrap();
+    assert_eq!((annex.floors, annex.stair, annex.plot_width_m * annex.plot_length_m), (1, None, 180.0));
+    let funcs: Vec<&str> = annex.rooms.iter().map(|r| r.func).collect();
+    assert_eq!(funcs, vec!["majlis", "kitchen", "bedroom", "bathroom"]);
+    assert_eq!(templates::setbacks(&annex).unwrap().0, [3.0, 1.5, 1.5]);
+    for t in [&duplex, &annex] {
+        assert!(t.assumptions.iter().any(|a| a.contains("clause 4-1")), "{}", t.id);
+    }
 }
