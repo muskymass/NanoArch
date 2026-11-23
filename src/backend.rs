@@ -368,6 +368,7 @@ impl App {
             "mezzanine_check" => Self::mezzanine_check(args),
             "rooftop_check" => Self::rooftop_check(args),
             "basement_check" => Self::basement_check(args),
+            "parking_plan" => Self::parking_plan(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
@@ -2067,6 +2068,20 @@ impl App {
             .map_err(|e| format!("basement: give outline (x, y, w, h), storey_mm, slab_mm and depth_mm in whole millimetres; spaces need key, kind (parking, storage, service, ramp or core), x, y, w, h (a ramp also run_along x or y, parking also stalls); limits must be numbers: {e}"))?;
         let report = nnx_core::basement::check_basement(&bounds, &spec)?;
         Ok(json!({ "basement": report }))
+    }
+
+    /// Packs 90-degree parking stalls into an area: `{ envelope: { w, h }, area: { x, y, w, h }, stall_width_mm, stall_length_mm,
+    /// aisle_width_mm, min_stall_width_mm?, min_stall_length_mm?, min_aisle_width_mm?, required_stalls?, turn?: { vehicle_width_mm,
+    /// wheelbase_mm, front_overhang_mm, centre_radius_mm, lane_width_mm? } }` (mm). Sizes have no defaults; each limit left out
+    /// is reported as `unchecked`.
+    fn parking_plan(args: &Value) -> Result<Value, String> {
+        let env = args.get("envelope").ok_or("parking: envelope is required")?;
+        let side = |k: &str| env.get(k).and_then(Value::as_i64).ok_or_else(|| format!("parking: envelope '{k}' must be a whole number of millimetres"));
+        let bounds = Rect { x: 0, y: 0, w: side("w")?, h: side("h")? };
+        let spec: nnx_core::parking::ParkingSpec = serde_json::from_value(args.clone())
+            .map_err(|e| format!("parking: give area (x, y, w, h), stall_width_mm, stall_length_mm and aisle_width_mm in whole millimetres; turn needs vehicle_width_mm, wheelbase_mm, front_overhang_mm and centre_radius_mm; limits must be numbers: {e}"))?;
+        let report = nnx_core::parking::plan_parking(&bounds, &spec)?;
+        Ok(json!({ "parking": report }))
     }
 
     /// Checks a courtyard of any simple outline: `{ rooms, envelope, outline: [{ x, y }] }` (mm). Reports area, perimeter, a
@@ -4494,6 +4509,29 @@ EOF
         let mut no_depth = base.clone();
         no_depth.as_object_mut().unwrap().remove("depth_mm");
         assert!(app.handle("basement_check", &no_depth).unwrap_err().contains("depth_mm"));
+    }
+
+    #[test]
+    fn parking_plan_packs_stalls_and_names_bad_input() {
+        let mut app = App::default();
+        let base = json!({ "envelope": { "w": 40000, "h": 40000 }, "area": { "x": 1000, "y": 2000, "w": 15000, "h": 16000 },
+            "stall_width_mm": 2500, "stall_length_mm": 5000, "aisle_width_mm": 6000, "required_stalls": 12,
+            "turn": { "vehicle_width_mm": 1800, "wheelbase_mm": 2700, "front_overhang_mm": 900, "centre_radius_mm": 5000, "lane_width_mm": 4000 } });
+        let r = app.handle("parking_plan", &base).unwrap();
+        assert_eq!(r["parking"]["stall_count"], 12);
+        assert_eq!(r["parking"]["stalls"].as_array().unwrap().len(), 12);
+        assert_eq!(r["parking"]["count_check"], "pass");
+        assert_eq!(r["parking"]["turn_check"], "pass");
+        assert_eq!(r["parking"]["aisle_check"], "unchecked");
+        let mut no_env = base.clone();
+        no_env.as_object_mut().unwrap().remove("envelope");
+        assert!(app.handle("parking_plan", &no_env).unwrap_err().contains("envelope is required"));
+        let mut no_stall = base.clone();
+        no_stall.as_object_mut().unwrap().remove("stall_width_mm");
+        assert!(app.handle("parking_plan", &no_stall).unwrap_err().contains("stall_width_mm"));
+        let mut zero = base.clone();
+        zero["aisle_width_mm"] = json!(0);
+        assert!(app.handle("parking_plan", &zero).unwrap_err().contains("aisle_width_mm is required"));
     }
 
     #[test]
