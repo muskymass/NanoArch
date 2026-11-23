@@ -305,6 +305,7 @@ impl App {
                 }
                 Ok(d)
             }
+            "voice_edit" => self.voice_edit(args),
             "move_partition" => {
                 let (id, delta) = (id_arg(args, "wall")?, args.get("delta_mm").and_then(Value::as_i64).ok_or("delta_mm is required")?);
                 self.guard_lock(&[id])?;
@@ -2362,6 +2363,28 @@ impl App {
     }
 
     /// The room table (name, target and actual area) read from the model's spaces.
+    /// `voice_edit`: the text of a spoken instruction becomes a proposed room swap. Nothing is changed: the page shows the
+    /// proposal and, once the user confirms it, sends `swap_rooms` with the two ids (locks and the undo step apply there).
+    fn voice_edit(&self, args: &Value) -> Result<Value, String> {
+        let text = args.get("transcript").and_then(Value::as_str).filter(|t| !t.trim().is_empty()).ok_or("transcript is required: the text of what was said")?;
+        let doc = self.doc()?;
+        let level = self.current_level();
+        let labels = self.labels();
+        let rooms: Vec<nnx_core::voicecmd::VoiceRoom> = doc
+            .model
+            .elements
+            .values()
+            .filter(|e| level.is_none() || e.level_id == level)
+            .filter_map(|e| {
+                let s = e.typed::<nnx_core::typed::Space>().ok()?;
+                let name = nnx_core::annot::room_name(&s, &labels).unwrap_or_default();
+                Some(nnx_core::voicecmd::VoiceRoom { id: e.id.to_string(), key: s.requirement_key, func: s.func, name, rect: nnx_core::layout::Rect { x: s.x, y: s.y, w: s.w, h: s.h } })
+            })
+            .collect();
+        let proposal = nnx_core::voicecmd::interpret(text, &rooms)?;
+        Ok(json!({ "proposal": proposal }))
+    }
+
     fn rooms_json(&self) -> Vec<Value> {
         let level = self.current_level();
         let labels = self.labels();
@@ -4308,6 +4331,34 @@ mod tests {
                 assert_eq!(w * h, 0, "two rooms overlap");
             }
         }
+    }
+
+    #[test]
+    fn a_spoken_instruction_is_only_a_proposal_until_the_swap_is_confirmed_and_then_undoes_in_one_step() {
+        let mut app = started();
+        let before = hash(&app);
+        assert!(app.handle("voice_edit", &json!({})).unwrap_err().contains("transcript"));
+        assert!(app.handle("voice_edit", &json!({ "transcript": "ما هو الطقس" })).unwrap_err().contains("لم أفهم"));
+        assert!(app.handle("voice_edit", &json!({ "transcript": "حرّك المطبخ 3 متر شمالا" })).unwrap_err().contains("مسافة"));
+        // Try every room and side until one has a neighbour with a full shared wall; the generated plan decides which.
+        let names: Vec<String> = app.rooms_json().iter().map(|r| r["name"].as_str().unwrap().to_string()).collect();
+        let mut found = None;
+        'search: for n in &names {
+            for side in ["الشمال", "الجنوب", "الشرق", "الغرب"] {
+                if let Ok(r) = app.handle("voice_edit", &json!({ "transcript": format!("حرّك {n} إلى {side}") })) {
+                    found = Some(r["proposal"].clone());
+                    break 'search;
+                }
+            }
+        }
+        let p = found.expect("some room has a neighbour that shares a full wall");
+        assert_eq!(hash(&app), before, "a proposal changes nothing");
+        assert_eq!((p["unconfirmed"].clone(), p["command"].clone()), (json!(true), json!("swap_rooms")));
+        // The user confirms: the page sends the proposal's two ids to swap_rooms, which is one undo step.
+        app.handle("swap_rooms", &json!({ "a": p["a_id"], "b": p["b_id"] })).unwrap();
+        assert_ne!(hash(&app), before);
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(hash(&app), before);
     }
 
     #[test]

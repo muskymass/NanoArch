@@ -8,6 +8,7 @@ mod backend;
 mod editing;
 mod levels;
 mod ollama;
+mod voice;
 
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -74,6 +75,8 @@ fn respond(app: &Shared, body: &str) -> String {
         "sketch_pdfjs" => Ok(json!({ "lib": PDFJS, "worker": PDFJS_WORKER })),
         // The local model assistant talks to a server and may take a while: it runs outside the lock.
         "ai_status" | "ai_brief" | "ai_sketch" | "ai_deed" => ollama::handle(cmd, &args),
+        // A recording is transcribed by a program on this computer; it may take a while, so it runs outside the lock.
+        "voice_transcribe" => voice::handle(&args),
         // The lock is held only while the engines run, never while a dialog is open.
         _ => lock(app).handle(cmd, &args),
     };
