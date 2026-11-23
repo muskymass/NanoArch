@@ -203,6 +203,8 @@ pub struct NanoArchProject {
     pub overlays: Vec<crate::overlay::Overlay>,
     /// The user's table of municipality regulations (each value with its source).
     pub municipalities: Vec<crate::municipality::MunicipalityEntry>,
+    /// Office plugins (rule packs and starter templates) installed by the user.
+    pub plugins: Vec<crate::plugins::Plugin>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -263,6 +265,7 @@ impl NanoArchProject {
         crate::snapshot::check_all(&self.snapshots)?;
         crate::overlay::check_all(&self.overlays)?;
         crate::municipality::check_all(&self.municipalities)?;
+        crate::plugins::check_all(&self.plugins)?;
         if let Some(f) = &self.meta.furniture
             && f.min_clear_mm.is_some_and(|m| !m.is_finite() || m <= 0.0)
         {

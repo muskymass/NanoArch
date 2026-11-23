@@ -144,6 +144,7 @@ pub mod doccheck;
 pub mod changereport;
 pub mod siteplan;
 pub mod bundle;
+pub mod plugins;
 
 pub use command::{Command, CommandError, Origin};
 pub use history::{Document, Step, TxError};

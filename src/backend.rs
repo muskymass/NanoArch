@@ -501,6 +501,12 @@ impl App {
             "snapshot_report" => self.snapshot_report(args),
             "snapshot_svg" => self.snapshot_svg(args),
             "overlays" => self.overlays_report(),
+            "plugins" => self.plugins_report(),
+            "plugin_review" => self.plugin_review(args),
+            "plugin_add" => self.plugin_add(args),
+            "plugin_toggle" => self.plugin_toggle(args),
+            "plugin_remove" => self.plugin_remove(args),
+            "plugin_template" => self.plugin_template(args),
             "overlay_review" => self.overlay_review(args),
             "overlay_add" => self.overlay_add(args),
             "overlay_toggle" => self.overlay_toggle(args),
@@ -1464,7 +1470,7 @@ impl App {
     fn check_rules(&self, args: &Value) -> Result<Value, String> {
         let doc = self.doc()?;
         let base = args.get("pack").and_then(Value::as_str);
-        let overlays = self.project().map(|p| p.overlays).unwrap_or_default();
+        let overlays = self.project().map(|p| nnx_core::plugins::effective_overlays(&p.overlays, &p.plugins)).unwrap_or_default();
         let sourced = args.get("sourced").and_then(Value::as_bool).unwrap_or(false);
         if !sourced && base.is_none_or(|b| b.trim().is_empty()) && !overlays.iter().any(|o| o.enabled) {
             return Err("paste a rule pack (JSON), use the sourced pack, or load and enable a municipal overlay".into());
@@ -1691,7 +1697,8 @@ impl App {
 
     /// The rule set in force before a new overlay: the pasted base pack (if any), then the enabled overlays already loaded.
     fn overlay_base(&self, args: &Value) -> Result<nnx_core::rules::RuleSet, String> {
-        let list = self.project().ok_or("choose a layout first")?.overlays;
+        let p = self.project().ok_or("choose a layout first")?;
+        let list = nnx_core::plugins::effective_overlays(&p.overlays, &p.plugins);
         nnx_core::overlay::rule_set(args.get("base").and_then(Value::as_str), &list).map(|r| r.0)
     }
 
@@ -1766,6 +1773,104 @@ impl App {
         v["changed"] = json!(changed);
         v["new_violations"] = json!(violations);
         Ok(v)
+    }
+
+    // ------------------------------------------------------------------ Office plugins
+
+    fn plugins_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let list: Vec<Value> = p
+            .plugins
+            .iter()
+            .map(|x| {
+                let templates: Vec<Value> = x.templates.iter().map(|t| json!({ "address": format!("{}/{}", x.id, t.id), "title_ar": t.title_ar, "title_en": t.title_en, "rooms": t.rooms.len(), "floors": t.floors })).collect();
+                json!({ "id": x.id, "name": x.name, "version": x.version, "publisher": x.publisher, "source": x.source, "description": x.description, "date": x.date, "enabled": x.enabled, "has_rules": x.rules.is_some(), "templates": templates })
+            })
+            .collect();
+        Ok(json!({ "plugins": list }))
+    }
+
+    /// The plugin typed or loaded by the user (`plugin`: an object or its JSON text). It is installed disabled-or-enabled as `enabled` says.
+    fn plugin_from_args(&self, args: &Value) -> Result<nnx_core::plugins::Plugin, String> {
+        let raw = args.get("plugin").ok_or("plugin is required (the plugin definition)")?;
+        let mut v = match raw {
+            Value::String(text) => serde_json::from_str::<Value>(text).map_err(|e| format!("plugin json: {e}"))?,
+            other => other.clone(),
+        };
+        if v.get("rules").is_some_and(Value::is_object) {
+            let text = v["rules"].to_string();
+            v["rules"] = Value::String(text);
+        }
+        let mut pl: nnx_core::plugins::Plugin = serde_json::from_value(v).map_err(|e| format!("plugin: {e}"))?;
+        if pl.id.trim().is_empty() {
+            pl.id = nnx_core::plugins::next_id(&self.project().ok_or("choose a layout first")?.plugins);
+        }
+        pl.enabled = args.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+        Ok(pl)
+    }
+
+    /// What installing this plugin would do, without storing anything.
+    fn plugin_review(&self, args: &Value) -> Result<Value, String> {
+        let pl = self.plugin_from_args(args)?;
+        let p = self.project().ok_or("choose a layout first")?;
+        Ok(json!({ "review": nnx_core::plugins::review(&pl, &p.overlays, &p.plugins) }))
+    }
+
+    /// Stores the plugin once it is valid and, when it replaces anything, once the user confirmed that.
+    fn plugin_add(&mut self, args: &Value) -> Result<Value, String> {
+        let pl = self.plugin_from_args(args)?;
+        let p = self.project().ok_or("choose a layout first")?;
+        let review = nnx_core::plugins::review(&pl, &p.overlays, &p.plugins);
+        if !review.errors.is_empty() {
+            return Err(format!("plugin refused: {}", review.errors.join("; ")));
+        }
+        if review.needs_confirm && args.get("confirm").and_then(Value::as_bool) != Some(true) {
+            return Ok(json!({ "stored": false, "review": review }));
+        }
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "Install plugin", |p| {
+            p.plugins.retain(|x| x.id != pl.id);
+            p.plugins.push(pl.clone());
+            Ok(())
+        })?;
+        let mut v = self.plugins_report()?;
+        v["stored"] = json!(true);
+        v["review"] = json!(review);
+        Ok(v)
+    }
+
+    fn plugin_toggle(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+        let on = args.get("enabled").and_then(Value::as_bool).ok_or("enabled is required")?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, if on { "Enable plugin" } else { "Disable plugin" }, |p| {
+            p.plugins.iter_mut().find(|x| x.id == id).ok_or_else(|| format!("no plugin '{id}'"))?.enabled = on;
+            Ok(())
+        })?;
+        self.plugins_report()
+    }
+
+    fn plugin_remove(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "Remove plugin", |p| {
+            let before = p.plugins.len();
+            p.plugins.retain(|x| x.id != id);
+            if p.plugins.len() == before {
+                return Err(format!("no plugin '{id}'"));
+            }
+            Ok(())
+        })?;
+        self.plugins_report()
+    }
+
+    /// A template of an enabled plugin (`address`: `plugin_id/template_id`) with the notes about its room areas. Read-only. No
+    /// setbacks are derived: an office template states none, so the project's own limits govern.
+    fn plugin_template(&self, args: &Value) -> Result<Value, String> {
+        let address = args.get("address").and_then(Value::as_str).ok_or("address is required (plugin_id/template_id)")?;
+        let p = self.project().ok_or("choose a layout first")?;
+        let t = nnx_core::plugins::find_template(&p.plugins, address)?;
+        Ok(json!({ "template": t, "notes": t.notes(), "setbacks": Value::Null, "setbacks_note": "an office template carries no setbacks: enter them from the municipality's regulation" }))
     }
 
     // ------------------------------------------------------------------ Municipality regulation table
@@ -7863,6 +7968,53 @@ END-ISO-10303-21;
         app.handle("undo", &json!({})).unwrap();
         assert_eq!(app.handle("overlays", &json!({})).unwrap()["overlays"].as_array().unwrap().len(), 1);
         assert!(app.handle("overlay_remove", &json!({ "id": "zz" })).is_err());
+    }
+
+    const PL_RULES: &str = r#"{ "id": "OFFICE", "edition": "synthetic", "version": "1", "rules": [ { "id": "room.area", "clause": "OS-1", "applies_to": { "kind": "Space" }, "check": "area >= param.min", "params": { "min": { "value": 30, "source": "Synthetic office standard, OS-1" } }, "severity": "warning", "message": "room below office minimum" } ] }"#;
+
+    fn pl_args(rules: Value) -> Value {
+        json!({ "plugin": { "id": "office_std", "name": "Synthetic office", "version": "1.0", "publisher": "Synthetic Office", "source": "Synthetic office standard 2027", "rules": rules,
+            "templates": [ { "id": "flat", "titleAr": "شقة", "titleEn": "Flat", "buildingType": "apartment", "plotWidthM": 12.0, "plotLengthM": 20.0, "floors": 1,
+                "rooms": [ { "key": "bed", "name": "Bed", "func": "bedroom", "areaM2": 5.0, "floor": 1 }, { "key": "hall", "name": "Hall", "func": "hall", "areaM2": 12.0, "floor": 1 } ] } ] } })
+    }
+
+    #[test]
+    fn an_office_plugin_is_reviewed_stored_layered_into_the_check_and_serves_its_template_without_invented_setbacks() {
+        let mut app = started();
+        let rules: Value = serde_json::from_str(PL_RULES).unwrap();
+        // Refused by name: no publisher.
+        let mut bad = pl_args(rules.clone());
+        bad["plugin"]["publisher"] = json!("");
+        assert!(app.handle("plugin_add", &bad).unwrap_err().contains("publisher"));
+        // A rule value without a source is refused through the overlay validation.
+        let nosrc: Value = serde_json::from_str(&PL_RULES.replace("Synthetic office standard, OS-1", "")).unwrap();
+        assert!(app.handle("plugin_add", &pl_args(nosrc)).unwrap_err().contains("no source"));
+        // A rule set that replaces nothing needs no confirmation and is stored.
+        let r = app.handle("plugin_add", &pl_args(rules.clone())).unwrap();
+        assert_eq!(r["stored"], true);
+        assert_eq!(r["plugins"][0]["templates"][0]["address"], "office_std/flat");
+        // The enabled plugin's pack is a layer of the check, named by its label.
+        let c = app.handle("check_rules", &json!({})).unwrap();
+        assert_eq!(c["layers"], json!(["OFFICE@synthetic/1"]));
+        assert!(c["findings"].as_array().unwrap().iter().any(|f| f["rule"] == "room.area" && f["layer"] == "OFFICE@synthetic/1"), "{c}");
+        // Installing the same id again replaces it, so it needs confirmation.
+        let again = app.handle("plugin_add", &pl_args(rules)).unwrap();
+        assert_eq!(again["stored"], false);
+        assert_eq!(again["review"]["needs_confirm"], true);
+        // The template comes back with the SBC notes for the 5 m2 bedroom and the hall, and no setbacks.
+        let t = app.handle("plugin_template", &json!({ "address": "office_std/flat" })).unwrap();
+        assert!(t["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("below the SBC minimum")), "{t}");
+        assert!(t["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("not checked")), "{t}");
+        assert!(t["setbacks"].is_null());
+        // Disabled: no layer, no template. Removal is undoable.
+        app.handle("plugin_toggle", &json!({ "id": "office_std", "enabled": false })).unwrap();
+        assert!(app.handle("check_rules", &json!({})).is_err());
+        assert!(app.handle("plugin_template", &json!({ "address": "office_std/flat" })).unwrap_err().contains("disabled"));
+        app.handle("plugin_remove", &json!({ "id": "office_std" })).unwrap();
+        assert!(app.handle("plugins", &json!({})).unwrap()["plugins"].as_array().unwrap().is_empty());
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.handle("plugins", &json!({})).unwrap()["plugins"].as_array().unwrap().len(), 1);
+        assert!(app.handle("plugin_remove", &json!({ "id": "zz" })).is_err());
     }
 
     #[test]
