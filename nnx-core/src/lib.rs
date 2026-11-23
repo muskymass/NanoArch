@@ -34,6 +34,7 @@ pub mod ifc_review;
 pub mod insulation;
 pub mod layout;
 pub mod mep;
+pub mod privacy;
 pub mod model;
 pub mod malath;
 pub mod merger;

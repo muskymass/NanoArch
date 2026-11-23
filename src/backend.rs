@@ -360,6 +360,7 @@ impl App {
             "plot_import_dxf" => Self::plot_import_dxf(args),
             "ifc_review" => Self::ifc_review(args),
             "entrances_check" => Self::entrances_check(args),
+            "privacy_check" => Self::privacy_check(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
@@ -1899,39 +1900,8 @@ impl App {
     /// `{ rooms: [{ key, func, zone, x, y, w, h }], envelope: { w, h }, entry, guest_funcs?, min_separation_mm? }` (mm).
     /// `guest_funcs` defaults to `["majlis"]`. Without `min_separation_mm` the distance is reported and the check is skipped.
     fn entrances_check(args: &Value) -> Result<Value, String> {
-        use nnx_core::layout::{Breakdown, Layout, PlacedRoom};
-        let num = |v: &Value, k: &str, what: &str| v.get(k).and_then(Value::as_i64).ok_or_else(|| format!("entrances: {what} '{k}' must be a whole number of millimetres"));
-        let rooms_in = args.get("rooms").and_then(Value::as_array).filter(|r| !r.is_empty()).ok_or("entrances: rooms are required")?;
-        let mut rooms = Vec::new();
-        for r in rooms_in {
-            let key = r.get("key").and_then(Value::as_str).ok_or("entrances: every room needs a key")?;
-            let zone = match r.get("zone").and_then(Value::as_str) {
-                Some("public") => Zone::Public,
-                Some("private") => Zone::Private,
-                Some("service") => Zone::Service,
-                other => return Err(format!("entrances: room '{key}' has an unknown zone {other:?}")),
-            };
-            let rect = Rect { x: num(r, "x", key)?, y: num(r, "y", key)?, w: num(r, "w", key)?, h: num(r, "h", key)? };
-            rooms.push(PlacedRoom {
-                key: key.to_string(),
-                func: r.get("func").and_then(Value::as_str).ok_or_else(|| format!("entrances: room '{key}' has no func"))?.to_string(),
-                zone,
-                needs_light: false,
-                rect,
-                area_m2: rect.area_m2(),
-                target_m2: rect.area_m2(),
-                deviation_pct: 0.0,
-            });
-        }
-        let env = args.get("envelope").ok_or("entrances: envelope is required")?;
-        let envelope = Rect { x: 0, y: 0, w: num(env, "w", "envelope")?, h: num(env, "h", "envelope")? };
-        let entry = match args.get("entry").and_then(Value::as_str) {
-            Some("south") => Side::South,
-            Some("north") => Side::North,
-            Some("east") => Side::East,
-            Some("west") => Side::West,
-            other => return Err(format!("entrances: entry must be south, north, east or west, not {other:?}")),
-        };
+        let (layout, envelope) = Self::layout_from_args(args, "entrances")?;
+        let entry = Self::side_from_str(args.get("entry").and_then(Value::as_str), "entrances: entry")?;
         let guest_funcs: Vec<String> = match args.get("guest_funcs").filter(|v| !v.is_null()) {
             Some(v) => serde_json::from_value(v.clone()).map_err(|e| format!("entrances: guest_funcs must be a list of room functions: {e}"))?,
             None => vec!["majlis".to_string()],
@@ -1940,9 +1910,73 @@ impl App {
             Some(v) => Some(v.as_i64().ok_or("entrances: min_separation_mm must be a whole number of millimetres")?),
             None => None,
         };
-        let layout = Layout { rooms, cost: 0.0, breakdown: Breakdown::default(), reserve_m2: 0.0 };
         let report = nnx_core::entrances::check_entrances(&layout, &envelope, entry, &guest_funcs, min)?;
         Ok(json!({ "entrances": report }))
+    }
+
+    /// Reads `{ rooms: [{ key, func, zone, x, y, w, h }], envelope: { w, h } }` (mm) into a layout and its envelope.
+    /// `tag` prefixes every error so the user knows which command refused the input.
+    fn layout_from_args(args: &Value, tag: &str) -> Result<(nnx_core::layout::Layout, Rect), String> {
+        use nnx_core::layout::{Breakdown, Layout, PlacedRoom};
+        let num = |v: &Value, k: &str, what: &str| v.get(k).and_then(Value::as_i64).ok_or_else(|| format!("{tag}: {what} '{k}' must be a whole number of millimetres"));
+        let rooms_in = args.get("rooms").and_then(Value::as_array).filter(|r| !r.is_empty()).ok_or_else(|| format!("{tag}: rooms are required"))?;
+        let mut rooms = Vec::new();
+        for r in rooms_in {
+            let key = r.get("key").and_then(Value::as_str).ok_or_else(|| format!("{tag}: every room needs a key"))?;
+            let zone = match r.get("zone").and_then(Value::as_str) {
+                Some("public") => Zone::Public,
+                Some("private") => Zone::Private,
+                Some("service") => Zone::Service,
+                other => return Err(format!("{tag}: room '{key}' has an unknown zone {other:?}")),
+            };
+            let rect = Rect { x: num(r, "x", key)?, y: num(r, "y", key)?, w: num(r, "w", key)?, h: num(r, "h", key)? };
+            rooms.push(PlacedRoom {
+                key: key.to_string(),
+                func: r.get("func").and_then(Value::as_str).ok_or_else(|| format!("{tag}: room '{key}' has no func"))?.to_string(),
+                zone,
+                needs_light: false,
+                rect,
+                area_m2: rect.area_m2(),
+                target_m2: rect.area_m2(),
+                deviation_pct: 0.0,
+            });
+        }
+        let env = args.get("envelope").ok_or_else(|| format!("{tag}: envelope is required"))?;
+        let envelope = Rect { x: 0, y: 0, w: num(env, "w", "envelope")?, h: num(env, "h", "envelope")? };
+        Ok((Layout { rooms, cost: 0.0, breakdown: Breakdown::default(), reserve_m2: 0.0 }, envelope))
+    }
+
+    fn side_from_str(v: Option<&str>, what: &str) -> Result<Side, String> {
+        match v {
+            Some("south") => Ok(Side::South),
+            Some("north") => Ok(Side::North),
+            Some("east") => Ok(Side::East),
+            Some("west") => Ok(Side::West),
+            other => Err(format!("{what} must be south, north, east or west, not {other:?}")),
+        }
+    }
+
+    /// Checks the privacy of private rooms against neighbouring plots:
+    /// `{ rooms, envelope, neighbours: [{ side, distance_mm }], private_funcs, min_distance_mm? }` (mm). `neighbours` lists
+    /// only the sides that face a neighbour with the distance to that boundary; `private_funcs` has no default.
+    /// Without `min_distance_mm` the distances are reported and the check is skipped.
+    fn privacy_check(args: &Value) -> Result<Value, String> {
+        use nnx_core::privacy::NeighbourSide;
+        let (layout, envelope) = Self::layout_from_args(args, "privacy")?;
+        let list = args.get("neighbours").and_then(Value::as_array).filter(|n| !n.is_empty()).ok_or("privacy: neighbours are required (each side that faces a neighbour with its distance_mm)")?;
+        let mut neighbours = Vec::new();
+        for n in list {
+            let side = Self::side_from_str(n.get("side").and_then(Value::as_str), "privacy: neighbour side")?;
+            let distance_mm = n.get("distance_mm").and_then(Value::as_i64).ok_or_else(|| format!("privacy: the {side:?} neighbour needs distance_mm as a whole number of millimetres"))?;
+            neighbours.push(NeighbourSide { side, distance_mm });
+        }
+        let private_funcs: Vec<String> = serde_json::from_value(args.get("private_funcs").cloned().unwrap_or(Value::Null)).map_err(|e| format!("privacy: private_funcs must be a list of room functions: {e}"))?;
+        let min = match args.get("min_distance_mm").filter(|v| !v.is_null()) {
+            Some(v) => Some(v.as_i64().ok_or("privacy: min_distance_mm must be a whole number of millimetres")?),
+            None => None,
+        };
+        let report = nnx_core::privacy::check_privacy(&layout, &envelope, &neighbours, &private_funcs, min)?;
+        Ok(json!({ "privacy": report }))
     }
 
     /// Reads plot boundary candidates from a DXF drawing: `{ path, units?, index? }`. A drawing without a unit needs `units`;
@@ -4210,6 +4244,27 @@ EOF
         assert!(app.handle("plot_import_dxf", &json!({})).unwrap_err().contains("path"));
         assert!(app.handle("plot_import_dxf", &json!({ "path": dir.join("none.dxf").to_str().unwrap() })).unwrap_err().contains("cannot read"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn privacy_check_flags_close_neighbour_walls_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([
+            { "key": "bed1", "func": "bedroom", "zone": "private", "x": 0, "y": 0, "w": 6000, "h": 10000 },
+            { "key": "hall", "func": "hall", "zone": "public", "x": 6000, "y": 0, "w": 6000, "h": 10000 }
+        ]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 10000 }, "neighbours": [{ "side": "west", "distance_mm": 1500 }], "private_funcs": ["bedroom"], "min_distance_mm": 3000 });
+        assert_eq!(app.handle("privacy_check", &base).unwrap()["privacy"]["status"], "exposed");
+        let mut skipped = base.clone();
+        skipped.as_object_mut().unwrap().remove("min_distance_mm");
+        assert_eq!(app.handle("privacy_check", &skipped).unwrap()["privacy"]["status"], "unchecked");
+        let mut no_funcs = base.clone();
+        no_funcs.as_object_mut().unwrap().remove("private_funcs");
+        assert!(app.handle("privacy_check", &no_funcs).unwrap_err().contains("private_funcs"));
+        let mut bad_side = base.clone();
+        bad_side["neighbours"] = json!([{ "side": "up", "distance_mm": 1 }]);
+        assert!(app.handle("privacy_check", &bad_side).unwrap_err().contains("neighbour side"));
+        assert!(app.handle("privacy_check", &json!({ "rooms": rooms, "envelope": { "w": 1, "h": 1 } })).unwrap_err().contains("neighbours are required"));
     }
 
     #[test]
