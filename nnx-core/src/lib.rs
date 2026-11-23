@@ -118,6 +118,7 @@ pub mod numaudit;
 pub mod outline;
 pub mod tender;
 pub mod bids;
+pub mod matreq;
 pub mod roi;
 pub mod qaqc;
 pub mod procure;

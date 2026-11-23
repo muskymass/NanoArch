@@ -456,6 +456,7 @@ impl App {
             "qto" => self.qto(args),
             "qto_elements" => self.qto_elements(args),
             "bid_compare" => self.bid_compare(args),
+            "material_requests" => self.material_requests(args),
             "set_phase" => self.set_phase(args),
             "add_feature" => self.add_feature(args),
             "features" => self.features_json(args),
@@ -1071,6 +1072,25 @@ impl App {
         let boq = self.boq_now()?;
         let cmp = nnx_core::bids::compare(&boq, &bids)?;
         Ok(json!({ "comparison": cmp, "csv": cmp.csv(), "name": "bid-comparison" }))
+    }
+
+    /// Material requests by construction stage (read-only): `{ inputs?: { as_of?, buffer_days?, lead: { material: { days, source } } } }`.
+    /// The materials are the BOQ's own (the project's stored consumption factors) split by the stages of the stored schedule; lead
+    /// times are the user's, each with its source, and nothing is stored.
+    fn material_requests(&self, args: &Value) -> Result<Value, String> {
+        let inputs: nnx_core::matreq::MatReqInputs = match args.get("inputs").filter(|v| !v.is_null()) {
+            Some(v) => serde_json::from_value(v.clone()).map_err(|e| format!("inputs: {e}"))?,
+            None => Default::default(),
+        };
+        let (sched, why) = self.stored_schedule();
+        let sched = sched.ok_or_else(|| why.unwrap_or_else(|| "the schedule is not available".into()))?;
+        let model = &self.doc()?.model;
+        let mut items = qto::compute(model, &QtoOpts::default()).items;
+        items.extend(self.extra_items(model));
+        let lib = self.project().and_then(|p| p.boq).unwrap_or_default();
+        let today = Date::parse(&utc_now().chars().take(10).collect::<String>());
+        let r = nnx_core::matreq::build(&items, &lib, &sched, &inputs, today)?;
+        Ok(json!({ "report": r, "csv": r.csv(), "name": "material-requests" }))
     }
 
     /// Each row is one element's share of an item; the shares of one code add up to that item (checked in the tests).
@@ -7461,6 +7481,42 @@ END-ISO-10303-21;
         // A refused schedule input is not stored.
         assert!(app.handle("schedule", &json!({ "rates": {}, "start": "nope", "workdays": [true, true, true, true, true, true, true] })).is_err());
         assert_eq!(app.handle("exec", &json!({})).unwrap()["inputs"]["schedule"]["start"], "2026-11-15");
+    }
+
+    #[test]
+    fn material_requests_split_the_boq_materials_by_schedule_stage_and_change_nothing() {
+        let mut app = complete_app();
+        // Without a schedule there are no stages to order by: refused with the reason, nothing invented.
+        assert!(app.handle("material_requests", &json!({})).is_err());
+        let rates = all_rates(&mut app);
+        app.handle("schedule", &schedule_args(rates)).unwrap();
+        // SYNTHETIC consumption factors; not real material data.
+        let mats: serde_json::Map<String, Value> = ["SLAB.*", "COLUMN.*", "FOOTING.*", "BEAM.*", "WALL.*", "PLASTER.*", "FLOOR.*"]
+            .iter()
+            .map(|k| (k.to_string(), json!([{ "material": "cement", "unit": "bag", "per_unit": 7, "source": "test" }])))
+            .collect();
+        let boq_args = json!({ "inputs": { "project": { "name": "t", "currency": "XXX" }, "materials": mats }, "lang": "en" });
+        app.handle("boq", &boq_args).unwrap();
+        let hash = |a: &App| format!("{:?}", a.doc.as_ref().unwrap().undo_label());
+        let before = hash(&app);
+        let r = app.handle("material_requests", &json!({})).unwrap();
+        assert_eq!(hash(&app), before, "the request list changes nothing");
+        let stages = r["report"]["stages"].as_array().unwrap();
+        assert!(!stages.is_empty(), "{r}");
+        let total = |v: &Value| v.as_array().unwrap().iter().filter(|m| m["material"] == "cement").map(|m| m["quantity"].as_f64().unwrap()).sum::<f64>();
+        let staged: f64 = stages.iter().map(|s| total(&s["requests"])).sum();
+        let whole = total(&app.handle("boq", &boq_args).unwrap()["report"]["materials"]);
+        assert!(whole > 0.0, "the BOQ has cement");
+        assert!((staged + total(&r["report"]["unassigned"]) - whole).abs() < 0.01, "stages + unassigned = the BOQ material list");
+        assert!(r["csv"].as_str().unwrap().contains("stage,stage_start,material"));
+        // A lead time for a material nothing needs, or without its source, is refused by name.
+        let bad = app.handle("material_requests", &json!({ "inputs": { "lead": { "nonesuch": { "days": 5, "source": "s" } } } })).unwrap_err();
+        assert!(bad.contains("nonesuch"));
+        assert!(app.handle("material_requests", &json!({ "inputs": { "lead": { "cement": { "days": 5, "source": "" } } } })).is_err());
+        assert!(app.handle("material_requests", &json!({ "inputs": { "nope": 1 } })).is_err());
+        let ok = app.handle("material_requests", &json!({ "inputs": { "as_of": "2026-11-20", "lead": { "cement": { "days": 10, "source": "synthetic quotation" } } } }));
+        assert!(ok.is_ok(), "{ok:?}");
+        assert!(App::default().handle("material_requests", &json!({})).is_err());
     }
 
     #[test]
