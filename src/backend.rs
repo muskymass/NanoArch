@@ -482,6 +482,7 @@ impl App {
             "tender_set" => self.tender_set(args),
             "payment" => self.payment_report(),
             "payment_set" => self.payment_set(args),
+            "change_log" => self.change_log(args),
             "site_photos" => self.site_photos_report(),
             "site_photos_set" => self.site_photos_set(args),
             "progress_payments" => self.progress_report(),
@@ -1322,6 +1323,23 @@ impl App {
         let mut v = self.payment_report()?;
         v["changed"] = json!(changed);
         Ok(v)
+    }
+
+    /// The log of committed steps (who, which elements, BOQ cost impact at the stored rates). Read-only: the document is not changed.
+    /// `limit` (optional, at least 1) keeps the newest steps.
+    fn change_log(&self, args: &Value) -> Result<Value, String> {
+        let doc = self.doc()?;
+        let limit = match args.get("limit") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(v.as_u64().filter(|&n| n >= 1).ok_or("limit must be a whole number of at least 1")? as usize),
+        };
+        let lib = self.project().and_then(|p| p.boq).unwrap_or_default();
+        let log = nnx_core::changelog::build(doc, limit, |m| {
+            let mut items = qto::compute(m, &QtoOpts::default()).items;
+            items.extend(self.extra_items(m));
+            Ok(nnx_core::boq::compute(&items, &lib))
+        });
+        Ok(json!({ "log": log, "csv": log.csv(), "html": log.html() }))
     }
 
     fn site_photos_report(&self) -> Result<Value, String> {
@@ -7445,6 +7463,29 @@ END-ISO-10303-21;
         if let Ok(s) = app.handle("schedule", &json!({})) {
             assert!(!s.to_string().contains("FIN."));
         }
+    }
+
+    #[test]
+    fn change_log_lists_committed_steps_read_only_and_refuses_a_bad_limit() {
+        assert!(App::default().handle("change_log", &json!({})).is_err());
+        let mut app = started();
+        let before = app.handle("change_log", &json!({})).unwrap();
+        let n = before["log"]["entries"].as_array().unwrap().len();
+        assert!(app.handle("change_log", &json!({ "limit": 0 })).unwrap_err().contains("at least 1"));
+        assert!(app.handle("change_log", &json!({ "limit": "x" })).is_err());
+        // Reading the log changes nothing: it is not itself a step.
+        assert_eq!(app.handle("change_log", &json!({})).unwrap()["log"]["entries"].as_array().unwrap().len(), n);
+        let ph = json!({ "photos": [{ "id": "p1", "file": "p1.jpg", "taken": "2026-03-01", "elements": ["COL-1"] }] });
+        app.handle("site_photos_set", &ph).unwrap();
+        let after = app.handle("change_log", &json!({})).unwrap();
+        let e = after["log"]["entries"].as_array().unwrap();
+        assert_eq!(e.len(), n + 1);
+        assert_eq!(e.last().unwrap()["label"], "Site photos");
+        assert_eq!(e.last().unwrap()["origin"], "user");
+        assert_eq!(app.handle("change_log", &json!({ "limit": 1 })).unwrap()["log"]["entries"].as_array().unwrap().len(), 1);
+        assert!(after["csv"].as_str().unwrap().contains("Site photos"));
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.handle("change_log", &json!({})).unwrap()["log"]["entries"].as_array().unwrap().len(), n);
     }
 
     #[test]

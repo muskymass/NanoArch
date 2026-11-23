@@ -13,6 +13,7 @@ pub mod audits;
 pub mod bbs;
 pub mod calcreport;
 pub mod certificate;
+pub mod changelog;
 pub mod compliance;
 pub mod costtier;
 pub mod cutting;
@@ -145,5 +146,5 @@ pub mod siteplan;
 pub mod bundle;
 
 pub use command::{Command, CommandError, Origin};
-pub use history::{Document, TxError};
+pub use history::{Document, Step, TxError};
 pub use model::{Discipline, Element, Id, Model, Source};
