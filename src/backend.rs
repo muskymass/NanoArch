@@ -416,6 +416,7 @@ impl App {
             "permit_pack" => self.permit_pack(args),
             "signoff_form" => self.signoff_form(args),
             "permit_documents_check" => self.permit_documents_check(args),
+            "room_finishes_schedule" => self.room_finishes_schedule(args),
             "number_audit" => self.number_audit(),
             "lock" => self.lock(args),
             "regenerate" => self.regenerate(args),
@@ -2920,6 +2921,19 @@ impl App {
         Ok(v)
     }
 
+    /// The room finishes schedule (read-only): `{ finishes: [{ code, name, surface: floor|wall|ceiling, source }], assignments:
+    /// [{ key | func, floor?, wall?, ceiling? }], wall_height_mm? (required with a wall finish), level? }`. The catalogue is the
+    /// user's; areas are measured from the model's rooms. Returns the room rows, the totals per finish, the unassigned surfaces
+    /// and a CSV (`name`: `room_finishes.csv`).
+    fn room_finishes_schedule(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::roomfinish::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("room finishes schedule: inputs are malformed (finishes [{{ code, name, surface, source }}], assignments [{{ key|func, floor?, wall?, ceiling? }}], wall_height_mm?, level?): {e}"))?;
+        let schedule = nnx_core::roomfinish::build(&self.doc()?.model, &input)?;
+        let mut v = serde_json::to_value(&schedule).map_err(|e| e.to_string())?;
+        v["name"] = json!("room_finishes.csv");
+        Ok(v)
+    }
+
     /// The number audit file of the open project: every number with the source and date entered beside it, and the list of
     /// numbers that have none. Read-only; returns the entries, the counts and a CSV text (`name`: `number_audit.csv`).
     fn number_audit(&self) -> Result<Value, String> {
@@ -5271,6 +5285,25 @@ EOF
         assert!(e.contains("list_source") && e.contains("required"), "{e}");
         assert!(app.handle("permit_documents_check", &json!({ "required": "x" })).unwrap_err().contains("malformed"));
         assert!(App::default().handle("permit_documents_check", &args).is_err());
+    }
+
+    #[test]
+    fn room_finishes_schedule_lists_the_model_rooms_and_names_bad_input() {
+        let mut app = started_with_project();
+        let args = json!({
+            "finishes": [{ "code": "F1", "name": "Porcelain", "surface": "floor", "source": "Spec 09, 2026-01-01" }],
+            "assignments": [{ "func": "no-such-function", "floor": "F1" }]
+        });
+        let r = app.handle("room_finishes_schedule", &args).unwrap();
+        assert_eq!(r["name"], "room_finishes.csv");
+        let rows = r["rows"].as_array().unwrap();
+        assert!(!rows.is_empty());
+        assert_eq!(r["complete"], false);
+        assert_eq!(r["unassigned"].as_array().unwrap().len(), rows.len() * 3);
+        let e = app.handle("room_finishes_schedule", &json!({ "finishes": [] })).unwrap_err();
+        assert!(e.contains("finishes") && e.contains("assignments"), "{e}");
+        assert!(app.handle("room_finishes_schedule", &json!({ "finishes": "x" })).unwrap_err().contains("malformed"));
+        assert!(App::default().handle("room_finishes_schedule", &args).is_err());
     }
 
     #[test]

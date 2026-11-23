@@ -32,6 +32,7 @@ pub mod autoviews;
 pub mod entrances;
 pub mod courtyard;
 pub mod roomshape;
+pub mod roomfinish;
 pub mod mezzanine;
 pub mod expansion;
 pub mod rooftop;
