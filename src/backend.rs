@@ -371,6 +371,7 @@ impl App {
             "panel_schedule" => Self::panel_schedule(args),
             "cable_check" => Self::cable_check(args),
             "water_storage_check" => Self::water_storage_check(args),
+            "fire_protection_check" => Self::fire_protection_check(args),
             "shear_core_check" => Self::shear_core_check(args),
             "savings_compare" => Self::savings_compare(args),
             "furniture_fit" => Self::furniture_fit(args),
@@ -2157,6 +2158,19 @@ impl App {
             .map_err(|e| format!("water storage check: inputs are malformed (see the field list for tanks, transfer and gravity): {e}"))?;
         let report = nnx_core::pumps::check(&input)?;
         Ok(json!({ "water": report }))
+    }
+
+    /// Fire detection, sprinkler and call-point layout with the sprinkler water demand: `{ rooms: [{ key, x_mm, y_mm, w_mm, h_mm,
+    /// detector?, sprinkler?, zone?, ceiling_height_mm? }], detectors?: [{ key, coverage_m2, max_spacing_mm, source,
+    /// max_wall_distance_mm?, max_ceiling_height_mm? }], sprinklers?: [same], exits?: [{ key, x_mm, y_mm }],
+    /// max_call_point_distance_mm?, max_detectors_per_zone?, max_zone_area_m2?, water?: { design_density_mm_min, design_area_m2,
+    /// duration_min, source, hose_allowance_lpm?, available_storage_m3? } }`. Every figure is the caller's; a missing limit leaves
+    /// its check `unchecked`. Preliminary, not a fire-protection design.
+    fn fire_protection_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::firesys::FireInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("fire protection check: inputs are malformed (see the field list for rooms, devices, exits and water): {e}"))?;
+        let report = nnx_core::firesys::check(&input)?;
+        Ok(json!({ "fire": report }))
     }
 
     /// Shear-wall core around lifts and stairs:`{ walls: [{ key, x_mm, y_mm, w_mm, h_mm }], shafts?: [{ key, kind: lift|stair,
@@ -4690,6 +4704,27 @@ EOF
         no_p.as_object_mut().unwrap().remove("persons");
         assert!(app.handle("water_storage_check", &no_p).unwrap_err().contains("persons is required"));
         assert!(app.handle("water_storage_check", &json!({ "persons": "x" })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn fire_protection_check_lays_out_devices_and_refuses_missing_inputs() {
+        let mut app = App::default();
+        let args = json!({
+            "rooms": [{ "key": "hall", "x_mm": 0, "y_mm": 0, "w_mm": 6000, "h_mm": 5000, "detector": "D1", "sprinkler": "S1", "zone": "Z1" }],
+            "detectors": [{ "key": "D1", "coverage_m2": 20, "max_spacing_mm": 5000, "source": "test datasheet" }],
+            "sprinklers": [{ "key": "S1", "coverage_m2": 12, "max_spacing_mm": 4000, "source": "test datasheet" }],
+            "exits": [{ "key": "E1", "x_mm": 0, "y_mm": 0 }],
+            "water": { "design_density_mm_min": 5, "design_area_m2": 30, "duration_min": 60, "source": "test table" }
+        });
+        let r = app.handle("fire_protection_check", &args).unwrap();
+        assert_eq!(r["fire"]["total_detectors"], 2);
+        assert_eq!(r["fire"]["water"]["required_storage_m3"], 9.0);
+        assert_eq!(r["fire"]["water"]["status"], "unchecked");
+        assert_eq!(r["fire"]["call_points"]["status"], "unchecked");
+        let mut no_cov = args.clone();
+        no_cov["detectors"][0].as_object_mut().unwrap().remove("coverage_m2");
+        assert!(app.handle("fire_protection_check", &no_cov).unwrap_err().contains("coverage_m2 is required"));
+        assert!(app.handle("fire_protection_check", &json!({ "rooms": "x" })).unwrap_err().contains("malformed"));
     }
 
     #[test]
