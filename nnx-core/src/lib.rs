@@ -30,6 +30,7 @@ pub mod entrances;
 pub mod courtyard;
 pub mod roomshape;
 pub mod mezzanine;
+pub mod expansion;
 pub mod rooftop;
 pub mod basement;
 pub mod parking;

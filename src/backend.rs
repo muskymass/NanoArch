@@ -400,6 +400,7 @@ impl App {
             "site_layout" => self.site_layout_cmd(),
             "furniture" => self.furniture_cmd(),
             "vertical" => self.vertical_cmd(),
+            "expansion_check" => self.expansion_check(),
             "template_apply" => Self::template_apply(args),
             "site_plan" => self.site_plan(),
             "zone_preset" => self.zone_preset(args),
@@ -2410,6 +2411,15 @@ impl App {
         let level = self.level_list().get(self.cur_level).map(|_| self.cur_level as i64);
         let svg = nnx_core::furniture::svg(&rep, if scene.levels.is_empty() { None } else { level });
         Ok(json!({ "svg": svg, "report": rep, "params": nnx_core::furniture::PARAMS }))
+    }
+
+    /// Reports the expansion saved in the project (`meta.expansion`, set through `project_set`) against the built model.
+    fn expansion_check(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let x = p.meta.expansion.clone().ok_or("no expansion is saved: enter a vertical or a horizontal expansion")?;
+        let scene = nnx_core::model3d::build(&self.doc()?.model);
+        let report = nnx_core::expansion::report(&scene, &x, p.plot_area_m2())?;
+        Ok(json!({ "expansion": report }))
     }
 
     fn vertical_cmd(&self) -> Result<Value, String> {
@@ -4476,6 +4486,24 @@ EOF
         let mut deep = base.clone();
         deep["slab_mm"] = json!(3000);
         assert!(app.handle("mezzanine_check", &deep).unwrap_err().contains("thinner"));
+    }
+
+    #[test]
+    fn expansion_is_saved_in_the_project_reported_and_undone() {
+        let mut app = started_with_project();
+        assert!(app.handle("expansion_check", &json!({})).unwrap_err().contains("no expansion is saved"));
+        let bad = json!({ "meta": { "expansion": { "vertical": { "extraStoreys": 11, "storeyHeightMm": 3200.0 } } } });
+        assert!(app.handle("project_set", &bad).unwrap_err().contains("more than 10"));
+        let ok = json!({ "meta": { "expansion": { "vertical": { "extraStoreys": 1, "storeyHeightMm": 3200.0, "maxStoreys": 4, "limitsSource": "municipality letter" }, "note": "phase 2" } } });
+        assert_eq!(app.handle("project_set", &ok).unwrap()["changed"], json!(true));
+        let r = app.handle("expansion_check", &json!({})).unwrap();
+        let v = &r["expansion"]["vertical"];
+        assert_eq!(v["extra_storeys"], json!(1));
+        assert_eq!(v["storeys_check"], json!("pass"));
+        assert_eq!(v["height_check"], json!("unchecked"));
+        assert_eq!(v["limits_source"], json!("municipality letter"));
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.handle("expansion_check", &json!({})).unwrap_err().contains("no expansion is saved"));
     }
 
     #[test]

@@ -69,6 +69,8 @@ pub struct ProjectMeta {
     pub furniture: Option<crate::furniture::FurnitureInput>,
     /// Elevator shaft, basement levels with a ramp, and a roof annex.
     pub vertical: Option<crate::vertical::VerticalInput>,
+    /// Future expansion kept in the design: extra storeys and/or a reserved wing, with the limits the user entered.
+    pub expansion: Option<crate::expansion::ExpansionInput>,
     /// Inputs of the compliance pack: thermal layers, accessibility limits, ventilation, projections, the Malath checklist.
     pub compliance: crate::compliance::ComplianceInputs,
     /// Wall assemblies (named wall types with explicit layers) and which of them walls fall back to.
@@ -242,6 +244,9 @@ impl NanoArchProject {
         }
         if let Some(v) = &self.meta.vertical {
             v.check()?;
+        }
+        if let Some(x) = &self.meta.expansion {
+            x.check()?;
         }
         self.meta.compliance.check()?;
         crate::assembly::check_all(&self.meta.assemblies, &self.meta.assembly_defaults)?;
