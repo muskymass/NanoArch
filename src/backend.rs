@@ -364,6 +364,7 @@ impl App {
             "sun_check" => Self::sun_check(args),
             "span_compare" => Self::span_compare(args),
             "wall_load" => Self::wall_load(args),
+            "savings_compare" => Self::savings_compare(args),
             "furniture_fit" => Self::furniture_fit(args),
             "wind_check" => Self::wind_check(args),
             "courtyard_check" => Self::courtyard_check(args),
@@ -2055,6 +2056,25 @@ impl App {
             .map_err(|e| format!("wall load: beams need key, a and b ([x, y] whole mm): {e}"))?;
         let report = nnx_core::wallload::take_down(&walls, &beams)?;
         Ok(json!({ "wall_load": report }))
+    }
+
+    /// Compares structural alternatives on concrete and steel: `{ criterion: steel_kg|concrete_m3|cost, baseline?, prices?: {
+    /// concrete_per_m3, steel_per_kg: { value, source, date }, currency }, alternatives: [{ label, checks_passed?, members: [{ key,
+    /// kind, count?, b_mm, h_mm, length_mm, bars?: [{ dia_mm, count, length_mm? }], links?: { dia_mm, spacing_mm, length_mm } }] }] }`.
+    /// The criterion has no default and a price needs its source and date. Quantities only: not a design.
+    fn savings_compare(args: &Value) -> Result<Value, String> {
+        let alts: Vec<nnx_core::savings::AlternativeIn> = serde_json::from_value(args.get("alternatives").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("savings: alternatives need label and members (key, kind, b_mm, h_mm, length_mm, bars, links): {e}"))?;
+        let prices: Option<nnx_core::savings::Prices> = match args.get("prices") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(serde_json::from_value(v.clone()).map_err(|e| format!("savings: prices need concrete_per_m3 and steel_per_kg ({{ value, source, date }}) and currency: {e}"))?),
+        };
+        let baseline = match args.get("baseline") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(v.as_u64().ok_or("savings: baseline must be the index of an alternative (0, 1, ...)")? as usize),
+        };
+        let report = nnx_core::savings::compare(&alts, args.get("criterion").and_then(Value::as_str), baseline, prices.as_ref())?;
+        Ok(json!({ "savings": report }))
     }
 
     /// Arranges furniture of real sizes in one room and reports whether it fits: `{ room: { w, h }, min_walkway_mm, pieces: [{ key,
@@ -4508,6 +4528,25 @@ EOF
         no_g["walls"][0].as_object_mut().unwrap().remove("unit_weight_kn_m3");
         assert!(app.handle("wall_load", &no_g).unwrap_err().contains("unit_weight_kn_m3 is required"));
         assert!(app.handle("wall_load", &json!({ "beams": args["beams"] })).unwrap_err().contains("walls need"));
+    }
+
+    #[test]
+    fn savings_compare_ranks_alternatives_and_names_missing_input() {
+        let mut app = App::default();
+        let m = |b: f64| json!({ "key": "c", "kind": "column", "count": 4, "b_mm": b, "h_mm": b, "length_mm": 3000, "bars": [{ "dia_mm": 16, "count": 8 }] });
+        let args = json!({ "criterion": "concrete_m3", "alternatives": [
+            { "label": "A", "checks_passed": true, "members": [m(400.0)] },
+            { "label": "B", "checks_passed": true, "members": [m(300.0)] } ] });
+        let r = app.handle("savings_compare", &args).unwrap();
+        assert_eq!(r["savings"]["best"], 1);
+        assert_eq!(r["savings"]["alternatives"][1]["saving_concrete"]["pct"], 43.75);
+        let mut no_c = args.clone();
+        no_c.as_object_mut().unwrap().remove("criterion");
+        assert!(app.handle("savings_compare", &no_c).unwrap_err().contains("criterion is required"));
+        let mut cost = args.clone();
+        cost["criterion"] = json!("cost");
+        assert!(app.handle("savings_compare", &cost).unwrap_err().contains("needs prices"));
+        assert!(app.handle("savings_compare", &json!({ "criterion": "steel_kg" })).unwrap_err().contains("alternatives need"));
     }
 
     #[test]

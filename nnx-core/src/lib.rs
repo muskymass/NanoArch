@@ -62,6 +62,7 @@ pub mod presets;
 pub mod prefs;
 pub mod qto;
 pub mod rebar;
+pub mod savings;
 pub mod rebardraw;
 pub mod report;
 pub mod routing;
