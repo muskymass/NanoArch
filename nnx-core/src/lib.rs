@@ -103,6 +103,7 @@ pub mod vertical;
 pub mod wireless;
 pub mod snapshot;
 pub mod overlay;
+pub mod municipality;
 pub mod outline;
 pub mod tender;
 pub mod roi;

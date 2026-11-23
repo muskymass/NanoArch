@@ -482,6 +482,10 @@ impl App {
             "overlay_toggle" => self.overlay_toggle(args),
             "overlay_remove" => self.overlay_remove(args),
             "overlay_apply_limits" => self.overlay_apply_limits(args),
+            "municipalities" => self.municipalities_report(),
+            "municipality_add" => self.municipality_add(args),
+            "municipality_remove" => self.municipality_remove(args),
+            "municipality_apply" => self.municipality_apply(args),
             "draft_frame" => self.draft_frame(),
             "draft_snap" => self.draft_snap(args),
             "draft_wall" => self.draft_wall(args),
@@ -1520,6 +1524,66 @@ impl App {
         let mut v = self.overlays_report()?;
         v["changed"] = json!(changed);
         v["new_violations"] = json!(violations);
+        Ok(v)
+    }
+
+    // ------------------------------------------------------------------ Municipality regulation table
+
+    fn municipalities_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let list: Vec<Value> = p.municipalities.iter().map(|e| json!({ "entry": e, "set": e.set_count(), "unset": e.unset() })).collect();
+        Ok(json!({ "municipalities": list, "limits": p.limits }))
+    }
+
+    /// Stores one entry typed by the user. Every value needs its source; nothing is filled in.
+    fn municipality_add(&mut self, args: &Value) -> Result<Value, String> {
+        let list = self.project().ok_or("choose a layout first")?.municipalities;
+        let mut e: nnx_core::municipality::MunicipalityEntry =
+            serde_json::from_value(args.get("entry").cloned().ok_or("entry is required")?).map_err(|e| format!("municipality entry: {e}"))?;
+        e.id = nnx_core::municipality::next_id(&list);
+        e.municipality = e.municipality.trim().to_string();
+        e.zone = e.zone.trim().to_string();
+        e.document = e.document.trim().to_string();
+        if let Some(first) = nnx_core::municipality::problems(&e).into_iter().next() {
+            return Err(format!("municipality entry refused: {first}"));
+        }
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "Add municipality entry", |p| {
+            p.municipalities.push(e.clone());
+            Ok(())
+        })?;
+        let mut v = self.municipalities_report()?;
+        v["added"] = json!(e.id);
+        Ok(v)
+    }
+
+    fn municipality_remove(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "Remove municipality entry", |p| {
+            let before = p.municipalities.len();
+            p.municipalities.retain(|e| e.id != id);
+            if p.municipalities.len() == before {
+                return Err(format!("no municipality entry '{id}'"));
+            }
+            Ok(())
+        })?;
+        self.municipalities_report()
+    }
+
+    /// Writes the setback and coverage limits of an entry into the project's limits (old and new are returned): ONE undoable step.
+    fn municipality_apply(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+        let mut applied = nnx_core::municipality::Applied::default();
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "Apply municipality limits", |p| {
+            applied = nnx_core::municipality::apply(p, &id)?;
+            Ok(())
+        })?;
+        let mut v = self.municipalities_report()?;
+        v["changed"] = json!(applied.changed);
+        v["stored_only"] = json!(applied.stored_only);
+        v["new_violations"] = json!(out.new_violations.iter().map(|x| x.en.clone()).collect::<Vec<_>>());
         Ok(v)
     }
 
@@ -6839,6 +6903,41 @@ END-ISO-10303-21;
         app.handle("undo", &json!({})).unwrap();
         assert_eq!(app.handle("overlays", &json!({})).unwrap()["overlays"].as_array().unwrap().len(), 1);
         assert!(app.handle("overlay_remove", &json!({ "id": "zz" })).is_err());
+    }
+
+    #[test]
+    fn a_municipality_entry_needs_sources_is_stored_applied_in_one_undoable_step_and_removed() {
+        let mut app = started();
+        let good = json!({ "entry": {
+            "municipality": "Synthetic Municipality", "zone": "R1", "document": "synthetic circular 7",
+            "minSetbackFrontM": { "value": 4.0, "source": "synthetic circular 7, art. 2" },
+            "maxCoverageRatio": { "value": 0.5, "source": "synthetic circular 7, art. 3" },
+            "maxHeightM": { "value": 12.0, "source": "synthetic circular 7, art. 4" } } });
+        // A value without a source is refused by name; nothing is stored.
+        let mut nosrc = good.clone();
+        nosrc["entry"]["maxHeightM"]["source"] = json!("");
+        assert!(app.handle("municipality_add", &nosrc).unwrap_err().contains("height"));
+        assert!(app.handle("municipalities", &json!({})).unwrap()["municipalities"].as_array().unwrap().is_empty());
+        let r = app.handle("municipality_add", &good).unwrap();
+        assert_eq!(r["added"], "mn1");
+        assert_eq!(r["municipalities"][0]["set"], 3);
+        assert_eq!(r["municipalities"][0]["unset"], json!(["rear setback", "side setback", "floors", "floor-area ratio"]));
+        // The same municipality and zone twice is refused.
+        assert!(app.handle("municipality_add", &good).is_err());
+        // Storing does not touch the project's limits; applying does, once, and names the limit it only stored.
+        assert!(r["limits"]["minSetbackFrontM"].is_null());
+        let a = app.handle("municipality_apply", &json!({ "id": "mn1" })).unwrap();
+        assert_eq!(a["changed"].as_array().unwrap().len(), 2);
+        assert_eq!(a["limits"]["minSetbackFrontM"]["source"], "synthetic circular 7, art. 2");
+        assert_eq!(a["stored_only"], json!(["height"]));
+        assert!(app.handle("municipality_apply", &json!({ "id": "mn1" })).is_err());
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.handle("municipalities", &json!({})).unwrap()["limits"]["minSetbackFrontM"].is_null());
+        app.handle("municipality_remove", &json!({ "id": "mn1" })).unwrap();
+        assert!(app.handle("municipalities", &json!({})).unwrap()["municipalities"].as_array().unwrap().is_empty());
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.handle("municipalities", &json!({})).unwrap()["municipalities"].as_array().unwrap().len(), 1);
+        assert!(app.handle("municipality_remove", &json!({ "id": "zz" })).is_err());
     }
 
     // ------------------------------------------------------------------ Milestone 8: BIM drafting
