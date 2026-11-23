@@ -3769,6 +3769,7 @@ mod tests {
         let on = app.handle("pdf_html", &json!({ "lang": "en" })).unwrap();
         let on = on["html"].as_str().unwrap();
         assert!(on.contains("class=\"column\"") && on.contains("dir=\"ltr\"") && on.contains("Sheet <bdi dir=\"ltr\">1/2</bdi>"));
+        assert!(on.contains("Door and window schedule (mm)") && on.contains("<td>D1</td>") && on.contains("<td>W1</td>"), "each sheet carries its door and window schedule");
         assert!(App::default().handle("pdf_html", &json!({})).is_err());
     }
 

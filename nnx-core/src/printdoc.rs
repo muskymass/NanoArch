@@ -8,7 +8,7 @@
 use crate::building;
 use crate::drawing::{DrawOpts, plan_svg};
 use crate::model::{Id, Model};
-use crate::typed::{Level, Space, Typed};
+use crate::typed::{Door, Level, Space, Typed, Window};
 use std::collections::BTreeMap;
 
 pub struct PrintOpts {
@@ -83,8 +83,40 @@ pub fn print_html(model: &Model, opts: &PrintOpts) -> Result<String, String> {
         if chunks.is_empty() {
             tables = format!("<table>{head}{total_row}</table>");
         }
+        // Door and window schedule of the level: one row per size, with how many there are (sizes in mm, as modelled).
+        let mut door_sizes: BTreeMap<(i64, i64, bool), usize> = BTreeMap::new();
+        let mut window_sizes: BTreeMap<(i64, i64, i64), usize> = BTreeMap::new();
+        for e in model.elements.values().filter(|e| lv.is_none() || e.level_id == *lv) {
+            if e.kind == Door::KIND {
+                if let Ok(d) = e.typed::<Door>() {
+                    *door_sizes.entry((d.width, d.height, d.is_egress)).or_default() += 1;
+                }
+            } else if e.kind == Window::KIND {
+                if let Ok(w) = e.typed::<Window>() {
+                    *window_sizes.entry((w.width, w.height, w.sill_height)).or_default() += 1;
+                }
+            }
+        }
+        let door_rows: String = door_sizes
+            .iter()
+            .enumerate()
+            .map(|(i, ((w, h, egress), n))| format!("<tr><td>D{}</td><td class=\"n\">{w} × {h}</td><td>{}</td><td class=\"n\">{n}</td></tr>", i + 1, if *egress { t("مدخل", "Entrance") } else { t("داخلي", "Interior") }))
+            .collect();
+        let window_rows: String = window_sizes.iter().enumerate().map(|(i, ((w, h, sill), n))| format!("<tr><td>W{}</td><td class=\"n\">{w} × {h}</td><td class=\"n\">{sill}</td><td class=\"n\">{n}</td></tr>", i + 1)).collect();
+        let openings = format!(
+            "<h2>{}</h2><div class=\"sched\"><table><tr><th>{}</th><th>{}</th><th>{}</th><th>{}</th></tr>{door_rows}</table><table><tr><th>{}</th><th>{}</th><th>{}</th><th>{}</th></tr>{window_rows}</table></div>",
+            t("جدول الأبواب والنوافذ (مم)", "Door and window schedule (mm)"),
+            t("الباب", "Door"),
+            t("العرض × الارتفاع", "Width × height"),
+            t("النوع", "Type"),
+            t("العدد", "Count"),
+            t("النافذة", "Window"),
+            t("العرض × الارتفاع", "Width × height"),
+            t("ارتفاع الجلسة", "Sill"),
+            t("العدد", "Count")
+        );
         sheets.push_str(&format!(
-            "<section class=\"sheet\"><h1>{}</h1><div class=\"plan\">{}</div><h2>{}</h2><div class=\"sched\">{}</div>\
+            "<section class=\"sheet\"><h1>{}</h1><div class=\"plan\">{}</div><h2>{}</h2><div class=\"sched\">{}</div>{openings}\
              <p class=\"foot\">{} · <bdi dir=\"ltr\">{}</bdi> · {} <bdi dir=\"ltr\">{}/{}</bdi></p></section>",
             esc(&title),
             svg,
