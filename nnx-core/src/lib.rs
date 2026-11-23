@@ -28,6 +28,7 @@ pub mod ductpath;
 pub mod draft;
 pub mod dxf;
 pub mod elevation;
+pub mod autoviews;
 pub mod entrances;
 pub mod courtyard;
 pub mod roomshape;

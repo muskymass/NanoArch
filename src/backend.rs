@@ -428,6 +428,7 @@ impl App {
             "zone_preset" => self.zone_preset(args),
             "elevation" => self.elevation(args),
             "section" => self.section(args),
+            "auto_views" => self.auto_views(),
             "clashes" => Ok(self.clash_json()),
             "clash_classes" => Ok(self.clash_classes(args)),
             "runs" => Ok(json!(self.runs_json())),
@@ -3141,6 +3142,13 @@ impl App {
         }
         let svg = nnx_core::elevation::section_svg(model, &cut, &self.view_opts()).map_err(|e| e.to_string())?;
         Ok(json!({ "svg": svg, "name": format!("section-{name}.svg"), "cut": format!("{cut:?}") }))
+    }
+
+    /// Every elevation and section of the building in one call (four elevations, A-A, B-B and one section per stair shaft), each
+    /// showing all levels. Read-only; the per-view `levels_missing` and the overall `complete` say whether a level was left out.
+    fn auto_views(&self) -> Result<Value, String> {
+        let set = nnx_core::autoviews::build(&self.doc()?.model, &self.view_opts())?;
+        serde_json::to_value(set).map_err(|e| e.to_string())
     }
 
     /// Clashes between ducts, pipes and drains and the structure.
@@ -6056,6 +6064,21 @@ END-ISO-10303-21;
             let site = app.handle("site_plan", &json!({})).unwrap();
             assert_eq!(site["result"]["setbacks_m"][0], r["setbacks"]["front_m"], "{id}");
         }
+    }
+
+    #[test]
+    fn auto_views_draws_every_elevation_and_section_with_all_levels_and_needs_a_project() {
+        let mut app = started_with_project();
+        let r = app.handle("auto_views", &json!({})).unwrap();
+        let views = r["views"].as_array().unwrap();
+        assert!(views.len() >= 6, "four elevations and A-A, B-B at least");
+        assert_eq!(views.iter().filter(|v| v["kind"] == "elevation").count(), 4);
+        assert!(views.iter().all(|v| v["svg"].as_str().unwrap().starts_with("<svg")));
+        assert_eq!(r["complete"], true, "{}", r["notes"]);
+        let levels = r["model_levels"].as_array().unwrap().len();
+        assert!(views.iter().all(|v| v["levels_shown"].as_array().unwrap().len() >= levels.max(1)));
+        let mut empty = App::default();
+        assert!(empty.handle("auto_views", &json!({})).is_err());
     }
 
     #[test]
