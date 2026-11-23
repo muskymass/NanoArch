@@ -3163,7 +3163,12 @@ impl App {
         match args.get("kind").and_then(Value::as_str).unwrap_or("dxf") {
             "dxf" => Ok(json!({ "data": nnx_core::analytical::dxf(&a, &title), "name": "analytical-model.dxf", "nodes": a.nodes.len(), "members": a.members.len(), "surfaces": a.surfaces.len(), "loads": a.loads.len(), "notes": a.notes })),
             "ifc" => Ok(json!({ "data": nnx_core::analytical::ifc(&a, &title, &utc_now()), "name": "analytical-model.ifc", "nodes": a.nodes.len(), "members": a.members.len(), "surfaces": a.surfaces.len(), "loads": a.loads.len(), "notes": a.notes })),
-            other => Err(format!("unknown export kind '{other}' (dxf or ifc)")),
+            k @ ("e2k" | "f2k") => {
+                let material = args.get("material").and_then(Value::as_str).unwrap_or("");
+                let csi = if k == "e2k" { nnx_core::csi::Csi::E2k } else { nnx_core::csi::Csi::F2k };
+                Ok(json!({ "data": nnx_core::csi::write(&a, csi, &title, material)?, "name": format!("analytical-model.{k}"), "nodes": a.nodes.len(), "members": a.members.len(), "surfaces": a.surfaces.len(), "loads": a.loads.len(), "notes": a.notes, "verified_import": false }))
+            }
+            other => Err(format!("unknown export kind '{other}' (dxf, ifc, e2k or f2k)")),
         }
     }
 
@@ -6956,6 +6961,9 @@ END-ISO-10303-21;
         assert!(text.starts_with("ISO-10303-21;") && text.contains("IFCSTRUCTURALPOINTCONNECTION") && text.contains("IFCSTRUCTURALCURVEMEMBER") && text.contains("IFCSTRUCTURALSURFACEMEMBER"));
         assert!(i["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("no load factor")));
         assert!(app.handle("export_analytical", &json!({ "kind": "stl" })).is_err());
+        assert!(app.handle("export_analytical", &json!({ "kind": "e2k" })).is_err());
+        assert!(app.handle("export_analytical", &json!({ "kind": "e2k", "material": "C30" })).unwrap()["data"].as_str().unwrap().contains("$ STORIES"));
+        assert!(app.handle("export_analytical", &json!({ "kind": "f2k", "material": "C30" })).unwrap()["data"].as_str().unwrap().contains("JOINT COORDINATES"));
         app.handle("structural_set", &json!({ "structural": { "loadFactor": 1.4 } })).unwrap();
         assert!(app.handle("export_analytical", &json!({})).unwrap()["data"].as_str().unwrap().contains(" Pu="));
         assert!(App::default().handle("export_analytical", &json!({})).is_err() && App::default().handle("structural", &json!({})).is_err());

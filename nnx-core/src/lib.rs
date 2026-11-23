@@ -8,6 +8,7 @@ pub mod annot;
 pub mod assembly;
 pub mod asbuilt;
 pub mod analytical;
+pub mod csi;
 pub mod areatable;
 pub mod audits;
 pub mod bbs;
