@@ -482,6 +482,8 @@ impl App {
             "tender_set" => self.tender_set(args),
             "payment" => self.payment_report(),
             "payment_set" => self.payment_set(args),
+            "progress_payments" => self.progress_report(),
+            "progress_payments_set" => self.progress_set(args),
             "procure" => self.procure_report(),
             "procure_set" => self.procure_set(args),
             "qaqc" => self.qaqc_report(args),
@@ -1316,6 +1318,25 @@ impl App {
             Ok(())
         })?;
         let mut v = self.payment_report()?;
+        v["changed"] = json!(changed);
+        Ok(v)
+    }
+
+    fn progress_report(&self) -> Result<Value, String> {
+        let inputs = self.exec_inputs()?.payment;
+        let pay = self.payment_now()?;
+        let r = nnx_core::progress::compute(&inputs.progress, &pay);
+        Ok(json!({ "csv": r.csv(), "report": r }))
+    }
+
+    /// Replaces only the certificates and the retention; the milestones and the contract value are left as they are.
+    fn progress_set(&mut self, args: &Value) -> Result<Value, String> {
+        let prog: nnx_core::progress::ProgressInputs = serde_json::from_value(args.get("progress").cloned().ok_or("progress is required")?).map_err(|e| format!("progress: {e}"))?;
+        let changed = self.exec_update("Progress payment certificates", |e| {
+            e.payment.progress = prog.clone();
+            Ok(())
+        })?;
+        let mut v = self.progress_report()?;
         v["changed"] = json!(changed);
         Ok(v)
     }
@@ -7450,6 +7471,27 @@ END-ISO-10303-21;
     }
 
     // ------------------------------------------------------------------ Milestone 6: execution commands
+
+    #[test]
+    fn progress_certificates_are_stored_apart_from_the_milestones_and_report_the_payable_amount() {
+        let mut app = complete_app();
+        let pay = json!({ "payment": { "contractValue": 1000.0, "contractSource": "synthetic contract", "milestones": [{ "id": "m1", "name": "Footings", "link": { "kind": "task", "key": "footing_pour" }, "trigger": "finish", "pct": 100.0 }] } });
+        app.handle("payment_set", &pay).unwrap();
+        let prog = json!({ "progress": { "retentionPct": 5.0, "retentionSource": "synthetic clause", "certificates": [{ "id": "c1", "date": "2026-02-01", "reference": "report 1", "lines": [{ "milestone": "m1", "completionPct": 40.0 }] }] } });
+        let r = app.handle("progress_payments_set", &prog).unwrap();
+        assert_eq!(r["changed"], true);
+        // 40% of 1000 = 400, retention 5% = 20, payable 380.
+        assert_eq!(r["report"]["certificates"][0]["payable_now"], 380.0);
+        assert!(r["csv"].as_str().unwrap().contains("TOTAL"));
+        // The milestones survive, and the stored certificates are read back.
+        assert_eq!(app.handle("payment", &json!({})).unwrap()["report"]["milestones"][0]["id"], "m1");
+        assert_eq!(app.handle("progress_payments", &json!({})).unwrap()["report"]["total_paid_net"], 380.0);
+        // An unknown milestone is refused by name and nothing is stored.
+        let bad = json!({ "progress": { "certificates": [{ "id": "c1", "date": "2026-02-01", "reference": "r", "lines": [{ "milestone": "zz", "completionPct": 1.0 }] }] } });
+        assert!(app.handle("progress_payments_set", &bad).unwrap_err().contains("not a payment milestone"));
+        assert_eq!(app.handle("progress_payments", &json!({})).unwrap()["report"]["total_paid_net"], 380.0);
+        assert!(app.handle("progress_payments_set", &json!({})).is_err());
+    }
 
     #[test]
     fn the_schedule_setup_is_kept_in_the_project_and_the_m6_features_read_it() {
