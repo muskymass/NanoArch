@@ -15,6 +15,7 @@ pub mod costtier;
 pub mod cutting;
 pub mod boq;
 pub mod briefai;
+pub mod clarify;
 pub mod building;
 pub mod clash;
 pub mod command;

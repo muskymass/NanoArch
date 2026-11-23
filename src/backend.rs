@@ -348,6 +348,7 @@ impl App {
             "site_analyze" => Self::site_analyze(args),
             "plot_import_dxf" => Self::plot_import_dxf(args),
             "plot_import_survey" => Self::plot_import_survey(args),
+            "brief_clarify" => Self::brief_clarify(args),
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
             "analysis" => self.analysis(args),
             "materials" => Ok(nnx_core::materials::catalog_json()),
@@ -1877,6 +1878,19 @@ impl App {
     /// Reads the plot boundary from surveyed corner coordinates: `{ text | path, order?, crs?, units? }`. `text` (pasted rows) or
     /// `path` (a CSV or text file) gives the rows; without a header `order` (`en` or `ne`) is required; a system other than UTM
     /// needs `units`.
+    /// The clarifying conversation: `{ draft, field?, answer? }`. With a field and an answer the answer is applied first (an
+    /// unreadable one is an error and the draft is returned unchanged by the page). The reply carries the draft, the next
+    /// question (`null` when the brief is complete) and every question still open.
+    fn brief_clarify(args: &Value) -> Result<Value, String> {
+        use nnx_core::{briefai::BriefDraft, clarify};
+        let mut draft: BriefDraft = serde_json::from_value(args.get("draft").cloned().ok_or("draft is required")?).map_err(|e| format!("the draft is not valid: {e}"))?;
+        if let Some(field) = args.get("field").and_then(Value::as_str) {
+            let answer = args.get("answer").and_then(Value::as_str).ok_or("answer is required with field")?;
+            clarify::apply_answer(&mut draft, field, answer)?;
+        }
+        Ok(json!({ "draft": draft, "next": clarify::next_question(&draft), "missing": clarify::missing(&draft), "complete": clarify::is_complete(&draft) }))
+    }
+
     fn plot_import_survey(args: &Value) -> Result<Value, String> {
         let text_arg = args.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty());
         let path_arg = args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty());
@@ -4037,6 +4051,20 @@ EOF
         assert!(app.handle("plot_import_dxf", &json!({})).unwrap_err().contains("path"));
         assert!(app.handle("plot_import_dxf", &json!({ "path": dir.join("none.dxf").to_str().unwrap() })).unwrap_err().contains("cannot read"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_clarifying_conversation_asks_only_what_is_missing_and_ends_when_complete() {
+        let mut app = App::default();
+        let r = app.handle("brief_clarify", &json!({ "draft": { "building_type": "villa", "floors": 1, "city": "Riyadh", "climate_zone": 1, "style": "contemporary" } })).unwrap();
+        assert_eq!(r["next"]["field"], "plot_size");
+        assert_eq!(r["missing"].as_array().unwrap().len(), 2);
+        let r = app.handle("brief_clarify", &json!({ "draft": r["draft"], "field": "plot_size", "answer": "20x30" })).unwrap();
+        assert_eq!(r["next"]["field"], "rooms");
+        let r = app.handle("brief_clarify", &json!({ "draft": r["draft"], "field": "rooms", "answer": "3" })).unwrap();
+        assert_eq!((r["complete"].as_bool(), r["next"].is_null()), (Some(true), true));
+        assert!(app.handle("brief_clarify", &json!({ "draft": r["draft"], "field": "floors", "answer": "many" })).unwrap_err().contains(" | "));
+        assert!(app.handle("brief_clarify", &json!({})).unwrap_err().contains("draft is required"));
     }
 
     #[test]
