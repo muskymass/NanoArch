@@ -124,3 +124,59 @@ fn dwg_and_garbage_are_refused_with_a_reason() {
     assert!(import_dxf(b"hello world\nfoo\n", None, None).unwrap_err().contains("not a DXF"));
     assert!(import_dxf(b"0\nSECTION\n2\nHEADER\n0\nENDSEC\n", Some("m"), None).unwrap_err().contains("ENTITIES"));
 }
+
+use nnx_core::plot_import::import_survey;
+
+#[test]
+fn utm_corners_with_a_header_become_a_counter_clockwise_plot_at_the_origin() {
+    let t = "Name,Easting,Northing,Z\nA,500000.00,2700000.00,610\nB,500000.00,2700022.00,611\nC,500018.00,2700022.00,611\nD,500018.00,2700000.00,610\nA,500000.00,2700000.00,610\n";
+    let r = import_survey(t, None, Some("UTM 38N"), None).unwrap();
+    assert_eq!(r.unit, "m");
+    assert_eq!(r.selected, Some(0));
+    let c = &r.candidates[0];
+    assert!((c.area_m2 - 396.0).abs() < 1e-6 && (c.perimeter_m - 80.0).abs() < 1e-6);
+    assert_eq!(c.polygon_m.len(), 4, "the closing row is merged");
+    assert!(nnx_core::site::signed_area(&c.polygon_m) > 0.0);
+    assert_eq!(r.origin_offset_m, Some([-500000.0, -2700000.0]));
+    assert!(r.warnings.iter().any(|w| w.contains("Z") && w.contains("ignored")));
+    assert!(r.warnings.iter().any(|w| w.contains("UTM 38N")));
+}
+
+#[test]
+fn without_a_header_the_column_order_and_the_unit_must_be_stated() {
+    let t = "500000 2700000\n500018 2700000\n500018 2700022\n500000 2700022\n";
+    assert!(import_survey(t, None, Some("UTM 38N"), None).unwrap_err().contains("column order"));
+    assert!(import_survey(t, Some("en"), None, None).unwrap_err().contains("unit"));
+    assert!(import_survey(t, Some("xy"), Some("UTM 38N"), None).unwrap_err().contains("unknown column order"));
+    let ok = import_survey(t, Some("en"), Some("UTM 38N"), None).unwrap();
+    assert!((ok.candidates[0].area_m2 - 396.0).abs() < 1e-6);
+    // Northing first gives the same plot turned over, same area.
+    let ne = "2700000 500000\n2700000 500018\n2700022 500018\n2700022 500000\n";
+    let sw = import_survey(ne, Some("ne"), Some("UTM 38N"), None).unwrap();
+    assert!((sw.candidates[0].area_m2 - 396.0).abs() < 1e-6);
+    // A local grid in feet is converted, and its label is only reported.
+    let ft = import_survey("0 0\n10 0\n10 10\n0 10", Some("en"), Some("local grid"), Some("ft")).unwrap();
+    assert!((ft.candidates[0].area_m2 - 100.0 * 0.3048 * 0.3048).abs() < 1e-9);
+}
+
+#[test]
+fn named_rows_arabic_digits_comments_and_semicolons_are_read() {
+    let t = "# كروكي\n1;٥٠٠٠٠٠;٢٧٠٠٠٠٠\n2;٥٠٠٠١٨;٢٧٠٠٠٠٠ // الركن\n3;٥٠٠٠١٨;٢٧٠٠٠٢٢\n4;٥٠٠٠٠٠;٢٧٠٠٠٢٢\n";
+    let r = import_survey(t, Some("en"), Some("UTM 38N"), None).unwrap();
+    assert!((r.candidates[0].area_m2 - 396.0).abs() < 1e-6);
+}
+
+#[test]
+fn degrees_bad_rows_and_bad_outlines_are_refused_with_the_line() {
+    assert!(import_survey("24.7 46.7\n24.8 46.7\n24.8 46.8", Some("en"), Some("UTM 38N"), None).unwrap_err().contains("latitude"));
+    let t = "500000 2700000\n500018 2700000\nabc 2700022\n";
+    assert!(import_survey(t, Some("en"), Some("UTM 38N"), None).unwrap_err().contains("line 3"));
+    let ragged = "500000 2700000\n500018 2700000 5\n500018 2700022\n";
+    assert!(import_survey(ragged, Some("en"), Some("UTM 38N"), None).unwrap_err().contains("line 2"));
+    assert!(import_survey("500000 2700000\n500018 2700000\n", Some("en"), Some("UTM 38N"), None).unwrap_err().contains("at least 3"));
+    let bow = "500000 2700000\n500010 2700005\n500010 2700000\n500000 2700008\n";
+    assert!(import_survey(bow, Some("en"), Some("UTM 38N"), None).unwrap_err().contains("crosses itself"));
+    let line = "500000 2700000\n500010 2700000\n500020 2700000\n";
+    assert!(import_survey(line, Some("en"), Some("UTM 38N"), None).unwrap_err().contains("no area"));
+    assert!(import_survey("  \n# nothing\n", Some("en"), Some("UTM 38N"), None).unwrap_err().contains("no coordinates"));
+}

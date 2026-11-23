@@ -313,6 +313,186 @@ fn chain_lines(lines: &[(String, Pt, Pt)]) -> (Vec<Raw>, usize) {
     (out, loose)
 }
 
+/// Arabic-Indic and Persian digits become ASCII, the Arabic decimal separator becomes `.`, the Arabic thousands separator goes.
+fn ascii_digits(s: &str) -> String {
+    s.chars()
+        .filter(|c| *c != '\u{066C}')
+        .map(|c| match c {
+            '\u{0660}'..='\u{0669}' => char::from(b'0' + (c as u32 - 0x0660) as u8),
+            '\u{06F0}'..='\u{06F9}' => char::from(b'0' + (c as u32 - 0x06F0) as u8),
+            '\u{066B}' => '.',
+            _ => c,
+        })
+        .collect()
+}
+
+fn survey_number(v: &str) -> Option<f64> {
+    v.parse::<f64>().ok().filter(|x| x.is_finite())
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Col {
+    East,
+    North,
+    Name,
+    Height,
+    Other,
+}
+
+fn header_col(word: &str) -> Col {
+    match word.to_ascii_lowercase().trim_matches('"') {
+        "e" | "east" | "easting" | "x" => Col::East,
+        "n" | "north" | "northing" | "y" => Col::North,
+        "name" | "id" | "point" | "pt" | "no" | "number" | "station" => Col::Name,
+        "z" | "elev" | "elevation" | "h" | "height" => Col::Height,
+        _ => Col::Other,
+    }
+}
+
+/// Reads a plot boundary from surveyed corner coordinates (a survey report, a CSV exported from a total station or a GNSS
+/// receiver, or text pasted from a deed) given as projected easting/northing pairs.
+///
+/// - **Rows.** One corner per line, in boundary order (clockwise or counter-clockwise), separated by comma, semicolon, tab or
+///   spaces; `#` and `//` start a comment; Arabic-Indic digits are accepted. A closing row equal to the first is dropped.
+///   With a header line naming the columns (`E`/`Easting`/`X`, `N`/`Northing`/`Y`, optional `Name`/`ID` and `Z`/`Elevation`)
+///   the columns are read by name. Without one, `order` (`en` = easting first, `ne` = northing first) must be stated, and a
+///   row has 2 fields (E N), 3 (name E N) or 4 (name E N Z; the height is ignored and reported).
+/// - **Coordinate system.** `crs` is the label the user gives (for example `UTM 38N`); it is reported, never converted.
+///   Coordinates must already be projected (a plane in length units): latitude/longitude in degrees cannot be used as metres
+///   and are refused when the system is UTM. A UTM system is in metres. For any other system `units` (`m`, `cm`, `mm`, `ft`,
+///   `in`) must be stated; nothing is assumed.
+/// - **Output.** The same `ImportResult` as the DXF import: one candidate, counter-clockwise, in metres, moved so that its
+///   lowest x and y are 0 (the move is reported in `origin_offset_m`).
+pub fn import_survey(text: &str, order: Option<&str>, crs: Option<&str>, units: Option<&str>) -> Result<ImportResult, String> {
+    let crs = crs.map(str::trim).filter(|c| !c.is_empty());
+    let is_utm = crs.is_some_and(|c| c.to_ascii_lowercase().starts_with("utm"));
+    let mut warnings = Vec::new();
+    let (unit, unit_source) = match (units.map(str::trim).filter(|u| !u.is_empty()), is_utm) {
+        (Some(u), utm) => {
+            unit_factor(u).ok_or_else(|| format!("unknown unit '{u}': use m, cm, mm, ft or in"))?;
+            if utm && unit_factor(u) != Some(1.0) {
+                warnings.push(format!("UTM coordinates are in metres but {u} was stated: {u} is used"));
+            }
+            (u.to_ascii_lowercase(), "stated by the user".to_string())
+        }
+        (None, true) => ("m".to_string(), "UTM is a metric system".to_string()),
+        (None, false) => return Err("state the unit of the coordinates (m, cm, mm, ft or in): it is not assumed".into()),
+    };
+    let f = unit_factor(&unit).ok_or("unit")?;
+    let order = match order.map(|o| o.trim().to_ascii_lowercase()).as_deref() {
+        None | Some("") => None,
+        Some("en") => Some(false),
+        Some("ne") => Some(true),
+        Some(o) => return Err(format!("unknown column order '{o}': use en (easting first) or ne (northing first)")),
+    };
+
+    let rows: Vec<(usize, Vec<String>)> = text
+        .lines()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            let l = ascii_digits(l);
+            let l = l.split('#').next().unwrap_or("").split("//").next().unwrap_or("").trim().to_string();
+            if l.is_empty() {
+                return None;
+            }
+            let fields: Vec<String> = l.split([',', ';', '\t', ' ']).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
+            Some((i + 1, fields))
+        })
+        .collect();
+    let Some((_, first)) = rows.first() else {
+        return Err("the survey text has no coordinates".into());
+    };
+
+    // Header: the first row has a non-number and names both an easting and a northing column.
+    let first_cols: Vec<Col> = first.iter().map(|w| header_col(w)).collect();
+    let has_header = first.iter().any(|w| survey_number(w).is_none()) && first_cols.contains(&Col::East) && first_cols.contains(&Col::North);
+    let (cols, data): (Vec<Col>, &[(usize, Vec<String>)]) = if has_header {
+        let ex = first_cols.iter().position(|c| *c == Col::East).ok_or("easting column")?;
+        let nx = first_cols.iter().position(|c| *c == Col::North).ok_or("northing column")?;
+        if let Some(swapped) = order
+            && swapped != (nx < ex)
+        {
+            warnings.push("the stated column order differs from the header: the header is used".into());
+        }
+        (first_cols, &rows[1..])
+    } else {
+        let swapped = order.ok_or("state the column order: en (easting first) or ne (northing first); the text has no header naming the columns")?;
+        let n = first.len();
+        let (a, b) = if swapped { (Col::North, Col::East) } else { (Col::East, Col::North) };
+        let cols = match n {
+            2 => vec![a, b],
+            3 => vec![Col::Name, a, b],
+            4 => vec![Col::Name, a, b, Col::Height],
+            _ => return Err(format!("line {}: {n} fields; a corner row has 2 (E N), 3 (name E N) or 4 (name E N Z)", rows[0].0)),
+        };
+        (cols, &rows[..])
+    };
+    if cols.contains(&Col::Height) {
+        warnings.push("heights (Z) were read and ignored: the plot is a plan outline".into());
+    }
+    let ex = cols.iter().position(|c| *c == Col::East).ok_or("easting column")?;
+    let nx = cols.iter().position(|c| *c == Col::North).ok_or("northing column")?;
+    let mut raw: Vec<Pt> = Vec::new();
+    for (line, fields) in data {
+        if fields.len() != cols.len() {
+            return Err(format!("line {line}: {} fields but the first row has {}", fields.len(), cols.len()));
+        }
+        let e = survey_number(&fields[ex]).ok_or_else(|| format!("line {line}: easting '{}' is not a number", fields[ex]))?;
+        let n = survey_number(&fields[nx]).ok_or_else(|| format!("line {line}: northing '{}' is not a number", fields[nx]))?;
+        raw.push([e, n]);
+    }
+    if raw.len() < 3 {
+        return Err(format!("{} corner(s) read: a plot needs at least 3", raw.len()));
+    }
+    if is_utm {
+        if raw.iter().all(|p| p[0].abs() <= 180.0 && p[1].abs() <= 90.0) {
+            return Err("these values look like latitude/longitude in degrees, not UTM metres: project them to the plane (UTM easting/northing) first".into());
+        }
+        if raw.iter().any(|p| p[1] < 0.0 || p[1] > 10_000_000.0) {
+            return Err("a UTM northing must be between 0 and 10,000,000 m: check the column order".into());
+        }
+        if raw.iter().any(|p| p[0] > 1_000_000.0) {
+            warnings.push("an easting is above 1,000,000 m: the easting and northing columns may be swapped".into());
+        }
+    }
+    if let Some(c) = crs {
+        warnings.push(format!("coordinate system stated by the user: {c} (not verified)"));
+    } else {
+        warnings.push("no coordinate system was stated: the points are taken as one flat plane".into());
+    }
+    if is_utm {
+        warnings.push("UTM grid distances differ slightly from ground distances (scale factor 0.9996 on the central meridian): the area is a grid area".into());
+    }
+
+    let before = raw.len();
+    let pts = dedupe(raw.iter().map(|p| [p[0] * f, p[1] * f]).collect(), 1e-6);
+    if pts.len() != before {
+        warnings.push(format!("{} repeated corner(s) (including a closing row equal to the first) were merged", before - pts.len()));
+    }
+    if pts.len() < 3 {
+        return Err("fewer than 3 distinct corners".into());
+    }
+    let a = signed_area(&pts);
+    if a.abs() < 1e-6 {
+        return Err("the corners enclose no area (they lie on one line)".into());
+    }
+    if !is_simple(&pts) {
+        return Err("the outline crosses itself or touches itself: check the order of the corners (they must follow the boundary)".into());
+    }
+    let mut polygon_m = pts;
+    if a < 0.0 {
+        polygon_m.reverse();
+    }
+    let perimeter_m = (0..polygon_m.len()).map(|i| (polygon_m[(i + 1) % polygon_m.len()][0] - polygon_m[i][0]).hypot(polygon_m[(i + 1) % polygon_m.len()][1] - polygon_m[i][1])).sum();
+    let (mx, my) = (polygon_m.iter().map(|q| q[0]).fold(f64::INFINITY, f64::min), polygon_m.iter().map(|q| q[1]).fold(f64::INFINITY, f64::min));
+    for q in &mut polygon_m {
+        q[0] -= mx;
+        q[1] -= my;
+    }
+    let candidate = Candidate { layer: crs.unwrap_or("survey").to_string(), source: "survey points".into(), polygon_m, area_m2: a.abs(), perimeter_m, problem: None };
+    Ok(ImportResult { unit, unit_source, candidates: vec![candidate], selected: Some(0), origin_offset_m: Some([-mx, -my]), warnings })
+}
+
 /// Reads plot boundary candidates from a DXF drawing. `units` states the drawing unit (`m`, `cm`, `mm`, `ft`, `in`) and is
 /// required when the drawing does not declare one. `index` picks one of several candidates.
 pub fn import_dxf(bytes: &[u8], units: Option<&str>, index: Option<usize>) -> Result<ImportResult, String> {

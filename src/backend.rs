@@ -347,6 +347,7 @@ impl App {
             "presets" => Ok(nnx_core::presets::presets_json()),
             "site_analyze" => Self::site_analyze(args),
             "plot_import_dxf" => Self::plot_import_dxf(args),
+            "plot_import_survey" => Self::plot_import_survey(args),
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
             "analysis" => self.analysis(args),
             "materials" => Ok(nnx_core::materials::catalog_json()),
@@ -1870,6 +1871,25 @@ impl App {
             Some(v) => Some(v.as_u64().ok_or("plot import: index must be a whole number")? as usize),
         };
         let r = nnx_core::plot_import::import_dxf(&bytes, units, index).map_err(|e| format!("plot import: {e}"))?;
+        Ok(json!({ "result": r }))
+    }
+
+    /// Reads the plot boundary from surveyed corner coordinates: `{ text | path, order?, crs?, units? }`. `text` (pasted rows) or
+    /// `path` (a CSV or text file) gives the rows; without a header `order` (`en` or `ne`) is required; a system other than UTM
+    /// needs `units`.
+    fn plot_import_survey(args: &Value) -> Result<Value, String> {
+        let text_arg = args.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty());
+        let path_arg = args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty());
+        let text = match (text_arg, path_arg) {
+            (Some(t), _) => t.to_string(),
+            (None, Some(p)) => {
+                let bytes = std::fs::read(p).map_err(|e| format!("survey import: cannot read {p}: {e}"))?;
+                String::from_utf8_lossy(&bytes).trim_start_matches('\u{feff}').to_string()
+            }
+            (None, None) => return Err("survey import: give the corner rows as text, or the path of the file".into()),
+        };
+        let field = |k: &str| args.get(k).and_then(Value::as_str);
+        let r = nnx_core::plot_import::import_survey(&text, field("order"), field("crs"), field("units")).map_err(|e| format!("survey import: {e}"))?;
         Ok(json!({ "result": r }))
     }
 
@@ -4017,6 +4037,17 @@ EOF
         assert!(app.handle("plot_import_dxf", &json!({})).unwrap_err().contains("path"));
         assert!(app.handle("plot_import_dxf", &json!({ "path": dir.join("none.dxf").to_str().unwrap() })).unwrap_err().contains("cannot read"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn surveyed_utm_corners_are_imported_through_the_backend() {
+        let mut app = App::default();
+        let t = "E,N\n500000,2700000\n500018,2700000\n500018,2700022\n500000,2700022\n";
+        let r = app.handle("plot_import_survey", &json!({ "text": t, "crs": "UTM 38N" })).unwrap();
+        assert!((r["result"]["candidates"][0]["area_m2"].as_f64().unwrap() - 396.0).abs() < 1e-6);
+        assert!(app.handle("plot_import_survey", &json!({})).unwrap_err().contains("corner rows"));
+        assert!(app.handle("plot_import_survey", &json!({ "text": t })).unwrap_err().contains("unit"));
+        assert!(app.handle("plot_import_survey", &json!({ "path": "C:/nope/none.csv" })).unwrap_err().contains("cannot read"));
     }
 
     #[test]
