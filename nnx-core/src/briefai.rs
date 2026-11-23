@@ -138,7 +138,7 @@ fn count_before(text: &str, at: usize) -> Option<u32> {
     if let Ok(n) = token.trim_matches(|c: char| !c.is_ascii_digit()).parse::<u32>() {
         return Some(n);
     }
-    NUMBER_WORDS.iter().find(|(w, _)| token == *w || token.strip_prefix('و') == Some(w) || token.starts_with(w) && token.len() <= w.len() + 3).map(|(_, n)| *n)
+    NUMBER_WORDS.iter().find(|(w, _)| token == *w || token.strip_prefix('و') == Some(w) || token.strip_prefix('ب') == Some(w) || token.starts_with(w) && token.len() <= w.len() + 3).map(|(_, n)| *n)
 }
 
 fn find_any(text: &str, keys: &[&str]) -> Option<(usize, usize)> {
@@ -242,6 +242,37 @@ fn bedrooms_of(t: &str) -> Option<u32> {
             return count_before(t, p).or(Some(1));
         }
     }
+    bare_rooms_of(t)
+}
+
+/// "Rooms" with no room type after the count (`بثلاث غرف`, `غرفتين`, `4 rooms`) are bedrooms. A count is required: a room word
+/// alone gives nothing. A room word followed by another room type (`غرف طعام`, `غرفة جلوس`) names that room, not a bedroom.
+fn bare_rooms_of(t: &str) -> Option<u32> {
+    const OTHER_ROOM: [&str; 6] = ["طعام", "جلوس", "معيشه", "ضيوف", "خادمه", "سائق"];
+    let followed_by_other = |end: usize| {
+        let next = t[end..].trim_start();
+        OTHER_ROOM.iter().any(|w| next.starts_with(&norm(w)))
+    };
+    let word_start = |at: usize| t[..at].chars().next_back().is_none_or(|c| !c.is_alphabetic());
+    for key in ["غرفتين", "غرف", "rooms", "room"] {
+        let k = norm(key);
+        let mut from = 0;
+        while let Some(p) = t[from..].find(&k) {
+            let at = from + p;
+            let end = at + k.len();
+            from = end;
+            let starts_word = word_start(at) || (key.starts_with('غ') && t[..at].ends_with('ب'));
+            if !starts_word || followed_by_other(end) {
+                continue;
+            }
+            if key == "غرفتين" {
+                return Some(2);
+            }
+            if let Some(n) = count_before(t, at) {
+                return Some(n);
+            }
+        }
+    }
     None
 }
 
@@ -303,13 +334,26 @@ pub fn from_keywords(text: &str) -> BriefDraft {
             rooms.push(r);
         }
     }
+    // A men's and a women's majlis are two rooms; one of them alone is one named room.
+    let mens = find_any(&t, &["مجلس رجال", "مجلس الرجال", "مجلس للرجال", "men's majlis", "mens majlis", "majlis for men"]).is_some();
+    let womens = find_any(&t, &["مجلس نساء", "مجلس النساء", "مجلس للنساء", "women's majlis", "womens majlis", "majlis for women"]).is_some();
+    let both = find_any(&t, &["مجلس رجال ونساء", "مجلس الرجال والنساء"]).is_some();
+    let gendered: Vec<(&str, &str)> = match (mens || both, womens || both) {
+        (true, true) => vec![("مجلس رجال", "Men's majlis"), ("مجلس نساء", "Women's majlis")],
+        (true, false) => vec![("مجلس رجال", "Men's majlis")],
+        (false, true) => vec![("مجلس نساء", "Women's majlis")],
+        (false, false) => vec![],
+    };
+    for (ar_name, en_name) in &gendered {
+        rooms.push(room("majlis", if arabic { ar_name } else { en_name }, 1));
+    }
     for (func, ar, en, singular, dual) in [
         ("majlis", "مجلس", "Majlis", vec!["مجلس", "majlis"], vec!["مجلسين", "two majlis"]),
         ("living", "صالة", "Living room", vec!["صاله", "living room", "living hall"], vec!["صالتين"]),
         ("dining", "غرفة طعام", "Dining room", vec!["غرفه طعام", "صاله طعام", "dining"], vec![]),
         ("kitchen", "مطبخ", "Kitchen", vec!["مطبخ", "kitchen"], vec!["مطبخين"]),
     ] {
-        let n = count_of(&t, &singular, &dual);
+        let n = if func == "majlis" && !gendered.is_empty() { 0 } else { count_of(&t, &singular, &dual) };
         for i in 0..n {
             rooms.push(room(func, &if n > 1 { format!("{} {}", if arabic { ar } else { en }, i + 1) } else if arabic { ar.to_string() } else { en.to_string() }, 1));
         }
