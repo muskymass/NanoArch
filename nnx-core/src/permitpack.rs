@@ -1,4 +1,4 @@
-//! The permit package: the plan set as numbered A3 sheets, each with a title-block header and the licensed engineer's stamp
+//! The permit package: the plan set as numbered sheets (A3 by default; A4, A2, A1 or A0 by the `paper` input), each with a title-block header and the licensed engineer's stamp
 //! box, plus an index sheet that lists every sheet by number.
 //!
 //! Everything about the engineer and the submission is the user's input and none of it has a default: the engineer's name, the
@@ -39,6 +39,37 @@ pub struct Input {
     pub revision: String,
     /// What the package is issued for, shown in the header when entered.
     pub issued_for: String,
+    /// Sheet size: `A4`, `A3`, `A2`, `A1` or `A0` (portrait, ISO 216). Empty means `A3`, the size the package always used.
+    pub paper: String,
+}
+
+/// An ISO 216 sheet size: its CSS `@page` name and its width relative to A3 (297 mm), which scales the margins, type and line
+/// weights so a sheet reads the same proportionally at every size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Paper {
+    pub name: &'static str,
+    pub width_mm: f64,
+    pub height_mm: f64,
+}
+
+impl Paper {
+    /// The size named by `s` (case-insensitive, surrounding spaces ignored); empty is A3. Anything else is refused by name.
+    pub fn parse(s: &str) -> Result<Paper, String> {
+        let (name, width_mm, height_mm) = match s.trim().to_ascii_uppercase().as_str() {
+            "" | "A3" => ("A3", 297.0, 420.0),
+            "A4" => ("A4", 210.0, 297.0),
+            "A2" => ("A2", 420.0, 594.0),
+            "A1" => ("A1", 594.0, 841.0),
+            "A0" => ("A0", 841.0, 1189.0),
+            other => return Err(format!("permit pack: unknown paper size `{other}`; use A4, A3, A2, A1 or A0")),
+        };
+        Ok(Paper { name, width_mm, height_mm })
+    }
+
+    /// Scale relative to A3's width.
+    pub fn scale(&self) -> f64 {
+        self.width_mm / 297.0
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,6 +86,8 @@ pub struct Pack {
     pub html: String,
     pub sheets: Vec<SheetInfo>,
     pub notes: Vec<String>,
+    /// The sheet size the package was laid out for (`A4`, `A3`, `A2`, `A1` or `A0`).
+    pub paper: &'static str,
 }
 
 pub struct Context<'a> {
@@ -183,6 +216,9 @@ pub fn build(ctx: &Context, input: &Input) -> Result<Pack, String> {
     if !miss.is_empty() {
         return Err(format!("permit pack: missing input(s): {}. Nothing is defaulted; enter them.", miss.join(", ")));
     }
+    let paper = Paper::parse(&input.paper)?;
+    let k = paper.scale();
+    let px = |v: f64| format!("{:.1}px", v * k);
     if !valid_date(ctx.date) {
         return Err(format!("permit pack: the date must be YYYY-MM-DD, got `{}`", ctx.date));
     }
@@ -252,18 +288,45 @@ pub fn build(ctx: &Context, input: &Input) -> Result<Pack, String> {
         let n = sheet_number(&input.sheet_prefix, k + 2);
         body.push_str(&format!("<section class=\"sheet\">{}<div class=\"plan\">{svg}</div>{table}{}</section>", chrome.header(&n, title, k + 2), chrome.stamp()));
     }
+    // Every length below is the A3 value times `k`, so A1/A0 sheets keep the same proportions rather than printing A3-sized type
+    // lost on a large sheet. The plan's height cap is the same share of the page height as on A3 (190 of 420 mm).
     let html = format!(
         "<!doctype html><html lang=\"{}\" dir=\"{}\"><head><meta charset=\"utf-8\"><title>{}</title><style>\
-         @page{{size:A3 portrait;margin:12mm}} *{{-webkit-print-color-adjust:exact;print-color-adjust:exact}}\
+         @page{{size:{} portrait;margin:{:.1}mm}} *{{-webkit-print-color-adjust:exact;print-color-adjust:exact}}\
          body{{font-family:'Segoe UI',Tahoma,sans-serif;color:#111;margin:0}} .sheet{{page-break-after:always;break-after:page}} .sheet:last-child{{page-break-after:auto;break-after:auto}}\
-         h1{{font-size:20px;margin:10px 0 6px}} table{{border-collapse:collapse;width:100%;font-size:11px;margin:6px 0}} th,td{{border:1px solid #999;padding:2px 6px;text-align:start}} th{{background:#eee}} td.n{{text-align:end}} tr.tot td{{font-weight:700;background:#f6f6f6}}\
-         .hdr td{{border:1.5px solid #333;font-size:12px}} .hdr td.big{{font-size:16px;font-weight:700}} .plan{{direction:ltr}} .plan svg{{width:100%;height:auto;max-height:190mm;display:block}}\
-         .stamp{{display:flex;gap:8px;margin-top:10px;border:2px solid #333;padding:6px;min-height:34mm}} .stamp .sd{{flex:2;font-size:12px;line-height:1.7}} .stamp .seal,.stamp .sig{{flex:1;border:1px dashed #777;font-size:10px;color:#777;padding:2px}}\
-         .warn{{font-size:11px;color:#b71c1c;font-weight:600;margin:4px 0}}</style></head><body>{body}</body></html>",
+         h1{{font-size:{};margin:{} 0 {}}} table{{border-collapse:collapse;width:100%;font-size:{};margin:{} 0}} th,td{{border:{} solid #999;padding:{} {};text-align:start}} th{{background:#eee}} td.n{{text-align:end}} tr.tot td{{font-weight:700;background:#f6f6f6}}\
+         .hdr td{{border:{} solid #333;font-size:{}}} .hdr td.big{{font-size:{};font-weight:700}} .plan{{direction:ltr}} .plan svg{{width:100%;height:auto;max-height:{:.1}mm;display:block}}\
+         .stamp{{display:flex;gap:{};margin-top:{};border:{} solid #333;padding:{};min-height:{:.1}mm}} .stamp .sd{{flex:2;font-size:{};line-height:1.7}} .stamp .seal,.stamp .sig{{flex:1;border:{} dashed #777;font-size:{};color:#777;padding:{}}}\
+         .warn{{font-size:{};color:#b71c1c;font-weight:600;margin:{} 0}}</style></head><body>{body}</body></html>",
         if ctx.arabic { "ar" } else { "en" },
         if ctx.arabic { "rtl" } else { "ltr" },
-        esc(ctx.title)
+        esc(ctx.title),
+        paper.name,
+        12.0 * k,
+        px(20.0),
+        px(10.0),
+        px(6.0),
+        px(11.0),
+        px(6.0),
+        px(1.0),
+        px(2.0),
+        px(6.0),
+        px(1.5),
+        px(12.0),
+        px(16.0),
+        190.0 / 420.0 * paper.height_mm,
+        px(8.0),
+        px(10.0),
+        px(2.0),
+        px(6.0),
+        34.0 * k,
+        px(12.0),
+        px(1.0),
+        px(10.0),
+        px(2.0),
+        px(11.0),
+        px(4.0)
     );
     notes.push(chrome.t("المقياس غير محدد في الرسم؛ تُقرأ الأبعاد من التأطير لا من مقياس مطبوع.", "The drawings carry no printed scale; read dimensions from the dimension lines, not by measuring the print.").to_string());
-    Ok(Pack { html, sheets, notes })
+    Ok(Pack { html, sheets, notes, paper: paper.name })
 }

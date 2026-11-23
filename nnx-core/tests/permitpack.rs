@@ -13,7 +13,45 @@ fn room(key: &str, w: i64, level: Option<Id>) -> Command {
 }
 
 fn input() -> Input {
-    Input { engineer: Engineer { name: "Eng One".into(), licence_no: "L-1".into(), licensing_body: "Council".into(), discipline: String::new() }, project_no: "P-1".into(), sheet_prefix: "S".into(), revision: "Rev 0".into(), issued_for: String::new() }
+    Input { engineer: Engineer { name: "Eng One".into(), licence_no: "L-1".into(), licensing_body: "Council".into(), discipline: String::new() }, project_no: "P-1".into(), sheet_prefix: "S".into(), revision: "Rev 0".into(), issued_for: String::new(), paper: String::new() }
+}
+
+fn one_room_doc() -> Document {
+    let mut doc = Document::default();
+    doc.commit("plan", Origin::User, vec![room("a", 4000, None)]).unwrap();
+    doc
+}
+
+#[test]
+fn paper_size_sets_the_page_and_scales_type_and_margins_from_a3() {
+    let doc = one_room_doc();
+    let a3 = build(&ctx(&doc.model, "2026-11-23", false), &input()).unwrap();
+    assert_eq!(a3.paper, "A3");
+    assert!(a3.html.contains("@page{size:A3 portrait;margin:12.0mm}") && a3.html.contains("h1{font-size:20.0px;"), "empty means A3 at the old values");
+    for (p, size, margin, h1) in [("A1", "A1", "24.0mm", "40.0px"), ("a0", "A0", "34.0mm", "56.6px"), (" A4 ", "A4", "8.5mm", "14.1px")] {
+        let mut i = input();
+        i.paper = p.into();
+        let r = build(&ctx(&doc.model, "2026-11-23", false), &i).unwrap();
+        assert_eq!(r.paper, size);
+        assert!(r.html.contains(&format!("@page{{size:{size} portrait;margin:{margin}}}")), "{size}: page rule");
+        assert!(r.html.contains(&format!("h1{{font-size:{h1};")), "{size}: heading scales with the sheet");
+        assert_eq!(r.sheets.len(), 2, "sheet numbering does not depend on the paper");
+    }
+    let mut i = input();
+    i.paper = "A1".into();
+    let a1 = build(&ctx(&doc.model, "2026-11-23", false), &i).unwrap();
+    assert!(a1.html.contains("max-height:380.5mm"), "plan cap is the A3 share (190/420) of the A1 height 841");
+}
+
+#[test]
+fn an_unknown_paper_size_is_refused_by_name() {
+    let doc = one_room_doc();
+    for p in ["A5", "Letter", "B1"] {
+        let mut i = input();
+        i.paper = p.into();
+        let e = build(&ctx(&doc.model, "2026-11-23", false), &i).unwrap_err();
+        assert!(e.contains("unknown paper size") && e.contains(&p.to_ascii_uppercase()), "{e}");
+    }
 }
 
 fn ctx<'a>(m: &'a Model, date: &'a str, arabic: bool) -> Context<'a> {
