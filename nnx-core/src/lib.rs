@@ -47,6 +47,7 @@ pub mod lighting;
 pub mod mep;
 pub mod cables;
 pub mod panels;
+pub mod pumps;
 pub mod privacy;
 pub mod spanalt;
 pub mod sun;

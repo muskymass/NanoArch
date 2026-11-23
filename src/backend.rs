@@ -370,6 +370,7 @@ impl App {
             "lighting_plan" => Self::lighting_plan(args),
             "panel_schedule" => Self::panel_schedule(args),
             "cable_check" => Self::cable_check(args),
+            "water_storage_check" => Self::water_storage_check(args),
             "shear_core_check" => Self::shear_core_check(args),
             "savings_compare" => Self::savings_compare(args),
             "furniture_fit" => Self::furniture_fit(args),
@@ -2143,6 +2144,19 @@ impl App {
             .map_err(|e| format!("cable check: inputs are malformed (see the field list for catalogue and circuits): {e}"))?;
         let report = nnx_core::cables::check(&input)?;
         Ok(json!({ "cables": report }))
+    }
+
+    /// Ground and roof water tanks plus the transfer pump: `{ persons, litres_per_person_day, demand_source, ground_storage_days,
+    /// roof_storage_days, usable_fraction, ground_footprint_m2?, roof_footprint_m2?, max_water_depth_m?, transfer: { fill_hours,
+    /// ground_low_level_m, roof_high_level_m, main: { length_m, diameter_mm, hazen_c, minor_k }, pump_efficiency, motor_efficiency,
+    /// motor_margin, motor_sizes_kw?, max_velocity_mps? }, gravity?: { roof_low_level_m, highest_fixture_level_m, residual_head_m,
+    /// peak_flow_lps, main } }`. Every value is the caller's; a missing limit leaves its check `unchecked`. Preliminary, not a
+    /// plumbing design.
+    fn water_storage_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::pumps::WaterInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("water storage check: inputs are malformed (see the field list for tanks, transfer and gravity): {e}"))?;
+        let report = nnx_core::pumps::check(&input)?;
+        Ok(json!({ "water": report }))
     }
 
     /// Shear-wall core around lifts and stairs:`{ walls: [{ key, x_mm, y_mm, w_mm, h_mm }], shafts?: [{ key, kind: lift|stair,
@@ -4654,6 +4668,28 @@ EOF
         no_v.as_object_mut().unwrap().remove("voltage_v");
         assert!(app.handle("panel_schedule", &no_v).unwrap_err().contains("voltage_v is required"));
         assert!(app.handle("panel_schedule", &json!({ "boards": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn water_storage_check_sizes_tanks_and_refuses_missing_inputs() {
+        let mut app = App::default();
+        let args = json!({
+            "persons": 100, "litres_per_person_day": 200, "demand_source": "test data",
+            "ground_storage_days": 1, "roof_storage_days": 0.5, "usable_fraction": 0.8,
+            "transfer": {
+                "fill_hours": 2, "ground_low_level_m": 0, "roof_high_level_m": 20,
+                "main": { "length_m": 30, "diameter_mm": 50, "hazen_c": 130, "minor_k": 0 },
+                "pump_efficiency": 0.5, "motor_efficiency": 0.8, "motor_margin": 1.25, "motor_sizes_kw": [0.37, 1.5]
+            }
+        });
+        let r = app.handle("water_storage_check", &args).unwrap();
+        assert_eq!(r["water"]["ground"]["gross_m3"], 25.0);
+        assert_eq!(r["water"]["transfer"]["motor_kw"], 1.5);
+        assert_eq!(r["water"]["gravity_status"], "unchecked");
+        let mut no_p = args.clone();
+        no_p.as_object_mut().unwrap().remove("persons");
+        assert!(app.handle("water_storage_check", &no_p).unwrap_err().contains("persons is required"));
+        assert!(app.handle("water_storage_check", &json!({ "persons": "x" })).unwrap_err().contains("malformed"));
     }
 
     #[test]
