@@ -349,6 +349,7 @@ impl App {
             "plot_import_dxf" => Self::plot_import_dxf(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
+            "prefs_learn" => Self::prefs_learn(args),
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
             "analysis" => self.analysis(args),
             "materials" => Ok(nnx_core::materials::catalog_json()),
@@ -1878,6 +1879,27 @@ impl App {
     /// Reads the plot boundary from surveyed corner coordinates: `{ text | path, order?, crs?, units? }`. `text` (pasted rows) or
     /// `path` (a CSV or text file) gives the rows; without a header `order` (`en` or `ne`) is required; a system other than UTM
     /// needs `units`.
+    /// Learns the user's usual room sizes from earlier projects: `{ paths: [".nnx file", ...] }`. A file that cannot be read or
+    /// has no project is listed in `skipped` with the reason; it does not stop the others. Pass the returned `preferences` to
+    /// `brief_clarify` as `prefs` to start suggested room areas from them.
+    fn prefs_learn(args: &Value) -> Result<Value, String> {
+        let paths = args.get("paths").and_then(Value::as_array).filter(|a| !a.is_empty()).ok_or("preferences: give the paths of the earlier projects")?;
+        let mut projects = Vec::new();
+        let mut skipped = Vec::new();
+        for v in paths {
+            let Some(path) = v.as_str() else {
+                skipped.push(json!({ "path": v, "reason": "the path is not text" }));
+                continue;
+            };
+            match nnx_core::persist::load(std::path::Path::new(path)).map_err(|e| e.to_string()).and_then(|m| nnx_core::project::get(&m)) {
+                Ok(Some(p)) => projects.push(p),
+                Ok(None) => skipped.push(json!({ "path": path, "reason": "the file has no NanoArch project" })),
+                Err(e) => skipped.push(json!({ "path": path, "reason": e })),
+            }
+        }
+        Ok(json!({ "preferences": nnx_core::prefs::learn(&projects), "skipped": skipped }))
+    }
+
     /// The clarifying conversation: `{ draft, field?, answer? }`. With a field and an answer the answer is applied first (an
     /// unreadable one is an error and the draft is returned unchanged by the page). The reply carries the draft, the next
     /// question (`null` when the brief is complete) and every question still open.
@@ -1887,6 +1909,12 @@ impl App {
         if let Some(field) = args.get("field").and_then(Value::as_str) {
             let answer = args.get("answer").and_then(Value::as_str).ok_or("answer is required with field")?;
             clarify::apply_answer(&mut draft, field, answer)?;
+            if field == "rooms"
+                && let Some(p) = args.get("prefs").filter(|p| !p.is_null())
+            {
+                let prefs: nnx_core::prefs::Preferences = serde_json::from_value(p.clone()).map_err(|e| format!("the preferences are not valid: {e}"))?;
+                nnx_core::prefs::apply(&mut draft, &prefs);
+            }
         }
         Ok(json!({ "draft": draft, "next": clarify::next_question(&draft), "missing": clarify::missing(&draft), "complete": clarify::is_complete(&draft) }))
     }
@@ -4051,6 +4079,20 @@ EOF
         assert!(app.handle("plot_import_dxf", &json!({})).unwrap_err().contains("path"));
         assert!(app.handle("plot_import_dxf", &json!({ "path": dir.join("none.dxf").to_str().unwrap() })).unwrap_err().contains("cannot read"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn learned_preferences_reach_the_suggested_room_areas() {
+        let mut app = App::default();
+        let err = app.handle("prefs_learn", &json!({ "paths": [] })).unwrap_err();
+        assert!(err.contains("paths"));
+        let r = app.handle("prefs_learn", &json!({ "paths": ["C:/nonexistent/none.nnx"] })).unwrap();
+        assert_eq!(r["skipped"].as_array().unwrap().len(), 1);
+        assert_eq!(r["preferences"]["projects_used"], 0);
+        let prefs = json!({ "rooms": [{ "func": "bedroom", "median_m2": 21.5, "min_m2": 18.0, "max_m2": 25.0, "samples": 5 }], "projects_read": 2, "projects_used": 2, "too_few": [] });
+        let draft = json!({ "building_type": "villa", "floors": 1, "city": "Riyadh", "climate_zone": 1, "style": "contemporary" });
+        let r = app.handle("brief_clarify", &json!({ "draft": draft, "field": "rooms", "answer": "2", "prefs": prefs })).unwrap();
+        assert_eq!(r["draft"]["rooms"][0]["area_m2"], 21.5);
     }
 
     #[test]

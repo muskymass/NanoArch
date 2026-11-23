@@ -43,6 +43,7 @@ pub mod precheck;
 pub mod plot_import;
 pub mod project;
 pub mod presets;
+pub mod prefs;
 pub mod qto;
 pub mod rebar;
 pub mod report;
