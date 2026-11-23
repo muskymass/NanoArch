@@ -891,7 +891,14 @@ function assumptionsHtml() {
 function renderNotes() {
   const w = state.notes || [], rooms = state.rooms_out || [];
   $("p-notes").innerHTML = `<h2>${t("warnings")}</h2>${w.length ? `<ul class="clean">${w.map(x => `<li class="warn">${esc(x)}</li>`).join("")}</ul>` : `<div class="ok">${t("none")}</div>`}
-    <h2>${t("rooms")}</h2><table><thead><tr><th>${t("r_name")}</th><th>${t("target")}</th><th>${t("actual")}</th></tr></thead><tbody>${rooms.map(r => `<tr><td>${esc(r.name)}</td><td class="num">${r.target.toFixed(1)}</td><td class="num">${r.area.toFixed(1)}</td></tr>`).join("")}</tbody></table>${assumptionsHtml()}`;
+    <h2>${t("rooms")}</h2><table><thead><tr><th>${t("r_name")}</th><th>${t("target")}</th><th>${t("actual")}</th></tr></thead><tbody>${rooms.map(r => `<tr><td>${esc(r.name)}</td><td class="num">${r.target.toFixed(1)}</td><td class="num">${r.area.toFixed(1)}</td></tr>`).join("")}</tbody></table>${assumptionsHtml()}<div id="precheck"></div>`;
+  call("precheck").then(r => {
+    const box = $("precheck"); if (!box) return;
+    const rows = r.issues || [];
+    box.innerHTML = `<h2>${L("فحص سلامة النموذج", "Model integrity check")}</h2>` + (rows.length
+      ? `<ul class="clean">${rows.map(i => `<li class="${i.level === "error" ? "bad" : "warn"}"><b>${esc(i.code)}</b> ${esc(i.message)}</li>`).join("")}</ul>`
+      : `<div class="ok">${L("لا أخطاء ولا تنبيهات", "No errors or warnings")}</div>`);
+  }).catch(() => {});
 }
 async function loadQto() { try { state.qto = await call("qto", { phase: state.qtoPhase || "" }); renderQto(); } catch (e) { $("p-qto").innerHTML = `<div class="bad">${esc(e.message)}</div>`; } }
 function renderQto() {
