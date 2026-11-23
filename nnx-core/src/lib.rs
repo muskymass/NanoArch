@@ -27,6 +27,7 @@ pub mod draft;
 pub mod dxf;
 pub mod elevation;
 pub mod entrances;
+pub mod courtyard;
 pub mod expr;
 pub mod history;
 pub mod ifc;

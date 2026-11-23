@@ -363,6 +363,7 @@ impl App {
             "privacy_check" => Self::privacy_check(args),
             "sun_check" => Self::sun_check(args),
             "wind_check" => Self::wind_check(args),
+            "courtyard_check" => Self::courtyard_check(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
@@ -2003,6 +2004,15 @@ impl App {
         let funcs: Vec<String> = serde_json::from_value(args.get("habitable_funcs").cloned().unwrap_or(Value::Null)).map_err(|e| format!("wind: habitable_funcs must be a list of room functions: {e}"))?;
         let report = nnx_core::wind::check_wind(&layout, &envelope, wind_from, source, &funcs)?;
         Ok(json!({ "wind": report }))
+    }
+
+    /// Checks a courtyard of any simple outline: `{ rooms, envelope, outline: [{ x, y }] }` (mm). Reports area, perimeter, a
+    /// rectangle decomposition (rectilinear outlines only) and the contact with each neighbouring room.
+    fn courtyard_check(args: &Value) -> Result<Value, String> {
+        let (layout, envelope) = Self::layout_from_args(args, "courtyard")?;
+        let outline: Vec<nnx_core::courtyard::Pt> = serde_json::from_value(args.get("outline").cloned().unwrap_or(Value::Null)).map_err(|e| format!("courtyard: outline must be a list of {{ x, y }} vertices in whole millimetres: {e}"))?;
+        let report = nnx_core::courtyard::check_courtyard(&layout, &envelope, &outline)?;
+        Ok(json!({ "courtyard": report }))
     }
 
     /// Reads plot boundary candidates from a DXF drawing: `{ path, units?, index? }`. A drawing without a unit needs `units`;
@@ -4307,6 +4317,25 @@ EOF
         let mut no_funcs = base.clone();
         no_funcs.as_object_mut().unwrap().remove("sleeping_funcs");
         assert!(app.handle("sun_check", &no_funcs).unwrap_err().contains("sleeping_funcs"));
+    }
+
+    #[test]
+    fn courtyard_check_measures_an_l_shaped_courtyard_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([{ "key": "a", "func": "bedroom", "zone": "private", "x": 0, "y": 0, "w": 3000, "h": 12000 }]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 12000 }, "outline": [
+            { "x": 3000, "y": 3000 }, { "x": 9000, "y": 3000 }, { "x": 9000, "y": 6000 }, { "x": 6000, "y": 6000 }, { "x": 6000, "y": 9000 }, { "x": 3000, "y": 9000 }] });
+        let r = app.handle("courtyard_check", &base).unwrap();
+        assert_eq!(r["courtyard"]["shape"], "l_shape");
+        assert!((r["courtyard"]["area_m2"].as_f64().unwrap() - 27.0).abs() < 1e-9);
+        assert_eq!(r["courtyard"]["contacts"][0]["room"], "a");
+        assert_eq!(r["courtyard"]["contacts"][0]["length_mm"], 6000);
+        let mut over = base.clone();
+        over["outline"] = json!([{ "x": 1000, "y": 1000 }, { "x": 5000, "y": 1000 }, { "x": 5000, "y": 5000 }]);
+        assert!(app.handle("courtyard_check", &over).unwrap_err().contains("covers part of the room"));
+        let mut none = base.clone();
+        none.as_object_mut().unwrap().remove("outline");
+        assert!(app.handle("courtyard_check", &none).unwrap_err().contains("outline"));
     }
 
     #[test]
