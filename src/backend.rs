@@ -375,6 +375,7 @@ impl App {
             "electricity_bill" => Self::electricity_bill(args),
             "energy_certificate" => Self::energy_certificate(args),
             "fire_protection_check" => Self::fire_protection_check(args),
+            "egress_check" => Self::egress_check(args),
             "shear_core_check" => Self::shear_core_check(args),
             "savings_compare" => Self::savings_compare(args),
             "furniture_fit" => Self::furniture_fit(args),
@@ -2286,6 +2287,17 @@ impl App {
             .map_err(|e| format!("fire protection check: inputs are malformed (see the field list for rooms, devices, exits and water): {e}"))?;
         let report = nnx_core::firesys::check(&input)?;
         Ok(json!({ "fire": report }))
+    }
+
+    /// Fire-safety egress: `{ rooms: [{ key, x_mm, y_mm, w_mm, h_mm, exits?: [key] }], exits?: [{ key, x_mm, y_mm, clear_width_mm? }],
+    /// corridors?: [{ key, x_mm, y_mm, w_mm, h_mm, min_width_mm? }], max_travel_distance_mm?, min_corridor_width_mm?,
+    /// min_exit_width_mm?, min_exits_per_room?, source }`. Every limit is the caller's and `source` is required with any limit; a
+    /// missing limit leaves its check `unchecked`. Travel distance is a straight-line lower bound. Preliminary, not a fire design.
+    fn egress_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::egress::EgressInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("egress check: inputs are malformed (see the field list for rooms, exits, corridors and limits): {e}"))?;
+        let report = nnx_core::egress::check(&input)?;
+        Ok(json!({ "egress": report }))
     }
 
     /// Shear-wall core around lifts and stairs:`{ walls: [{ key, x_mm, y_mm, w_mm, h_mm }], shafts?: [{ key, kind: lift|stair,
@@ -4898,6 +4910,32 @@ EOF
         no_cov["detectors"][0].as_object_mut().unwrap().remove("coverage_m2");
         assert!(app.handle("fire_protection_check", &no_cov).unwrap_err().contains("coverage_m2 is required"));
         assert!(app.handle("fire_protection_check", &json!({ "rooms": "x" })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn egress_check_measures_travel_and_widths_and_refuses_missing_source() {
+        let mut app = App::default();
+        let args = json!({
+            "rooms": [{ "key": "hall", "x_mm": 0, "y_mm": 0, "w_mm": 6000, "h_mm": 8000 }],
+            "exits": [{ "key": "E1", "x_mm": 0, "y_mm": 0, "clear_width_mm": 800 }],
+            "corridors": [{ "key": "C1", "x_mm": 0, "y_mm": 0, "w_mm": 20000, "h_mm": 1200 }],
+            "max_travel_distance_mm": 9000,
+            "min_corridor_width_mm": 1100,
+            "min_exit_width_mm": 900,
+            "source": "test clause"
+        });
+        let r = app.handle("egress_check", &args).unwrap();
+        assert_eq!(r["egress"]["overall"], "fails");
+        let checks = r["egress"]["checks"].as_array().unwrap();
+        let by = |rule: &str| checks.iter().find(|c| c["rule"] == rule).unwrap().clone();
+        assert_eq!(by("travel_distance")["status"], "fails");
+        assert_eq!(by("travel_distance")["value"].as_f64().unwrap().round(), 10000.0);
+        assert_eq!(by("corridor_width")["status"], "passes");
+        assert_eq!(by("exit_width")["status"], "fails");
+        let mut no_src = args.clone();
+        no_src.as_object_mut().unwrap().remove("source");
+        assert!(app.handle("egress_check", &no_src).unwrap_err().contains("source is required"));
+        assert!(app.handle("egress_check", &json!({ "rooms": "x" })).unwrap_err().contains("malformed"));
     }
 
     #[test]
