@@ -487,6 +487,8 @@ impl App {
             "site_photos_set" => self.site_photos_set(args),
             "decisions" => self.decisions_report(),
             "quality_report" => self.quality_report(args),
+            "assistant" => self.assistant(args),
+            "assistant_apply" => self.assistant_apply(args),
             "decisions_set" => self.decisions_set(args),
             "progress_payments" => self.progress_report(),
             "progress_payments_set" => self.progress_set(args),
@@ -1375,6 +1377,34 @@ impl App {
 
     /// The project quality report (`weights` optional): integrity, rule check (sourced pack, enabled overlays and plugins, plus any `pack`
     /// and `limits` given), rule coverage and number provenance, as one declared score with its counted sets. Read-only; stores nothing.
+    /// Rules and integrity advice for the open model. The sourced pack is on unless the caller turns it off.
+    fn assistant_advice(&self, args: &Value) -> Result<nnx_core::assistant::Advice, String> {
+        let mut rule_args = args.clone();
+        if rule_args.get("sourced").is_none() {
+            rule_args["sourced"] = json!(true);
+        }
+        let (rule_report, _) = self.run_rules(&rule_args)?;
+        let doc = self.doc()?;
+        let integrity = nnx_core::precheck::run(&doc.model);
+        Ok(nnx_core::assistant::advise(&doc.model, &integrity, Some(&rule_report)))
+    }
+
+    /// Explains every warning (integrity, rule findings, skipped rules) and says which ones have a one-click fix. Read only.
+    fn assistant(&self, args: &Value) -> Result<Value, String> {
+        let advice = self.assistant_advice(args)?;
+        Ok(json!({ "advice": advice }))
+    }
+
+    /// Applies the one-click fix of one item (`id` from `assistant`) as a single undoable step, then returns the fresh list.
+    fn assistant_apply(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or("id is required: the id of an item from the assistant list")?.to_string();
+        let advice = self.assistant_advice(args)?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let applied = nnx_core::assistant::apply(doc, &advice, &id)?;
+        let fresh = self.assistant_advice(args)?;
+        Ok(json!({ "applied": applied, "advice": fresh }))
+    }
+
     fn quality_report(&self, args: &Value) -> Result<Value, String> {
         let weights: nnx_core::quality::QualityWeights = match args.get("weights") {
             Some(w) => serde_json::from_value(w.clone()).map_err(|e| format!("weights: {e}"))?,
@@ -5822,6 +5852,53 @@ EOF
         assert!(app.handle("quality_report", &json!({ "weights": { "rules": -1.0 } })).unwrap_err().contains("rules"));
         assert!(app.handle("quality_report", &json!({ "weights": { "bogus": 1.0 } })).is_err());
         assert!(App::default().handle("quality_report", &json!({})).is_err());
+    }
+
+    #[test]
+    fn assistant_explains_every_warning_and_applies_a_one_click_fix_as_one_undoable_step() {
+        let mut app = started_with_project();
+        let r = app.handle("assistant", &json!({})).unwrap();
+        let items = r["advice"]["items"].as_array().unwrap();
+        let pre = app.handle("precheck", &json!({})).unwrap();
+        let integrity_n = items.iter().filter(|i| i["source"] == "integrity").count();
+        assert_eq!(integrity_n, pre["issues"].as_array().unwrap().len(), "every integrity issue is explained");
+        let rules = app.handle("check_rules", &json!({ "sourced": true })).unwrap();
+        assert_eq!(items.iter().filter(|i| i["source"] == "rule").count(), rules["findings"].as_array().unwrap().len());
+        assert_eq!(items.iter().filter(|i| i["source"] == "skipped").count(), rules["skipped"].as_array().unwrap().len());
+        assert!(items.iter().all(|i| !i["why_ar"].as_str().unwrap().is_empty() && !i["how_en"].as_str().unwrap().is_empty()));
+
+        // A synthetic rule with a fix: every door narrower than the synthetic limit gets a one-click fix.
+        let pack = json!({
+            "id": "SYN", "edition": "synthetic", "version": "1",
+            "rules": [{ "id": "syn.door", "clause": "SYN-1", "applies_to": { "kind": "Door" }, "check": "width >= param.min",
+                "params": { "min": { "value": 1234, "source": "synthetic test value" } }, "severity": "warning",
+                "message": "synthetic door limit", "fix": { "prop": "width", "value": "param.min" } }]
+        })
+        .to_string();
+        let args = json!({ "pack": pack });
+        let list = app.handle("assistant", &args).unwrap();
+        let fix_items: Vec<&Value> = list["advice"]["items"].as_array().unwrap().iter().filter(|i| i["code"] == "syn.door").collect();
+        assert!(!fix_items.is_empty(), "the generated plan has doors under the synthetic limit");
+        assert!(fix_items.iter().all(|i| !i["fix"].is_null()));
+        let before = fix_items.len();
+        assert_eq!(list["advice"]["fixable"].as_u64().unwrap() as usize, before);
+        let id = fix_items[0]["id"].as_str().unwrap().to_string();
+        let h = hash(&app);
+        let done = app.handle("assistant_apply", &json!({ "pack": pack, "id": id })).unwrap();
+        assert_eq!(done["applied"]["changes"][0]["to"], 1234);
+        let after = done["advice"]["items"].as_array().unwrap().iter().filter(|i| i["code"] == "syn.door").count();
+        assert_eq!(after, before - 1, "exactly the fixed finding is gone");
+        assert_ne!(hash(&app), h);
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(hash(&app), h, "one undo restores the model");
+
+        // Refusals: unknown id, an item without a fix, a missing id, no project.
+        assert!(app.handle("assistant_apply", &json!({ "pack": pack, "id": "rule:nope:x" })).unwrap_err().contains("not in the current warning list"));
+        if let Some(nofix) = items.iter().find(|i| i["fix"].is_null()) {
+            assert!(app.handle("assistant_apply", &json!({ "id": nofix["id"] })).unwrap_err().contains("no automatic fix"));
+        }
+        assert!(app.handle("assistant_apply", &json!({})).unwrap_err().contains("id is required"));
+        assert!(App::default().handle("assistant", &json!({})).is_err());
     }
 
     #[test]
