@@ -41,7 +41,29 @@ pub struct Input {
     pub issued_for: String,
     /// Sheet size: `A4`, `A3`, `A2`, `A1` or `A0` (portrait, ISO 216). Empty means `A3`, the size the package always used.
     pub paper: String,
+    /// The office's own letterhead, printed at the top of every sheet. Optional: empty prints nothing and nothing is invented.
+    pub letterhead: Letterhead,
 }
+
+/// The office letterhead the user enters. Every field is optional and none has a default.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Letterhead {
+    /// The office name as it should print.
+    pub office_name: String,
+    /// Postal or street address, one line.
+    pub address: String,
+    /// Phone, e-mail or web, one line.
+    pub contact: String,
+    /// A line printed at the foot of every sheet (for example the office's commercial registration), as the user states it.
+    pub footer: String,
+    /// The logo as an embedded image: `data:image/png;base64,...`, `data:image/jpeg;base64,...` or `data:image/svg+xml;base64,...`.
+    /// Nothing is fetched from a path or a URL, so the package stays one self-contained file.
+    pub logo_data_uri: String,
+}
+
+/// Largest accepted logo, as the length of the data URI text (about 1.5 MB of image).
+pub const MAX_LOGO_URI_LEN: usize = 2_000_000;
 
 /// An ISO 216 sheet size: its CSS `@page` name and its width relative to A3 (297 mm), which scales the margins, type and line
 /// weights so a sheet reads the same proportionally at every size.
@@ -123,6 +145,25 @@ fn missing(i: &Input) -> Vec<&'static str> {
     m
 }
 
+/// Refuses a logo that is not an embedded PNG, JPEG or SVG in base64, is too large, or is not valid base64 text.
+fn check_logo(uri: &str) -> Result<(), String> {
+    let uri = uri.trim();
+    if uri.is_empty() {
+        return Ok(());
+    }
+    let Some(rest) = ["data:image/png;base64,", "data:image/jpeg;base64,", "data:image/svg+xml;base64,"].iter().find_map(|p| uri.strip_prefix(p)) else {
+        return Err("permit pack: letterhead.logo_data_uri must start with data:image/png;base64, data:image/jpeg;base64, or data:image/svg+xml;base64, (no paths or URLs)".into());
+    };
+    if uri.len() > MAX_LOGO_URI_LEN {
+        return Err(format!("permit pack: letterhead.logo_data_uri is {} characters; the limit is {MAX_LOGO_URI_LEN}", uri.len()));
+    }
+    let body = rest.trim_end_matches('=');
+    if body.is_empty() || rest.len() - body.len() > 2 || !body.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/') || rest.len() % 4 != 0 {
+        return Err("permit pack: letterhead.logo_data_uri is not valid base64".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn valid_date(d: &str) -> bool {
     let b = d.as_bytes();
     b.len() == 10 && b[4] == b'-' && b[7] == b'-' && b.iter().enumerate().all(|(k, c)| k == 4 || k == 7 || c.is_ascii_digit()) && (1..=12).contains(&d[5..7].parse::<u32>().unwrap_or(0)) && (1..=31).contains(&d[8..10].parse::<u32>().unwrap_or(0))
@@ -159,6 +200,25 @@ struct Chrome<'a> {
 impl Chrome<'_> {
     fn t(&self, ar: &'static str, en: &'static str) -> &'static str {
         if self.ctx.arabic { ar } else { en }
+    }
+
+    /// The office letterhead band (logo, name, address, contact), or nothing when none was entered.
+    fn letterhead(&self) -> String {
+        let l = &self.input.letterhead;
+        let logo = l.logo_data_uri.trim();
+        let (name, addr, contact) = (l.office_name.trim(), l.address.trim(), l.contact.trim());
+        if logo.is_empty() && name.is_empty() && addr.is_empty() && contact.is_empty() {
+            return String::new();
+        }
+        let img = if logo.is_empty() { String::new() } else { format!("<img class=\"logo\" alt=\"{}\" src=\"{}\">", esc(if name.is_empty() { self.t("شعار", "Logo") } else { name }), esc(logo)) };
+        let line = |c: &str, v: &str| if v.is_empty() { String::new() } else { format!("<div class=\"{c}\">{}</div>", esc(v)) };
+        format!("<div class=\"lh\">{img}<div class=\"lt\">{}{}{}</div></div>", line("on", name), line("oa", addr), line("oc", contact))
+    }
+
+    /// The foot line printed at the bottom of every sheet, or nothing.
+    fn footer(&self) -> String {
+        let f = self.input.letterhead.footer.trim();
+        if f.is_empty() { String::new() } else { format!("<div class=\"lf\">{}</div>", esc(f)) }
     }
 
     /// The title-block header of a sheet: project, number, revision, date, issue purpose.
@@ -217,6 +277,7 @@ pub fn build(ctx: &Context, input: &Input) -> Result<Pack, String> {
         return Err(format!("permit pack: missing input(s): {}. Nothing is defaulted; enter them.", miss.join(", ")));
     }
     let paper = Paper::parse(&input.paper)?;
+    check_logo(&input.letterhead.logo_data_uri)?;
     let k = paper.scale();
     let px = |v: f64| format!("{:.1}px", v * k);
     if !valid_date(ctx.date) {
@@ -277,16 +338,18 @@ pub fn build(ctx: &Context, input: &Input) -> Result<Pack, String> {
         sheets.push(SheetInfo { number: n, title: title.clone(), kind: "plan" });
     }
     body.push_str(&format!(
-        "<section class=\"sheet\">{}<h1>{}</h1><table class=\"rooms\"><tr><th>{}</th><th>{}</th></tr>{index_rows}</table>{}</section>",
+        "<section class=\"sheet\">{}{}<h1>{}</h1><table class=\"rooms\"><tr><th>{}</th><th>{}</th></tr>{index_rows}</table>{}{}</section>",
+        chrome.letterhead(),
         chrome.header(&n0, &index_title, 1),
         esc(&index_title),
         chrome.t("رقم اللوحة", "Sheet no."),
         chrome.t("العنوان", "Title"),
-        chrome.stamp()
+        chrome.stamp(),
+        chrome.footer()
     ));
     for (k, (title, svg, table)) in drawn.iter().enumerate() {
         let n = sheet_number(&input.sheet_prefix, k + 2);
-        body.push_str(&format!("<section class=\"sheet\">{}<div class=\"plan\">{svg}</div>{table}{}</section>", chrome.header(&n, title, k + 2), chrome.stamp()));
+        body.push_str(&format!("<section class=\"sheet\">{}{}<div class=\"plan\">{svg}</div>{table}{}{}</section>", chrome.letterhead(), chrome.header(&n, title, k + 2), chrome.stamp(), chrome.footer()));
     }
     // Every length below is the A3 value times `k`, so A1/A0 sheets keep the same proportions rather than printing A3-sized type
     // lost on a large sheet. The plan's height cap is the same share of the page height as on A3 (190 of 420 mm).
@@ -297,7 +360,8 @@ pub fn build(ctx: &Context, input: &Input) -> Result<Pack, String> {
          h1{{font-size:{};margin:{} 0 {}}} table{{border-collapse:collapse;width:100%;font-size:{};margin:{} 0}} th,td{{border:{} solid #999;padding:{} {};text-align:start}} th{{background:#eee}} td.n{{text-align:end}} tr.tot td{{font-weight:700;background:#f6f6f6}}\
          .hdr td{{border:{} solid #333;font-size:{}}} .hdr td.big{{font-size:{};font-weight:700}} .plan{{direction:ltr}} .plan svg{{width:100%;height:auto;max-height:{:.1}mm;display:block}}\
          .stamp{{display:flex;gap:{};margin-top:{};border:{} solid #333;padding:{};min-height:{:.1}mm}} .stamp .sd{{flex:2;font-size:{};line-height:1.7}} .stamp .seal,.stamp .sig{{flex:1;border:{} dashed #777;font-size:{};color:#777;padding:{}}}\
-         .warn{{font-size:{};color:#b71c1c;font-weight:600;margin:{} 0}}</style></head><body>{body}</body></html>",
+         .warn{{font-size:{};color:#b71c1c;font-weight:600;margin:{} 0}}\
+         .lh{{display:flex;align-items:center;gap:{};border-bottom:{} solid #333;padding-bottom:{};margin-bottom:{}}} .lh .logo{{max-height:{:.1}mm;max-width:{:.1}mm;object-fit:contain}} .lh .on{{font-size:{};font-weight:700}} .lh .oa,.lh .oc{{font-size:{};color:#333}} .lf{{font-size:{};color:#333;border-top:{} solid #999;margin-top:{};padding-top:{};text-align:center}}</style></head><body>{body}</body></html>",
         if ctx.arabic { "ar" } else { "en" },
         if ctx.arabic { "rtl" } else { "ltr" },
         esc(ctx.title),
@@ -325,6 +389,18 @@ pub fn build(ctx: &Context, input: &Input) -> Result<Pack, String> {
         px(10.0),
         px(2.0),
         px(11.0),
+        px(4.0),
+        px(10.0),
+        px(1.5),
+        px(6.0),
+        px(8.0),
+        25.0 * k,
+        60.0 * k,
+        px(16.0),
+        px(10.0),
+        px(10.0),
+        px(1.0),
+        px(8.0),
         px(4.0)
     );
     notes.push(chrome.t("المقياس غير محدد في الرسم؛ تُقرأ الأبعاد من التأطير لا من مقياس مطبوع.", "The drawings carry no printed scale; read dimensions from the dimension lines, not by measuring the print.").to_string());

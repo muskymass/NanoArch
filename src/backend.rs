@@ -5349,6 +5349,14 @@ EOF
         let e = app.handle("permit_pack", &bad).unwrap_err();
         assert!(e.contains("engineer.licence_no") && e.contains("project_no") && !e.contains("revision"), "{e}");
         assert!(app.handle("permit_pack", &json!({ "engineer": "x" })).unwrap_err().contains("malformed"));
+        // Office letterhead: optional, printed on every sheet, escaped; a non-embedded logo is refused by name.
+        let mut lh = args.clone();
+        lh["letterhead"] = json!({ "office_name": "Studio <Z>", "footer": "CR 9" });
+        let h2 = app.handle("permit_pack", &lh).unwrap()["html"].as_str().unwrap().to_string();
+        assert!(h2.contains("Studio &lt;Z&gt;") && h2.contains("class=\"lf\"") && !h2.contains("Studio <Z>"));
+        assert!(!h.contains("class=\"lh\""));
+        lh["letterhead"]["logo_data_uri"] = json!("https://example.test/x.png");
+        assert!(app.handle("permit_pack", &lh).unwrap_err().contains("letterhead.logo_data_uri"));
         assert!(App::default().handle("permit_pack", &args).is_err());
     }
 

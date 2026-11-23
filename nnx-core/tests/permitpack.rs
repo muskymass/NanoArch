@@ -1,6 +1,6 @@
 //! The permit package. SYNTHETIC test values, checked by hand against the document.
 
-use nnx_core::permitpack::{Context, Engineer, Input, build, sheet_number};
+use nnx_core::permitpack::{Context, Engineer, Input, Letterhead, build, sheet_number};
 use nnx_core::typed::{Level, Space, element_of};
 use nnx_core::*;
 
@@ -13,7 +13,7 @@ fn room(key: &str, w: i64, level: Option<Id>) -> Command {
 }
 
 fn input() -> Input {
-    Input { engineer: Engineer { name: "Eng One".into(), licence_no: "L-1".into(), licensing_body: "Council".into(), discipline: String::new() }, project_no: "P-1".into(), sheet_prefix: "S".into(), revision: "Rev 0".into(), issued_for: String::new(), paper: String::new() }
+    Input { engineer: Engineer { name: "Eng One".into(), licence_no: "L-1".into(), licensing_body: "Council".into(), discipline: String::new() }, project_no: "P-1".into(), sheet_prefix: "S".into(), revision: "Rev 0".into(), issued_for: String::new(), paper: String::new(), letterhead: Default::default() }
 }
 
 fn one_room_doc() -> Document {
@@ -102,4 +102,38 @@ fn refuses_missing_inputs_bad_dates_and_an_empty_model() {
         assert!(build(&ctx(&doc.model, d, false), &input()).unwrap_err().contains("YYYY-MM-DD"), "{d}");
     }
     assert!(build(&ctx(&Model::default(), "2026-11-23", false), &input()).unwrap_err().contains("no rooms"));
+}
+
+const PNG_1PX: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+
+#[test]
+fn letterhead_prints_on_every_sheet_escaped_and_nothing_when_empty() {
+    let doc = one_room_doc();
+    let plain = build(&ctx(&doc.model, "2026-11-23", false), &input()).unwrap();
+    assert!(!plain.html.contains("class=\"lh\"") && !plain.html.contains("class=\"lf\"") && !plain.html.contains("<img"), "no letterhead entered: none printed");
+    let mut i = input();
+    i.letterhead = Letterhead { office_name: "Studio <X>".into(), address: "1 Main St".into(), contact: "a@b.test".into(), footer: "CR 123 & Co".into(), logo_data_uri: PNG_1PX.into() };
+    let r = build(&ctx(&doc.model, "2026-11-23", false), &i).unwrap();
+    assert_eq!(r.html.matches("class=\"lh\"").count(), r.sheets.len(), "one band per sheet");
+    assert_eq!(r.html.matches("class=\"lf\"").count(), r.sheets.len(), "one footer per sheet");
+    assert_eq!(r.html.matches("<img class=\"logo\"").count(), r.sheets.len());
+    assert!(r.html.contains("Studio &lt;X&gt;") && !r.html.contains("Studio <X>") && r.html.contains("CR 123 &amp; Co") && r.html.contains(PNG_1PX));
+    let mut a1 = i.clone();
+    a1.paper = "A1".into();
+    assert!(build(&ctx(&doc.model, "2026-11-23", true), &a1).unwrap().html.contains("max-height:50.0mm"), "logo cap scales with the paper");
+    let mut text_only = i.clone();
+    text_only.letterhead.logo_data_uri.clear();
+    assert!(!build(&ctx(&doc.model, "2026-11-23", false), &text_only).unwrap().html.contains("<img"));
+}
+
+#[test]
+fn a_bad_logo_is_refused_by_name() {
+    let doc = one_room_doc();
+    let long = format!("data:image/png;base64,{}", "A".repeat(2_000_000));
+    for bad in ["https://example.test/logo.png", "C:\\logo.png", "data:text/html;base64,AAAA", "data:image/png;base64,", "data:image/png;base64,AB*D", "data:image/png;base64,ABC", "data:image/png;base64,A===", long.as_str()] {
+        let mut i = input();
+        i.letterhead.logo_data_uri = bad.into();
+        let e = build(&ctx(&doc.model, "2026-11-23", false), &i).unwrap_err();
+        assert!(e.contains("letterhead.logo_data_uri"), "{bad}: {e}");
+    }
 }
