@@ -3,7 +3,7 @@
 use nnx_core::layout::*;
 use nnx_core::qto::{self, QtoOpts};
 use nnx_core::structural::{self, Loads, Soil, StructOpts};
-use nnx_core::typed::{Beam, Column, Door, Slab, Space, Wall, Window, element_of};
+use nnx_core::typed::{Beam, Column, Door, Slab, Space, Typed, Wall, Window, element_of};
 use nnx_core::walls::{self, WallOpts, WindowOpts};
 use nnx_core::*;
 
@@ -418,4 +418,55 @@ fn entrance_steps_are_counted_by_risers_and_nothing_else_is_invented() {
     assert_eq!(get("FEATURE.ENTRANCE_LANDING.RISERS"), Some(3.0));
     assert_eq!(get("FEATURE.ENTRANCE_PATH.RISERS"), None, "no steps stated, no item");
     assert!(q.items.iter().all(|i| !i.code.contains("STEP.CONCRETE")), "no concrete volume without a tread depth");
+}
+
+/// Every item compute builds is measured element by element, so its per-element shares add up to the item and cite the same elements.
+fn assert_rows_reconcile(model: &Model, r: &qto::Qto) {
+    assert!(r.unlinked_codes().is_empty(), "items without a per-element breakdown: {:?}", r.unlinked_codes());
+    for i in &r.items {
+        let rows: Vec<_> = r.element_rows.iter().filter(|x| x.code == i.code).collect();
+        let sum: f64 = rows.iter().map(|x| x.quantity).sum();
+        assert!((sum - i.quantity).abs() < 1e-3 + rows.len() as f64 * 1e-4, "{}: element shares {sum} vs item {}", i.code, i.quantity);
+        for x in &rows {
+            assert_eq!(x.unit, i.unit, "{}", i.code);
+            assert!(i.sources.contains(&x.element), "{} row names an element that is not a source", i.code);
+            assert!(model.get(&x.element).is_some(), "{} row cites a missing element", i.code);
+        }
+    }
+}
+
+#[test]
+fn golden_quantities_are_linked_to_the_elements_they_were_measured_on() {
+    let g = golden();
+    let r = qto::compute(&g.doc.model, &QtoOpts::default());
+    assert_rows_reconcile(&g.doc.model, &r);
+
+    // The slab carries its own concrete and formwork and nothing else of the frame.
+    let slab = r.for_element(g.slab);
+    let get = |code: &str| slab.iter().find(|x| x.code == code).map(|x| x.quantity);
+    assert_eq!(get("SLAB.VOL"), Some(3.0));
+    assert_eq!(get("SLAB.FORM"), Some(20.0));
+    assert!(slab.iter().all(|x| x.code.starts_with("SLAB.")));
+
+    // The door counts as one and nothing is attributed to it twice.
+    let door = r.for_element(g.door);
+    assert_eq!(door.len(), 1);
+    assert_eq!((door[0].code.as_str(), door[0].quantity), ("DOOR.900x2100", 1.0));
+
+    // The exterior wall's net area is its gross face minus the door and window it hosts (12 - 1.89 - 1.80).
+    let ext = g.doc.model.elements.values().find(|e| e.kind == Wall::KIND && e.typed::<Wall>().unwrap().is_exterior).unwrap().id;
+    let wall = r.for_element(ext);
+    let area = wall.iter().find(|x| x.code == "WALL.EXT.AREA").unwrap().quantity;
+    close(area, 8.31);
+    close(wall.iter().find(|x| x.code == "WALL.OPENINGS.AREA").unwrap().quantity, 3.69);
+    assert!(wall.iter().all(|x| !x.code.starts_with("WALL.INT")));
+}
+
+#[test]
+fn house_quantities_are_linked_and_follow_the_phase_filter() {
+    let (doc, _, _, _) = house();
+    let r = qto::compute(&doc.model, &QtoOpts::default());
+    assert_rows_reconcile(&doc.model, &r);
+    let none = qto::compute(&doc.model, &QtoOpts { phase: Some("NEW".into()), ..QtoOpts::default() });
+    assert!(none.items.is_empty() && none.element_rows.is_empty(), "no element carries a phase, so a NEW take-off has no items and no rows");
 }

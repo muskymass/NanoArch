@@ -75,13 +75,36 @@ pub struct QtoOpts {
     pub phase: Option<String>,
 }
 
+/// One element's share of one quantity item: the link from the take-off back to the model element it was measured on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElementQty {
+    pub element: Id,
+    /// The item code this share belongs to; the shares of one code add up to that item's `quantity`.
+    pub code: String,
+    pub unit: Unit,
+    pub quantity: f64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Qto {
     pub items: Vec<QtoItem>,
     pub warnings: Vec<String>,
+    /// Per-element shares of the items `compute` measures element by element. Items that other modules append
+    /// (MEP, insulation, finishes) have no rows here; `unlinked_codes` names every item without any.
+    pub element_rows: Vec<ElementQty>,
 }
 
 impl Qto {
+    /// Every quantity measured on one element.
+    pub fn for_element(&self, id: Id) -> Vec<&ElementQty> {
+        self.element_rows.iter().filter(|r| r.element == id).collect()
+    }
+
+    /// Codes of items that carry no per-element breakdown.
+    pub fn unlinked_codes(&self) -> Vec<&str> {
+        self.items.iter().filter(|i| !self.element_rows.iter().any(|r| r.code == i.code)).map(|i| i.code.as_str()).collect()
+    }
+
     pub fn get(&self, code: &str) -> Option<&QtoItem> {
         self.items.iter().find(|i| i.code == code)
     }
@@ -144,6 +167,7 @@ const MM3_PER_M3: f64 = 1e9;
 
 struct Acc<'a> {
     items: Vec<QtoItem>,
+    rows: Vec<ElementQty>,
     opts: &'a QtoOpts,
 }
 
@@ -163,11 +187,17 @@ impl Acc<'_> {
         });
     }
 
+    /// Records each element's share of an item. Call it with the same elements the item's `add` received.
+    fn link(&mut self, code: &str, unit: Unit, shares: &[(Id, f64)]) {
+        self.rows.extend(shares.iter().map(|(id, q)| ElementQty { element: *id, code: code.to_string(), unit, quantity: r4(*q) }));
+    }
+
     /// An item that is the sum of per-element quantities; keeps the breakdown.
     fn add_parts(&mut self, code: &str, description: &str, unit: Unit, parts: Vec<(Id, f64)>) {
         let total: f64 = parts.iter().map(|p| p.1).sum();
         let sources = parts.iter().map(|p| p.0).collect();
         self.add(code, description, unit, total, sources);
+        self.link(code, unit, &parts);
         if let Some(item) = self.items.last_mut().filter(|i| i.code == code) {
             item.parts = parts;
         }
@@ -188,7 +218,7 @@ fn along_edges(sep: &crate::typed::RoomSeparator, s: &crate::typed::Space) -> f6
 }
 
 pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
-    let mut acc = Acc { items: Vec::new(), opts };
+    let mut acc = Acc { items: Vec::new(), rows: Vec::new(), opts };
     let mut warnings = Vec::new();
 
     let walls = collect::<Wall>(model, opts);
@@ -221,6 +251,8 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     let (mut ext_a, mut int_a, mut ext_v, mut int_v, mut deducted) = (0.0, 0.0, 0.0, 0.0, 0.0);
     let (mut ext_ids, mut int_ids, mut open_ids) = (Vec::new(), Vec::new(), Vec::new());
     let mut net_by_wall: Vec<(Id, f64)> = Vec::new();
+    let mut wall_rows: Vec<(String, Unit, Id, f64)> = Vec::new();
+    let mut open_rows: Vec<(Id, f64)> = Vec::new();
     for (e, w) in &walls {
         let open = open_by_wall.get(&e.id).copied().unwrap_or(0.0);
         let gross = w.length as f64 * w.height as f64;
@@ -232,7 +264,12 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
         net_by_wall.push((e.id, net / MM2_PER_M2));
         if open > 0.0 {
             open_ids.push(e.id);
+            open_rows.push((e.id, open.min(gross) / MM2_PER_M2));
         }
+        let side = if w.is_exterior { "EXT" } else { "INT" };
+        wall_rows.push((format!("WALL.{side}.AREA"), Unit::M2, e.id, net / MM2_PER_M2));
+        wall_rows.push((format!("WALL.{side}.VOL"), Unit::M3, e.id, net * w.thickness as f64 / MM3_PER_M3));
+        wall_rows.push(("WALL.FACES.AREA".to_string(), Unit::M2, e.id, 2.0 * net / MM2_PER_M2));
         if w.is_exterior {
             ext_a += net / MM2_PER_M2;
             ext_v += net * w.thickness as f64 / MM3_PER_M3;
@@ -246,14 +283,21 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     // Walls marked TO_BE_DEMOLISHED: the whole wall comes down, openings included, so the gross face area and the volume are measured.
     // They are in the wall items above as well (every wall is); this is the work of taking them down.
     let (mut dem_a, mut dem_v, mut dem_ids) = (0.0, 0.0, Vec::new());
+    let mut dem_rows: Vec<(String, Unit, Id, f64)> = Vec::new();
     for (e, w) in &walls {
         if e.props.get("phase").and_then(|v| v.as_str()) == Some("TO_BE_DEMOLISHED") {
             let gross = w.length as f64 * w.height as f64;
             dem_a += gross / MM2_PER_M2;
             dem_v += gross * w.thickness as f64 / MM3_PER_M3;
             dem_ids.push(e.id);
+            dem_rows.push(("DEMOLISH.WALL.AREA".to_string(), Unit::M2, e.id, gross / MM2_PER_M2));
+            dem_rows.push(("DEMOLISH.WALL.VOL".to_string(), Unit::M3, e.id, gross * w.thickness as f64 / MM3_PER_M3));
         }
     }
+    for (code, unit, id, q) in wall_rows.iter().chain(&dem_rows) {
+        acc.link(code, *unit, &[(*id, *q)]);
+    }
+    acc.link("WALL.OPENINGS.AREA", Unit::M2, &open_rows);
     acc.add("DEMOLISH.WALL.AREA", "Walls to be demolished, gross face area", Unit::M2, dem_a, dem_ids.clone());
     acc.add("DEMOLISH.WALL.VOL", "Walls to be demolished, volume", Unit::M3, dem_v, dem_ids);
     acc.add("WALL.EXT.AREA", "Exterior walls, area net of openings", Unit::M2, ext_a, ext_ids.clone());
@@ -273,7 +317,9 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
         for (i, l) in asm.layers.iter().enumerate() {
             let mat: String = l.material.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
             let t = l.thickness_mm.unwrap_or(0.0);
-            acc.add(&format!("WALL.LAYER.{}.{}.{}", asm.id, i + 1, mat), &format!("Wall layer {}: {} {} mm ({})", i + 1, l.label.clone().unwrap_or_else(|| l.material.clone()), t, asm.name), Unit::M2, area, ids.clone());
+            let code = format!("WALL.LAYER.{}.{}.{}", asm.id, i + 1, mat);
+            acc.add(&code, &format!("Wall layer {}: {} {} mm ({})", i + 1, l.label.clone().unwrap_or_else(|| l.material.clone()), t, asm.name), Unit::M2, area, ids.clone());
+            acc.link(&code, Unit::M2, &users);
         }
     }
     let faces: Vec<Id> = ext_ids.iter().chain(&int_ids).copied().collect();
@@ -292,12 +338,17 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
         let shafts: Vec<(Id, f64)> = spaces.iter().filter(|(_, s)| s.func == "lift").map(|(e, s)| (e.id, s.area)).collect();
         acc.add("LIFT.SHAFT", "Lift shafts, one per level served (car, guides, machine and landing doors are not quantified here)", Unit::Nr, shafts.len() as f64, shafts.iter().map(|(i, _)| *i).collect());
         acc.add("LIFT.SHAFT.AREA", "Lift shaft plan area, all levels", Unit::M2, shafts.iter().map(|(_, a)| a).sum(), shafts.iter().map(|(i, _)| *i).collect());
+        acc.link("LIFT.SHAFT", Unit::Nr, &shafts.iter().map(|(i, _)| (*i, 1.0)).collect::<Vec<_>>());
+        acc.link("LIFT.SHAFT.AREA", Unit::M2, &shafts);
         if !lift_doors.is_empty() {
             acc.add("LIFT.LANDING", "Lift landing openings (leaf supplied with the lift)", Unit::Nr, lift_doors.len() as f64, lift_doors.iter().map(|(e, _)| e.id).collect());
+            acc.link("LIFT.LANDING", Unit::Nr, &lift_doors.iter().map(|(e, _)| (e.id, 1.0)).collect::<Vec<_>>());
         }
     }
     for ((w, h), ids) in door_types {
-        acc.add(&format!("DOOR.{w}x{h}"), &format!("Door {w} x {h} mm"), Unit::Nr, ids.len() as f64, ids);
+        let code = format!("DOOR.{w}x{h}");
+        acc.add(&code, &format!("Door {w} x {h} mm"), Unit::Nr, ids.len() as f64, ids.clone());
+        acc.link(&code, Unit::Nr, &ids.iter().map(|i| (*i, 1.0)).collect::<Vec<_>>());
     }
     let mut win_types: BTreeMap<(i64, i64), Vec<Id>> = BTreeMap::new();
     let mut glazing = 0.0;
@@ -307,9 +358,12 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     }
     let win_ids: Vec<Id> = windows.iter().map(|(e, _)| e.id).collect();
     for ((w, h), ids) in win_types {
-        acc.add(&format!("WINDOW.{w}x{h}"), &format!("Window {w} x {h} mm"), Unit::Nr, ids.len() as f64, ids);
+        let code = format!("WINDOW.{w}x{h}");
+        acc.add(&code, &format!("Window {w} x {h} mm"), Unit::Nr, ids.len() as f64, ids.clone());
+        acc.link(&code, Unit::Nr, &ids.iter().map(|i| (*i, 1.0)).collect::<Vec<_>>());
     }
     acc.add("WINDOW.AREA", "Total glazed opening area", Unit::M2, glazing, win_ids);
+    acc.link("WINDOW.AREA", Unit::M2, &windows.iter().map(|(e, w)| (e.id, w.width as f64 * w.height as f64 / MM2_PER_M2)).collect::<Vec<_>>());
 
     // ---- slabs ----
     let slab_vol: Vec<(Id, f64)> = slabs.iter().map(|(e, s)| (e.id, s.w as f64 * s.h as f64 * s.thickness as f64 / MM3_PER_M3)).collect();
@@ -361,6 +415,8 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
         let area: f64 = footings.iter().map(|(_, f)| f.length as f64 * f.width as f64 / MM2_PER_M2).sum();
         acc.add("FOOTING.AREA", "Footings, plan area", Unit::M2, area, ids.clone());
         acc.add("FOOTING.COUNT", "Footings", Unit::Nr, footings.len() as f64, ids);
+        acc.link("FOOTING.AREA", Unit::M2, &footings.iter().map(|(e, f)| (e.id, f.length as f64 * f.width as f64 / MM2_PER_M2)).collect::<Vec<_>>());
+        acc.link("FOOTING.COUNT", Unit::Nr, &footings.iter().map(|(e, _)| (e.id, 1.0)).collect::<Vec<_>>());
         warnings.push("footing depth is not designed: footing concrete, excavation and reinforcement are not quantified".into());
     }
     // ---- tie beams between footings: concrete from their own size ----
@@ -397,40 +453,49 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
         for (role, v) in by_role {
             let ids: Vec<Id> = v.iter().map(|x| x.0).collect();
             acc.add(&format!("FEATURE.{role}.COUNT"), &format!("{role}: number of features"), Unit::Nr, v.len() as f64, ids.clone());
+            acc.link(&format!("FEATURE.{role}.COUNT"), Unit::Nr, &v.iter().map(|x| (x.0, 1.0)).collect::<Vec<_>>());
             let len: f64 = v.iter().map(|x| x.1).sum();
             if len > 0.0 {
                 acc.add(&format!("FEATURE.{role}.LEN"), &format!("{role}: total length"), Unit::M, len / 1000.0, ids.clone());
+                acc.link(&format!("FEATURE.{role}.LEN"), Unit::M, &v.iter().map(|x| (x.0, x.1 / 1000.0)).collect::<Vec<_>>());
             }
             let area: f64 = v.iter().map(|x| x.2).sum();
             if area > 0.0 {
                 acc.add(&format!("FEATURE.{role}.AREA"), &format!("{role}: total area"), Unit::M2, area / MM2_PER_M2, ids.clone());
+                acc.link(&format!("FEATURE.{role}.AREA"), Unit::M2, &v.iter().map(|x| (x.0, x.2 / MM2_PER_M2)).collect::<Vec<_>>());
             }
             // Steps the drawing states: the riser count only. Treads, concrete and finishes need a tread depth the drawing has not given.
             let risers: u32 = v.iter().map(|x| x.3).sum();
             if risers > 0 {
                 acc.add(&format!("FEATURE.{role}.RISERS"), &format!("{role}: number of risers"), Unit::Nr, risers as f64, ids);
+                acc.link(&format!("FEATURE.{role}.RISERS"), Unit::Nr, &v.iter().map(|x| (x.0, x.3 as f64)).collect::<Vec<_>>());
             }
         }
     }
     let separators = collect::<crate::typed::RoomSeparator>(model, &QtoOpts::default());
     let mut open_edge_mm = 0.0;
+    let mut space_rows: Vec<(String, Unit, Id, f64)> = Vec::new();
     for (e, s) in &spaces {
         let area = s.net_area.unwrap_or(s.area);
         let f = floor.entry(s.func.clone()).or_default();
         f.0 += area;
         f.1.push(e.id);
+        space_rows.push((format!("FLOOR.AREA.{}", s.func), Unit::M2, e.id, area));
 
         // A courtyard has paving but no walls of its own and no ceiling: no skirting, no ceiling, not part of the floor area.
         if s.func == "courtyard" {
             continue;
         }
+        space_rows.push((format!("CEILING.AREA.{}", s.func), Unit::M2, e.id, area));
         let door_widths: f64 = all_doors.iter().filter(|(_, d)| d.from == s.requirement_key || d.to == s.requirement_key).map(|(_, d)| d.width as f64).sum();
         let open: f64 = separators.iter().map(|(_, sep)| along_edges(sep, s)).sum();
         open_edge_mm += open;
         let perimeter = 2.0 * (s.w + s.h) as f64 - open;
         let k = skirting.entry(s.func.clone()).or_default();
-        k.0 += ((perimeter - door_widths) / 1000.0).max(0.0);
+        let run = ((perimeter - door_widths) / 1000.0).max(0.0);
+        k.0 += run;
         k.1.push(e.id);
+        space_rows.push((format!("SKIRTING.{}", s.func), Unit::M, e.id, run));
     }
     for (func, (area, ids)) in floor {
         acc.add(&format!("FLOOR.AREA.{func}"), &format!("Floor finish, {func} (net area)"), Unit::M2, area, ids.clone());
@@ -447,10 +512,15 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
     let covered = |s: &Space| s.func != "courtyard";
     let all_spaces: Vec<Id> = spaces.iter().filter(|(_, s)| covered(s)).map(|(e, _)| e.id).collect();
     acc.add("SPACE.GROSS.AREA", "Total gross floor area (roofed spaces)", Unit::M2, spaces.iter().filter(|(_, s)| covered(s)).map(|(_, s)| s.area).sum(), all_spaces);
+    for (code, unit, id, q) in &space_rows {
+        acc.link(code, *unit, &[(*id, *q)]);
+    }
+    acc.link("SPACE.GROSS.AREA", Unit::M2, &spaces.iter().filter(|(_, s)| covered(s)).map(|(e, s)| (e.id, s.area)).collect::<Vec<_>>());
     let courts: Vec<(Id, f64)> = spaces.iter().filter(|(_, s)| !covered(s)).map(|(e, s)| (e.id, s.area)).collect();
     if !courts.is_empty() {
         acc.add("COURT.AREA", "Courtyard (open to the sky)", Unit::M2, courts.iter().map(|c| c.1).sum(), courts.iter().map(|c| c.0).collect());
+        acc.link("COURT.AREA", Unit::M2, &courts);
     }
 
-    Qto { items: acc.items, warnings }
+    Qto { items: acc.items, warnings, element_rows: acc.rows }
 }

@@ -90,6 +90,9 @@ pub struct Routing {
     pub avoid_structure: Option<bool>,
     /// Gap kept between a duct and the structure it passes, mm. Required when `avoid_structure` is on.
     pub structure_clearance_mm: Option<f64>,
+    /// Drainage above the lowest level: the gap kept between a vertical stack (and its branch) and a column, mm. Required
+    /// when a wet room is above the lowest level.
+    pub stack_clearance_mm: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

@@ -91,6 +91,17 @@ pub(crate) fn adjacency_of(rooms: &[RoomReq]) -> Vec<Adjacency> {
 }
 
 /// `{room key: {x, y, w, h}}` in millimetres.
+/// Declared scores of one alternative: every level is counted against the whole building envelope and the counts are added,
+/// so a level with more rooms weighs more.
+fn score_building(alt: &Building, plan: &levels::BuildingPlan, w: &nnx_core::scoring::ScoreWeights) -> Result<nnx_core::scoring::Scores, String> {
+    let hubs = nnx_core::layout::Options::default().hub_funcs;
+    let mut total = nnx_core::scoring::Tallies::default();
+    for (layout, lp) in alt.levels.iter().zip(&plan.levels) {
+        total.add(&nnx_core::scoring::tally_level(layout, &plan.merged.envelope, plan.merged.entry, &lp.brief.adjacency, &hubs));
+    }
+    nnx_core::scoring::scores_from(&total, w)
+}
+
 fn parse_locked(v: Option<&Value>) -> Result<std::collections::BTreeMap<String, nnx_core::layout::Rect>, String> {
     let mut out = std::collections::BTreeMap::new();
     for (k, r) in v.and_then(Value::as_object).into_iter().flatten() {
@@ -346,6 +357,41 @@ impl App {
             }
             "presets" => Ok(nnx_core::presets::presets_json()),
             "site_analyze" => Self::site_analyze(args),
+            "plot_import_dxf" => Self::plot_import_dxf(args),
+            "ifc_review" => Self::ifc_review(args),
+            "entrances_check" => Self::entrances_check(args),
+            "privacy_check" => Self::privacy_check(args),
+            "sun_check" => Self::sun_check(args),
+            "span_compare" => Self::span_compare(args),
+            "wall_load" => Self::wall_load(args),
+            "drift_check" => Self::drift_check(args),
+            "deep_foundation_check" => Self::deep_foundation_check(args),
+            "spalling_check" => Self::spalling_check(args),
+            "lighting_plan" => Self::lighting_plan(args),
+            "panel_schedule" => Self::panel_schedule(args),
+            "cable_check" => Self::cable_check(args),
+            "water_storage_check" => Self::water_storage_check(args),
+            "insulation_options" => self.insulation_options(args),
+            "electricity_bill" => Self::electricity_bill(args),
+            "energy_certificate" => Self::energy_certificate(args),
+            "fire_protection_check" => Self::fire_protection_check(args),
+            "egress_check" => Self::egress_check(args),
+            "access_check" => Self::access_check(args),
+            "shear_core_check" => Self::shear_core_check(args),
+            "savings_compare" => Self::savings_compare(args),
+            "furniture_fit" => Self::furniture_fit(args),
+            "wind_check" => Self::wind_check(args),
+            "courtyard_check" => Self::courtyard_check(args),
+            "room_shape_check" => Self::room_shape_check(args),
+            "mezzanine_check" => Self::mezzanine_check(args),
+            "rooftop_check" => Self::rooftop_check(args),
+            "basement_check" => Self::basement_check(args),
+            "parking_plan" => Self::parking_plan(args),
+            "terrain_check" => Self::terrain_check(args),
+            "plot_import_survey" => Self::plot_import_survey(args),
+            "brief_clarify" => Self::brief_clarify(args),
+            "areas_import" => Self::areas_import(args),
+            "prefs_learn" => Self::prefs_learn(args),
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
             "analysis" => self.analysis(args),
             "materials" => Ok(nnx_core::materials::catalog_json()),
@@ -367,16 +413,28 @@ impl App {
                 Ok(json!({ "svg": self.render_or_null()? }))
             }
             "certificate_html" => self.certificate(args),
+            "permit_pack" => self.permit_pack(args),
+            "signoff_form" => self.signoff_form(args),
+            "permit_documents_check" => self.permit_documents_check(args),
+            "room_finishes_schedule" => self.room_finishes_schedule(args),
+            "wet_room_detail" => self.wet_room_detail(args),
+            "ceiling_plan" => self.ceiling_plan(args),
+            "axes_plan" => self.axes_plan(args),
+            "stair_detail" => self.stair_detail(args),
+            "site_fence_plan" => self.site_fence_plan(args),
+            "number_audit" => self.number_audit(),
             "lock" => self.lock(args),
             "regenerate" => self.regenerate(args),
             "site_layout" => self.site_layout_cmd(),
             "furniture" => self.furniture_cmd(),
             "vertical" => self.vertical_cmd(),
+            "expansion_check" => self.expansion_check(),
             "template_apply" => Self::template_apply(args),
             "site_plan" => self.site_plan(),
             "zone_preset" => self.zone_preset(args),
             "elevation" => self.elevation(args),
             "section" => self.section(args),
+            "auto_views" => self.auto_views(),
             "clashes" => Ok(self.clash_json()),
             "clash_classes" => Ok(self.clash_classes(args)),
             "runs" => Ok(json!(self.runs_json())),
@@ -396,19 +454,26 @@ impl App {
             "status" => Ok(json!({ "has_doc": self.doc.is_some(), "dirty": self.is_dirty() })),
             "assumptions" => Ok(assumptions()),
             "qto" => self.qto(args),
+            "qto_elements" => self.qto_elements(args),
+            "bid_compare" => self.bid_compare(args),
+            "material_requests" => self.material_requests(args),
             "set_phase" => self.set_phase(args),
             "add_feature" => self.add_feature(args),
             "features" => self.features_json(args),
             "mep" => self.mep(args),
             "sizing" => self.sizing(args),
+            "structural_calc_report" => self.structural_calc_report(args),
+            "rebar_drawings" => self.rebar_drawings(),
             "boq" => self.boq(args),
             "model3d" => self.model3d(),
+            "sun_shadows" => self.sun_shadows(args),
             "finishes" => self.finishes_report(),
             "finishes_set" => self.finishes_set(args),
             "asbuilt" => self.asbuilt_report(),
             "asbuilt_set" => self.asbuilt_set(args),
             "asbuilt_svg" => self.asbuilt_svg(),
             "tour_export" => self.tour_export(args),
+            "client_view_export" => self.client_view_export(args),
             "stl_export" => self.stl_export(args),
             "exec" => self.exec_state(),
             "cost" => self.cost_report(),
@@ -417,6 +482,16 @@ impl App {
             "tender_set" => self.tender_set(args),
             "payment" => self.payment_report(),
             "payment_set" => self.payment_set(args),
+            "change_log" => self.change_log(args),
+            "site_photos" => self.site_photos_report(),
+            "site_photos_set" => self.site_photos_set(args),
+            "decisions" => self.decisions_report(),
+            "quality_report" => self.quality_report(args),
+            "assistant" => self.assistant(args),
+            "assistant_apply" => self.assistant_apply(args),
+            "decisions_set" => self.decisions_set(args),
+            "progress_payments" => self.progress_report(),
+            "progress_payments_set" => self.progress_set(args),
             "procure" => self.procure_report(),
             "procure_set" => self.procure_set(args),
             "qaqc" => self.qaqc_report(args),
@@ -428,13 +503,25 @@ impl App {
             "snapshot_save" => self.snapshot_save(args),
             "snapshot_delete" => self.snapshot_delete(args),
             "snapshot_diff" => self.snapshot_diff(args),
+            "snapshot_report" => self.snapshot_report(args),
             "snapshot_svg" => self.snapshot_svg(args),
             "overlays" => self.overlays_report(),
+            "plugins" => self.plugins_report(),
+            "plugin_review" => self.plugin_review(args),
+            "plugin_add" => self.plugin_add(args),
+            "plugin_toggle" => self.plugin_toggle(args),
+            "plugin_remove" => self.plugin_remove(args),
+            "plugin_template" => self.plugin_template(args),
             "overlay_review" => self.overlay_review(args),
             "overlay_add" => self.overlay_add(args),
             "overlay_toggle" => self.overlay_toggle(args),
             "overlay_remove" => self.overlay_remove(args),
             "overlay_apply_limits" => self.overlay_apply_limits(args),
+            "municipalities" => self.municipalities_report(),
+            "municipality_add" => self.municipality_add(args),
+            "municipality_remove" => self.municipality_remove(args),
+            "municipality_apply" => self.municipality_apply(args),
+            "zoning_check" => self.zoning_check(args),
             "draft_frame" => self.draft_frame(),
             "draft_snap" => self.draft_snap(args),
             "draft_wall" => self.draft_wall(args),
@@ -459,8 +546,9 @@ impl App {
             "assemblies_set" => self.assemblies_set(args),
             "assembly_assign" => self.assembly_assign(args),
             "precheck" => Ok(json!(nnx_core::precheck::run(&self.doc()?.model))),
-            "export_ifc" => self.gate(args).and_then(|_| self.export_ifc()),
-            "export_dxf" => self.gate(args).and_then(|_| self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false))),
+            "export_ifc" => self.gate(args).and_then(|_| self.export_ifc(args)),
+            "export_bundle" => self.gate(args).and_then(|_| self.export_bundle(args)),
+            "export_dxf" => self.gate(args).and_then(|_| self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false), args.get("layer_style"))),
             "report_html" => {
                 let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
                 self.report(args).map(|(html, _)| json!({ "html": self.with_history(html, arabic), "name": "engineering-report.pdf" }))
@@ -479,7 +567,16 @@ impl App {
         let s: StructIn = serde_json::from_value(args.get("struct").cloned().unwrap_or(json!({}))).map_err(|e| format!("structure inputs: {e}"))?;
         let mut plan = levels::plan_building(&b, s.floors.unwrap_or(1))?;
         let locked = parse_locked(args.get("locked"))?;
+        let weights: nnx_core::scoring::ScoreWeights = match args.get("score_weights").filter(|v| !v.is_null()) {
+            Some(v) => serde_json::from_value(v.clone()).map_err(|e| format!("score_weights: {e}"))?,
+            None => Default::default(),
+        };
+        weights.validate()?;
         let mut alts = levels::generate_building_locked(&plan, b.seed.unwrap_or(1), &locked)?;
+        // Ranked by the declared overall score (lighting, connectivity, privacy), best first; the generator cost breaks ties.
+        let mut scored = alts.drain(..).map(|a| score_building(&a, &plan, &weights).map(|s| (a, s))).collect::<Result<Vec<_>, _>>()?;
+        scored.sort_by(|x, y| nnx_core::scoring::rank_order((&x.1, x.0.levels[0].cost), (&y.1, y.0.levels[0].cost)));
+        let (mut alts, mut all_scores): (Vec<Building>, Vec<nnx_core::scoring::Scores>) = scored.into_iter().unzip();
         // Rooms marked on a sketch become the first alternative; the generated ones follow for comparison.
         let from_sketch = match args.get("placement").filter(|p| p.as_object().is_some_and(|o| !o.is_empty())) {
             Some(p) => {
@@ -489,6 +586,7 @@ impl App {
                     plan.merged.entry_at = Some((f("x")?.round() as i64, f("y")?.round() as i64));
                 }
                 let placed = levels::placed_building(&plan, p, &alts[0])?;
+                all_scores.insert(0, score_building(&placed, &plan, &weights)?);
                 alts.insert(0, placed);
                 true
             }
@@ -512,7 +610,7 @@ impl App {
             let ground = building::levels(&doc.model).first().map(|(_, id)| *id);
             let svg = plan_svg(&doc.model, ground, &opts).map_err(|e| e.to_string())?;
             let ground_layout = &alt.levels[0];
-            thumbs.push(json!({ "index": i, "cost": (ground_layout.cost * 100.0).round() / 100.0, "reserve_m2": (ground_layout.reserve_m2 * 10.0).round() / 10.0, "from_sketch": from_sketch && i == 0, "svg": svg }));
+            thumbs.push(json!({ "index": i, "cost": (ground_layout.cost * 100.0).round() / 100.0, "reserve_m2": (ground_layout.reserve_m2 * 10.0).round() / 10.0, "from_sketch": from_sketch && i == 0, "scores": all_scores[i], "svg": svg }));
         }
         self.draft = Some(draft);
         self.alternatives = alts;
@@ -576,6 +674,8 @@ impl App {
             "report": report,
             "applied": applied.map(|(c, r)| json!({ "created": c, "removed": r })),
             "points": self.doc()?.model.elements.values().filter(|e| e.kind == "MepPoint").count(),
+            // Every duct, pipe, drain and cable in the model against the structure, checked on each call: an applied route that hits a beam, column or footing is named here without a separate request.
+            "structure_clashes": self.clash_json(),
             "svg": self.render_or_null()?,
         }))
     }
@@ -597,15 +697,80 @@ impl App {
         Ok(())
     }
 
-    fn export_ifc(&self) -> Result<Value, String> {
+    /// `{ profile? }`: `"standard"` (default) or `"revit"` (type objects, Pset/Qto sets; see `nnx_core::ifc::export_ifc_revit`).
+    fn export_ifc(&self, args: &Value) -> Result<Value, String> {
+        let revit = match args.get("profile").and_then(Value::as_str).map(str::trim) {
+            None | Some("") | Some("standard") => false,
+            Some("revit") => true,
+            Some(other) => return Err(format!("export ifc: unknown profile '{other}' (standard or revit)")),
+        };
         let opts = nnx_core::ifc::IfcOpts {
             project_name: self.display_title(),
             author: "NanoArch".into(),
             timestamp: utc_now(),
             labels: self.labels(),
         };
-        let out = nnx_core::ifc::export_ifc(&self.doc()?.model, &opts)?;
-        Ok(json!({ "ifc": out.text, "counts": out.counts }))
+        let model = &self.doc()?.model;
+        let out = if revit { nnx_core::ifc::export_ifc_revit(model, &opts)? } else { nnx_core::ifc::export_ifc(model, &opts)? };
+        Ok(json!({ "ifc": out.text, "counts": out.counts, "profile": if revit { "revit" } else { "standard" } }))
+    }
+
+    /// One delivery ZIP with numbered folders and an index: `{ include: ["ifc", "dxf", "plan_html", "boq"], lang?, profile?, all?, views? }`.
+    /// Nothing is chosen for the user (`include` is required). `boq` needs the BOQ inputs saved in the project, since an unpriced
+    /// quantity workbook would be passed off as a priced one. Returns `{ zip_b64, name, paths, manifest }`.
+    fn export_bundle(&self, args: &Value) -> Result<Value, String> {
+        use nnx_core::bundle::Entry;
+        let include: Vec<&str> = args
+            .get("include")
+            .and_then(Value::as_array)
+            .ok_or("export bundle: `include` is required (a list of ifc, dxf, plan_html, boq)")?
+            .iter()
+            .map(|v| v.as_str().ok_or("export bundle: `include` must hold only names"))
+            .collect::<Result<_, _>>()?;
+        if include.is_empty() {
+            return Err("export bundle: `include` is empty (choose at least one of ifc, dxf, plan_html, boq)".into());
+        }
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        let text = |v: &Value, key: &str| v[key].as_str().map(|s| s.as_bytes().to_vec()).ok_or_else(|| format!("export bundle: the {key} output was empty"));
+        let slug: String = {
+            let s: String = self.display_title().chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' }).collect();
+            s.trim_matches('_').chars().take(60).collect()
+        };
+        let slug = if slug.is_empty() { "project".to_string() } else { slug };
+        let mut entries = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for name in include {
+            if !seen.insert(name) {
+                return Err(format!("export bundle: '{name}' is listed twice"));
+            }
+            match name {
+                "ifc" => {
+                    let r = self.export_ifc(args)?;
+                    entries.push(Entry { folder: "01-models".into(), name: format!("{slug}.ifc"), bytes: text(&r, "ifc")? });
+                }
+                "dxf" => {
+                    let all = args.get("all").and_then(Value::as_bool).unwrap_or(false);
+                    let views = args.get("views").and_then(Value::as_bool).unwrap_or(false);
+                    let r = self.export_dxf(all, views, args.get("layer_style"))?;
+                    entries.push(Entry { folder: "02-drawings".into(), name: format!("{slug}.dxf"), bytes: text(&r, "dxf")? });
+                }
+                "plan_html" => {
+                    let r = self.pdf_html(arabic)?;
+                    entries.push(Entry { folder: "02-drawings".into(), name: format!("{slug}-plans.html"), bytes: text(&r, "html")? });
+                }
+                "boq" => {
+                    if self.project().and_then(|p| p.boq).is_none() {
+                        return Err("export bundle: `boq` needs the BOQ inputs (prices and rates) saved in the project; enter them first".into());
+                    }
+                    let r = self.boq_now()?;
+                    entries.push(Entry { folder: "03-quantities".into(), name: format!("{slug}-boq.xlsx"), bytes: nnx_core::xlsx::boq_workbook(&r, arabic).to_bytes() });
+                }
+                other => return Err(format!("export bundle: unknown item '{other}' (ifc, dxf, plan_html, boq)")),
+            }
+        }
+        let date: String = utc_now().chars().take(10).collect();
+        let b = nnx_core::bundle::build(&self.display_title(), &date, entries)?;
+        Ok(json!({ "zip_b64": nnx_core::xlsx::base64_encode(&b.zip), "name": format!("{slug}-delivery.zip"), "paths": b.paths, "manifest": b.manifest }))
     }
 
     /// The printable plan set (one A3 sheet per level) as HTML; the shell prints it to PDF.
@@ -622,8 +787,9 @@ impl App {
         Ok(json!({ "html": html, "name": "plan.pdf" }))
     }
 
-    /// The plan as a DXF file: the level on screen, or every level side by side when `all` is true.
-    fn export_dxf(&self, all: bool, views: bool) -> Result<Value, String> {
+    /// The plan as a DXF file: the level on screen, or every level side by side when `all` is true. An optional `layer_style`
+    /// (the office's layer names, colours and line types, with the document they come from) restyles the finished file.
+    fn export_dxf(&self, all: bool, views: bool, layer_style: Option<&Value>) -> Result<Value, String> {
         let model = &self.doc()?.model;
         let levels: Vec<Option<nnx_core::Id>> = if all {
             let l = building::levels(model);
@@ -642,12 +808,18 @@ impl App {
             Vec::new()
         };
         let out = nnx_core::dxf::export_dxf_views(model, &levels, &specs, &self.view_opts(), &opts)?;
+        if let Some(raw) = layer_style.filter(|v| !v.is_null()) {
+            let style: nnx_core::layerstyle::LayerStyle = serde_json::from_value(raw.clone()).map_err(|e| format!("layer_style: {e}"))?;
+            let styled = nnx_core::layerstyle::apply(&out, &style)?;
+            return Ok(json!({ "dxf": styled.out.text, "counts": styled.out.counts, "levels": levels.len(), "views": specs.len(), "layer_style": { "name": style.name, "source": style.source, "applied": styled.applied } }));
+        }
         Ok(json!({ "dxf": out.text, "counts": out.counts, "levels": levels.len(), "views": specs.len() }))
     }
 
     fn boq(&mut self, args: &Value) -> Result<Value, String> {
         let inputs = args.get("inputs").cloned().unwrap_or(json!({}));
         let lib: nnx_core::boq::BoqLib = serde_json::from_value(inputs).map_err(|e| format!("BOQ inputs: {e}"))?;
+        nnx_core::boq::validate(&lib)?;
         nnx_core::project::update(self.doc.as_mut().ok_or("choose a layout first")?, "BOQ inputs", |p| {
             p.boq = Some(lib.clone());
             Ok(())
@@ -695,7 +867,41 @@ impl App {
         let first = nnx_core::sizing::compute(&self.doc()?.model, soil, &loaded);
         nnx_core::sizing::apply_tie_beams(self.doc.as_mut().ok_or("choose a layout first")?, &first)?;
         let r = nnx_core::sizing::compute(&self.doc()?.model, soil, &loaded);
-        Ok(json!({ "report": r, "members_csv": r.members_csv(), "concrete_csv": r.concrete_csv(), "bbs_csv": r.bbs_csv(), "soil_kpa": soil }))
+        // The bar bending schedule with shapes, bends, type marks and the per-diameter summary. When it cannot be built the reason
+        // comes back by name next to the report; the sizing itself is not hidden by it.
+        let (bbs, bbs_error) = match nnx_core::bbs::build(&r, &loaded) {
+            Ok(b) => (Some(b), None),
+            Err(e) => (None, Some(e)),
+        };
+        Ok(json!({
+            "report": r, "members_csv": r.members_csv(), "concrete_csv": r.concrete_csv(), "bbs_csv": r.bbs_csv(), "soil_kpa": soil,
+            "bbs": bbs, "bbs_lines_csv": bbs.as_ref().map(|b| b.lines_csv()), "bbs_summary_csv": bbs.as_ref().map(|b| b.summary_csv()), "bbs_error": bbs_error,
+        }))
+    }
+
+    /// Reviewable structural calculation report of the sizing inputs stored in the project: assumptions, then results, then what was
+    /// not computed. `{ lang?: "ar"|"en" }` (default `en`). Read-only; run `sizing` first.
+    fn structural_calc_report(&self, args: &Value) -> Result<Value, String> {
+        let lang = args.get("lang").and_then(Value::as_str).unwrap_or("en");
+        let p = self.project().ok_or("choose a layout first")?;
+        let inputs = p.sizing.clone().ok_or("no structural sizing inputs yet: run `sizing` first")?;
+        let loaded = inputs.with_floor_load(&p.structure);
+        let rep = nnx_core::sizing::compute(&self.doc()?.model, p.structure.bearing_kpa, &loaded);
+        let report = nnx_core::calcreport::build(&p.meta.title, &p.structure, &inputs, &rep);
+        let markdown = report.markdown(lang)?;
+        Ok(json!({ "calc_report": report, "markdown": markdown }))
+    }
+
+    /// Reinforcement detail drawings (DXF) of the sizing inputs stored in the project: sections and elevations of the columns,
+    /// beams, tie beams and footings, with the bars of your templates or of the design. Read-only: it changes nothing. Members that
+    /// cannot be drawn come back in `skipped` with the reason.
+    fn rebar_drawings(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let inputs = p.sizing.clone().ok_or("no structural sizing inputs yet: run `sizing` first")?;
+        let loaded = inputs.with_floor_load(&p.structure);
+        let rep = nnx_core::sizing::compute(&self.doc()?.model, p.structure.bearing_kpa, &loaded);
+        let d = nnx_core::rebardraw::build(&rep, &p.meta.title)?;
+        Ok(json!({ "dxf": d.dxf, "sheets": d.sheets, "skipped": d.skipped, "notes": d.notes, "counts": d.counts }))
     }
 
     /// The construction phases an element can carry. Nothing is assumed: an element with no phase stays unset.
@@ -872,6 +1078,73 @@ impl App {
             .map(|i| json!({ "code": i.code, "description": i.description, "unit": i.unit.label(), "quantity": i.quantity, "sources": i.sources.len() }))
             .collect();
         Ok(json!({ "items": items, "warnings": q.warnings, "csv": q.to_csv() }))
+    }
+
+    /// The quantities of the model grouped by the element they were measured on: `{ phase?, element? }`. Read-only.
+    /// Contractor bids compared on the project's own BOQ (read-only): `{ bids: [{ contractor, source, date, currency, rates: { CODE: rate }, markups? }] }`.
+    /// Rates, mark-ups, dates and sources are the bidders' own as entered; nothing is stored and nothing is filled in.
+    fn bid_compare(&self, args: &Value) -> Result<Value, String> {
+        let bids: Vec<nnx_core::bids::Bid> = serde_json::from_value(args.get("bids").cloned().ok_or("bids is required")?).map_err(|e| format!("bids: {e}"))?;
+        let boq = self.boq_now()?;
+        let cmp = nnx_core::bids::compare(&boq, &bids)?;
+        Ok(json!({ "comparison": cmp, "csv": cmp.csv(), "name": "bid-comparison" }))
+    }
+
+    /// Material requests by construction stage (read-only): `{ inputs?: { as_of?, buffer_days?, lead: { material: { days, source } } } }`.
+    /// The materials are the BOQ's own (the project's stored consumption factors) split by the stages of the stored schedule; lead
+    /// times are the user's, each with its source, and nothing is stored.
+    fn material_requests(&self, args: &Value) -> Result<Value, String> {
+        let inputs: nnx_core::matreq::MatReqInputs = match args.get("inputs").filter(|v| !v.is_null()) {
+            Some(v) => serde_json::from_value(v.clone()).map_err(|e| format!("inputs: {e}"))?,
+            None => Default::default(),
+        };
+        let (sched, why) = self.stored_schedule();
+        let sched = sched.ok_or_else(|| why.unwrap_or_else(|| "the schedule is not available".into()))?;
+        let model = &self.doc()?.model;
+        let mut items = qto::compute(model, &QtoOpts::default()).items;
+        items.extend(self.extra_items(model));
+        let lib = self.project().and_then(|p| p.boq).unwrap_or_default();
+        let today = Date::parse(&utc_now().chars().take(10).collect::<String>());
+        let r = nnx_core::matreq::build(&items, &lib, &sched, &inputs, today)?;
+        Ok(json!({ "report": r, "csv": r.csv(), "name": "material-requests" }))
+    }
+
+    /// Each row is one element's share of an item; the shares of one code add up to that item (checked in the tests).
+    /// Items other modules add (MEP, insulation, finishes) have no per-element breakdown and are named in `not_linked`.
+    fn qto_elements(&self, args: &Value) -> Result<Value, String> {
+        let phase = args.get("phase").and_then(Value::as_str).filter(|p| !p.is_empty()).map(String::from);
+        if let Some(p) = phase.as_ref().filter(|p| *p != "UNSET" && !Self::PHASES.contains(&p.as_str())) {
+            return Err(format!("'{p}' is not a phase"));
+        }
+        let only = match args.get("element").filter(|v| !v.is_null()) {
+            None => None,
+            Some(v) => Some(v.as_str().and_then(|s| s.parse::<nnx_core::Id>().ok()).ok_or("element must be an element id")?),
+        };
+        let doc = self.doc()?;
+        if let Some(id) = only
+            && doc.model.get(&id).is_none()
+        {
+            return Err(format!("element {id} is not in the model"));
+        }
+        let q = qto::compute(&doc.model, &QtoOpts { phase: phase.clone(), ..QtoOpts::default() });
+        let extra = self.extra_items_for_phase(&doc.model, phase.as_deref());
+        let mut by_element: std::collections::BTreeMap<nnx_core::Id, Vec<&nnx_core::qto::ElementQty>> = std::collections::BTreeMap::new();
+        for r in &q.element_rows {
+            if only.is_none_or(|id| id == r.element) {
+                by_element.entry(r.element).or_default().push(r);
+            }
+        }
+        let elements: Vec<Value> = by_element
+            .iter()
+            .filter_map(|(id, rows)| {
+                let e = doc.model.get(id)?;
+                let quantities: Vec<Value> = rows.iter().map(|r| json!({ "code": r.code, "unit": r.unit.label(), "quantity": r.quantity })).collect();
+                Some(json!({ "id": id.to_string(), "kind": e.kind, "level_id": e.level_id.map(|l| l.to_string()), "phase": e.props.get("phase"), "quantities": quantities }))
+            })
+            .collect();
+        let mut not_linked: Vec<String> = q.unlinked_codes().into_iter().map(String::from).collect();
+        not_linked.extend(extra.iter().map(|i| i.code.clone()));
+        Ok(json!({ "elements": elements, "not_linked": not_linked, "warnings": q.warnings }))
     }
 
     /// The take-off the schedule is built from: the model's quantities, insulation, MEP devices and runs, and the concrete and steel of
@@ -1063,6 +1336,131 @@ impl App {
         Ok(v)
     }
 
+    /// The log of committed steps (who, which elements, BOQ cost impact at the stored rates). Read-only: the document is not changed.
+    /// `limit` (optional, at least 1) keeps the newest steps.
+    fn change_log(&self, args: &Value) -> Result<Value, String> {
+        let doc = self.doc()?;
+        let limit = match args.get("limit") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(v.as_u64().filter(|&n| n >= 1).ok_or("limit must be a whole number of at least 1")? as usize),
+        };
+        let lib = self.project().and_then(|p| p.boq).unwrap_or_default();
+        let log = nnx_core::changelog::build(doc, limit, |m| {
+            let mut items = qto::compute(m, &QtoOpts::default()).items;
+            items.extend(self.extra_items(m));
+            Ok(nnx_core::boq::compute(&items, &lib))
+        });
+        Ok(json!({ "log": log, "csv": log.csv(), "html": log.html() }))
+    }
+
+    fn site_photos_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let rep = nnx_core::sitephotos::report(&self.doc()?.model, &p.meta.site_photos);
+        Ok(json!({ "inputs": p.meta.site_photos, "csv": rep.csv(), "html": rep.html(), "report": rep }))
+    }
+
+    /// Replaces the stored photo references (`photos`): ONE undoable edit. Every photo needs a file, a real date and at least one
+    /// element that exists in the model; nothing is stored when any photo is refused.
+    fn site_photos_set(&mut self, args: &Value) -> Result<Value, String> {
+        let sp: nnx_core::sitephotos::SitePhotos = serde_json::from_value(json!({ "photos": args.get("photos").cloned().ok_or("photos is required")? })).map_err(|e| format!("photos: {e}"))?;
+        sp.check()?;
+        nnx_core::sitephotos::validate_links(&self.doc()?.model, &sp)?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "Site photos", |p| {
+            p.meta.site_photos = sp.clone();
+            Ok(())
+        })?;
+        let mut v = self.site_photos_report()?;
+        v["changed"] = json!(out.changed);
+        Ok(v)
+    }
+
+    /// The project quality report (`weights` optional): integrity, rule check (sourced pack, enabled overlays and plugins, plus any `pack`
+    /// and `limits` given), rule coverage and number provenance, as one declared score with its counted sets. Read-only; stores nothing.
+    /// Rules and integrity advice for the open model. The sourced pack is on unless the caller turns it off.
+    fn assistant_advice(&self, args: &Value) -> Result<nnx_core::assistant::Advice, String> {
+        let mut rule_args = args.clone();
+        if rule_args.get("sourced").is_none() {
+            rule_args["sourced"] = json!(true);
+        }
+        let (rule_report, _) = self.run_rules(&rule_args)?;
+        let doc = self.doc()?;
+        let integrity = nnx_core::precheck::run(&doc.model);
+        Ok(nnx_core::assistant::advise(&doc.model, &integrity, Some(&rule_report)))
+    }
+
+    /// Explains every warning (integrity, rule findings, skipped rules) and says which ones have a one-click fix. Read only.
+    fn assistant(&self, args: &Value) -> Result<Value, String> {
+        let advice = self.assistant_advice(args)?;
+        Ok(json!({ "advice": advice }))
+    }
+
+    /// Applies the one-click fix of one item (`id` from `assistant`) as a single undoable step, then returns the fresh list.
+    fn assistant_apply(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or("id is required: the id of an item from the assistant list")?.to_string();
+        let advice = self.assistant_advice(args)?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let applied = nnx_core::assistant::apply(doc, &advice, &id)?;
+        let fresh = self.assistant_advice(args)?;
+        Ok(json!({ "applied": applied, "advice": fresh }))
+    }
+
+    fn quality_report(&self, args: &Value) -> Result<Value, String> {
+        let weights: nnx_core::quality::QualityWeights = match args.get("weights") {
+            Some(w) => serde_json::from_value(w.clone()).map_err(|e| format!("weights: {e}"))?,
+            None => Default::default(),
+        };
+        let doc = self.doc()?;
+        let mut rule_args = args.clone();
+        rule_args["sourced"] = json!(true);
+        let (rule_report, _) = self.run_rules(&rule_args)?;
+        let audit = self.project().map(|p| nnx_core::numaudit::audit(&p)).transpose()?;
+        let integrity = nnx_core::precheck::run(&doc.model);
+        let rep = nnx_core::quality::build(&doc.model, &integrity, Some(&rule_report), audit.as_ref(), &weights)?;
+        Ok(json!({ "report": rep, "csv": rep.csv(), "html": rep.html(), "name": "quality_report.csv" }))
+    }
+
+    fn decisions_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let rep = nnx_core::decisions::report(&self.doc()?.model, &p.meta.decisions);
+        Ok(json!({ "inputs": p.meta.decisions, "csv": rep.csv(), "html": rep.html(), "report": rep }))
+    }
+
+    /// Replaces the stored decision log (`decisions`): ONE undoable edit. Every decision needs who made it (`decidedBy`), a real date,
+    /// a title and its text; element references must exist in the model; nothing is stored when any entry is refused.
+    fn decisions_set(&mut self, args: &Value) -> Result<Value, String> {
+        let log: nnx_core::decisions::DecisionLog = serde_json::from_value(json!({ "decisions": args.get("decisions").cloned().ok_or("decisions is required")? })).map_err(|e| format!("decisions: {e}"))?;
+        log.check()?;
+        nnx_core::decisions::validate_links(&self.doc()?.model, &log)?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "Design decisions", |p| {
+            p.meta.decisions = log.clone();
+            Ok(())
+        })?;
+        let mut v = self.decisions_report()?;
+        v["changed"] = json!(out.changed);
+        Ok(v)
+    }
+
+    fn progress_report(&self) -> Result<Value, String> {
+        let inputs = self.exec_inputs()?.payment;
+        let pay = self.payment_now()?;
+        let r = nnx_core::progress::compute(&inputs.progress, &pay);
+        Ok(json!({ "csv": r.csv(), "report": r }))
+    }
+
+    /// Replaces only the certificates and the retention; the milestones and the contract value are left as they are.
+    fn progress_set(&mut self, args: &Value) -> Result<Value, String> {
+        let prog: nnx_core::progress::ProgressInputs = serde_json::from_value(args.get("progress").cloned().ok_or("progress is required")?).map_err(|e| format!("progress: {e}"))?;
+        let changed = self.exec_update("Progress payment certificates", |e| {
+            e.payment.progress = prog.clone();
+            Ok(())
+        })?;
+        let mut v = self.progress_report()?;
+        v["changed"] = json!(changed);
+        Ok(v)
+    }
+
     fn procure_now(&self) -> Result<nnx_core::procure::ProcureReport, String> {
         let inputs = self.exec_inputs()?.procurement;
         let (acts, _) = self.stored_activities();
@@ -1142,9 +1540,26 @@ impl App {
     /// Runs the rules: the pack pasted in the Rules tab (if any), then the enabled municipal overlays in order. Every finding names the
     /// layer its rule belongs to, and `overlays` says what each layer added, replaced and overrode.
     fn check_rules(&self, args: &Value) -> Result<Value, String> {
+        let (r, reports) = self.run_rules(args)?;
+        let sev = |s: rules::Severity| match s {
+            rules::Severity::Error => "error",
+            rules::Severity::Warning => "warning",
+            rules::Severity::Info => "info",
+        };
+        Ok(json!({
+            "checked": r.checked,
+            "layers": r.layers,
+            "overlays": reports,
+            "findings": r.findings.iter().map(|f| json!({ "rule": f.rule_id, "clause": f.clause, "layer": f.layer, "severity": sev(f.severity), "message": f.message, "element": f.element.to_string() })).collect::<Vec<_>>(),
+            "skipped": r.skipped.iter().map(|s| json!({ "rule": s.rule_id, "param": s.param, "reason": s.reason, "elements": self.skipped_rooms(&s.elements) })).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// Builds the rule set from the arguments (`pack`, `sourced`, `limits`, the enabled overlays and plugins) and runs it on the open model.
+    fn run_rules(&self, args: &Value) -> Result<(rules::Report, Vec<nnx_core::rules::LayerReport>), String> {
         let doc = self.doc()?;
         let base = args.get("pack").and_then(Value::as_str);
-        let overlays = self.project().map(|p| p.overlays).unwrap_or_default();
+        let overlays = self.project().map(|p| nnx_core::plugins::effective_overlays(&p.overlays, &p.plugins)).unwrap_or_default();
         let sourced = args.get("sourced").and_then(Value::as_bool).unwrap_or(false);
         if !sourced && base.is_none_or(|b| b.trim().is_empty()) && !overlays.iter().any(|o| o.enabled) {
             return Err("paste a rule pack (JSON), use the sourced pack, or load and enable a municipal overlay".into());
@@ -1176,19 +1591,7 @@ impl App {
             let pack = json!({ "id": "USER-LIMITS", "edition": "entered in the application", "version": "1", "overrides": overrides });
             reports.push(rs.add_layer_reporting(&pack.to_string()).map_err(|e| format!("limits: {e}"))?);
         }
-        let r = rules::check(&doc.model, &rs);
-        let sev = |s: rules::Severity| match s {
-            rules::Severity::Error => "error",
-            rules::Severity::Warning => "warning",
-            rules::Severity::Info => "info",
-        };
-        Ok(json!({
-            "checked": r.checked,
-            "layers": r.layers,
-            "overlays": reports,
-            "findings": r.findings.iter().map(|f| json!({ "rule": f.rule_id, "clause": f.clause, "layer": f.layer, "severity": sev(f.severity), "message": f.message, "element": f.element.to_string() })).collect::<Vec<_>>(),
-            "skipped": r.skipped.iter().map(|s| json!({ "rule": s.rule_id, "param": s.param, "reason": s.reason, "elements": self.skipped_rooms(&s.elements) })).collect::<Vec<_>>(),
-        }))
+        Ok((rules::check(&doc.model, &rs), reports))
     }
 
     /// The rooms a skipped rule left unchecked: name, area and measured glazing ratio (null when the model has none).
@@ -1312,6 +1715,24 @@ impl App {
         Ok(json!({ "diff": d, "statuses": statuses, "on_plan": args.get("b").and_then(Value::as_str).is_none_or(|b| b == "current") }))
     }
 
+    /// The printable change report (`html`, bilingual) and its CSV between snapshot `a` and `b` (default: the current model).
+    /// Read-only. `lang` is `en` for English, anything else Arabic.
+    fn snapshot_report(&self, args: &Value) -> Result<Value, String> {
+        let a = self.snapshot_or_current(args.get("a").and_then(Value::as_str).ok_or("choose the first snapshot")?)?;
+        let b = self.snapshot_or_current(args.get("b").and_then(Value::as_str).unwrap_or("current"))?;
+        let d = nnx_core::snapshot::compare(&a, &b);
+        let date: String = utc_now().chars().take(10).collect();
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        Ok(json!({
+            "html": nnx_core::changereport::html(&d, &self.display_title(), &date, arabic),
+            "csv": nnx_core::changereport::csv(&d),
+            "name": "change_report.pdf",
+            "csv_name": "change_report.csv",
+            "has_changes": nnx_core::changereport::has_changes(&d),
+            "added": d.added, "removed": d.removed, "modified": d.modified,
+        }))
+    }
+
     /// The plan of the level on screen with revision clouds around what changed from snapshot `a` to the current model.
     fn snapshot_svg(&self, args: &Value) -> Result<Value, String> {
         let a = self.snapshot_or_current(args.get("a").and_then(Value::as_str).ok_or("choose a snapshot")?)?;
@@ -1353,7 +1774,8 @@ impl App {
 
     /// The rule set in force before a new overlay: the pasted base pack (if any), then the enabled overlays already loaded.
     fn overlay_base(&self, args: &Value) -> Result<nnx_core::rules::RuleSet, String> {
-        let list = self.project().ok_or("choose a layout first")?.overlays;
+        let p = self.project().ok_or("choose a layout first")?;
+        let list = nnx_core::plugins::effective_overlays(&p.overlays, &p.plugins);
         nnx_core::overlay::rule_set(args.get("base").and_then(Value::as_str), &list).map(|r| r.0)
     }
 
@@ -1428,6 +1850,171 @@ impl App {
         v["changed"] = json!(changed);
         v["new_violations"] = json!(violations);
         Ok(v)
+    }
+
+    // ------------------------------------------------------------------ Office plugins
+
+    fn plugins_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let list: Vec<Value> = p
+            .plugins
+            .iter()
+            .map(|x| {
+                let templates: Vec<Value> = x.templates.iter().map(|t| json!({ "address": format!("{}/{}", x.id, t.id), "title_ar": t.title_ar, "title_en": t.title_en, "rooms": t.rooms.len(), "floors": t.floors })).collect();
+                json!({ "id": x.id, "name": x.name, "version": x.version, "publisher": x.publisher, "source": x.source, "description": x.description, "date": x.date, "enabled": x.enabled, "has_rules": x.rules.is_some(), "templates": templates })
+            })
+            .collect();
+        Ok(json!({ "plugins": list }))
+    }
+
+    /// The plugin typed or loaded by the user (`plugin`: an object or its JSON text). It is installed disabled-or-enabled as `enabled` says.
+    fn plugin_from_args(&self, args: &Value) -> Result<nnx_core::plugins::Plugin, String> {
+        let raw = args.get("plugin").ok_or("plugin is required (the plugin definition)")?;
+        let mut v = match raw {
+            Value::String(text) => serde_json::from_str::<Value>(text).map_err(|e| format!("plugin json: {e}"))?,
+            other => other.clone(),
+        };
+        if v.get("rules").is_some_and(Value::is_object) {
+            let text = v["rules"].to_string();
+            v["rules"] = Value::String(text);
+        }
+        let mut pl: nnx_core::plugins::Plugin = serde_json::from_value(v).map_err(|e| format!("plugin: {e}"))?;
+        if pl.id.trim().is_empty() {
+            pl.id = nnx_core::plugins::next_id(&self.project().ok_or("choose a layout first")?.plugins);
+        }
+        pl.enabled = args.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+        Ok(pl)
+    }
+
+    /// What installing this plugin would do, without storing anything.
+    fn plugin_review(&self, args: &Value) -> Result<Value, String> {
+        let pl = self.plugin_from_args(args)?;
+        let p = self.project().ok_or("choose a layout first")?;
+        Ok(json!({ "review": nnx_core::plugins::review(&pl, &p.overlays, &p.plugins) }))
+    }
+
+    /// Stores the plugin once it is valid and, when it replaces anything, once the user confirmed that.
+    fn plugin_add(&mut self, args: &Value) -> Result<Value, String> {
+        let pl = self.plugin_from_args(args)?;
+        let p = self.project().ok_or("choose a layout first")?;
+        let review = nnx_core::plugins::review(&pl, &p.overlays, &p.plugins);
+        if !review.errors.is_empty() {
+            return Err(format!("plugin refused: {}", review.errors.join("; ")));
+        }
+        if review.needs_confirm && args.get("confirm").and_then(Value::as_bool) != Some(true) {
+            return Ok(json!({ "stored": false, "review": review }));
+        }
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "Install plugin", |p| {
+            p.plugins.retain(|x| x.id != pl.id);
+            p.plugins.push(pl.clone());
+            Ok(())
+        })?;
+        let mut v = self.plugins_report()?;
+        v["stored"] = json!(true);
+        v["review"] = json!(review);
+        Ok(v)
+    }
+
+    fn plugin_toggle(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+        let on = args.get("enabled").and_then(Value::as_bool).ok_or("enabled is required")?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, if on { "Enable plugin" } else { "Disable plugin" }, |p| {
+            p.plugins.iter_mut().find(|x| x.id == id).ok_or_else(|| format!("no plugin '{id}'"))?.enabled = on;
+            Ok(())
+        })?;
+        self.plugins_report()
+    }
+
+    fn plugin_remove(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "Remove plugin", |p| {
+            let before = p.plugins.len();
+            p.plugins.retain(|x| x.id != id);
+            if p.plugins.len() == before {
+                return Err(format!("no plugin '{id}'"));
+            }
+            Ok(())
+        })?;
+        self.plugins_report()
+    }
+
+    /// A template of an enabled plugin (`address`: `plugin_id/template_id`) with the notes about its room areas. Read-only. No
+    /// setbacks are derived: an office template states none, so the project's own limits govern.
+    fn plugin_template(&self, args: &Value) -> Result<Value, String> {
+        let address = args.get("address").and_then(Value::as_str).ok_or("address is required (plugin_id/template_id)")?;
+        let p = self.project().ok_or("choose a layout first")?;
+        let t = nnx_core::plugins::find_template(&p.plugins, address)?;
+        Ok(json!({ "template": t, "notes": t.notes(), "setbacks": Value::Null, "setbacks_note": "an office template carries no setbacks: enter them from the municipality's regulation" }))
+    }
+
+    // ------------------------------------------------------------------ Municipality regulation table
+
+    fn municipalities_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let list: Vec<Value> = p.municipalities.iter().map(|e| json!({ "entry": e, "set": e.set_count(), "unset": e.unset() })).collect();
+        Ok(json!({ "municipalities": list, "limits": p.limits }))
+    }
+
+    /// Stores one entry typed by the user. Every value needs its source; nothing is filled in.
+    fn municipality_add(&mut self, args: &Value) -> Result<Value, String> {
+        let list = self.project().ok_or("choose a layout first")?.municipalities;
+        let mut e: nnx_core::municipality::MunicipalityEntry =
+            serde_json::from_value(args.get("entry").cloned().ok_or("entry is required")?).map_err(|e| format!("municipality entry: {e}"))?;
+        e.id = nnx_core::municipality::next_id(&list);
+        e.municipality = e.municipality.trim().to_string();
+        e.zone = e.zone.trim().to_string();
+        e.document = e.document.trim().to_string();
+        if let Some(first) = nnx_core::municipality::problems(&e).into_iter().next() {
+            return Err(format!("municipality entry refused: {first}"));
+        }
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "Add municipality entry", |p| {
+            p.municipalities.push(e.clone());
+            Ok(())
+        })?;
+        let mut v = self.municipalities_report()?;
+        v["added"] = json!(e.id);
+        Ok(v)
+    }
+
+    fn municipality_remove(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "Remove municipality entry", |p| {
+            let before = p.municipalities.len();
+            p.municipalities.retain(|e| e.id != id);
+            if p.municipalities.len() == before {
+                return Err(format!("no municipality entry '{id}'"));
+            }
+            Ok(())
+        })?;
+        self.municipalities_report()
+    }
+
+    /// Writes the setback and coverage limits of an entry into the project's limits (old and new are returned): ONE undoable step.
+    fn municipality_apply(&mut self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+        let mut applied = nnx_core::municipality::Applied::default();
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "Apply municipality limits", |p| {
+            applied = nnx_core::municipality::apply(p, &id)?;
+            Ok(())
+        })?;
+        let mut v = self.municipalities_report()?;
+        v["changed"] = json!(applied.changed);
+        v["stored_only"] = json!(applied.stored_only);
+        v["new_violations"] = json!(out.new_violations.iter().map(|x| x.en.clone()).collect::<Vec<_>>());
+        Ok(v)
+    }
+
+    /// Read-only: the model against the limits of one municipality entry (`id`), without applying them to the project.
+    fn zoning_check(&self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?;
+        let d = self.doc.as_ref().ok_or("choose a layout first")?;
+        serde_json::to_value(nnx_core::zoning::run(&d.model, id)?).map_err(|e| e.to_string())
     }
 
     // ------------------------------------------------------------------ Milestone 8: BIM drafting
@@ -1858,6 +2445,539 @@ impl App {
         Ok(json!({ "result": r, "svg": svg, "rule_source": nnx_core::site::RULE_SOURCE }))
     }
 
+    /// Reviews an existing IFC file without importing it: `{ path }`. A Revit file, an archive or ifcXML is refused with the
+    /// reason; the reply lists units, counts, storeys, spaces with area and source, and findings.
+    fn ifc_review(args: &Value) -> Result<Value, String> {
+        let path = args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty()).ok_or("ifc review: the path of the IFC file is missing")?;
+        let bytes = std::fs::read(path).map_err(|e| format!("ifc review: cannot read {path}: {e}"))?;
+        let r = nnx_core::ifc_review::review_ifc(&bytes).map_err(|e| format!("ifc review: {e}"))?;
+        Ok(json!({ "review": r }))
+    }
+
+    /// Checks that the guest door and the family door can be kept apart on the street side of a level:
+    /// `{ rooms: [{ key, func, zone, x, y, w, h }], envelope: { w, h }, entry, guest_funcs?, min_separation_mm? }` (mm).
+    /// `guest_funcs` defaults to `["majlis"]`. Without `min_separation_mm` the distance is reported and the check is skipped.
+    fn entrances_check(args: &Value) -> Result<Value, String> {
+        let (layout, envelope) = Self::layout_from_args(args, "entrances")?;
+        let entry = Self::side_from_str(args.get("entry").and_then(Value::as_str), "entrances: entry")?;
+        let guest_funcs: Vec<String> = match args.get("guest_funcs").filter(|v| !v.is_null()) {
+            Some(v) => serde_json::from_value(v.clone()).map_err(|e| format!("entrances: guest_funcs must be a list of room functions: {e}"))?,
+            None => vec!["majlis".to_string()],
+        };
+        let min = match args.get("min_separation_mm").filter(|v| !v.is_null()) {
+            Some(v) => Some(v.as_i64().ok_or("entrances: min_separation_mm must be a whole number of millimetres")?),
+            None => None,
+        };
+        let report = nnx_core::entrances::check_entrances(&layout, &envelope, entry, &guest_funcs, min)?;
+        Ok(json!({ "entrances": report }))
+    }
+
+    /// Reads `{ rooms: [{ key, func, zone, x, y, w, h }], envelope: { w, h } }` (mm) into a layout and its envelope.
+    /// `tag` prefixes every error so the user knows which command refused the input.
+    fn layout_from_args(args: &Value, tag: &str) -> Result<(nnx_core::layout::Layout, Rect), String> {
+        use nnx_core::layout::{Breakdown, Layout, PlacedRoom};
+        let num = |v: &Value, k: &str, what: &str| v.get(k).and_then(Value::as_i64).ok_or_else(|| format!("{tag}: {what} '{k}' must be a whole number of millimetres"));
+        let rooms_in = args.get("rooms").and_then(Value::as_array).filter(|r| !r.is_empty()).ok_or_else(|| format!("{tag}: rooms are required"))?;
+        let mut rooms = Vec::new();
+        for r in rooms_in {
+            let key = r.get("key").and_then(Value::as_str).ok_or_else(|| format!("{tag}: every room needs a key"))?;
+            let zone = match r.get("zone").and_then(Value::as_str) {
+                Some("public") => Zone::Public,
+                Some("private") => Zone::Private,
+                Some("service") => Zone::Service,
+                other => return Err(format!("{tag}: room '{key}' has an unknown zone {other:?}")),
+            };
+            let rect = Rect { x: num(r, "x", key)?, y: num(r, "y", key)?, w: num(r, "w", key)?, h: num(r, "h", key)? };
+            rooms.push(PlacedRoom {
+                key: key.to_string(),
+                func: r.get("func").and_then(Value::as_str).ok_or_else(|| format!("{tag}: room '{key}' has no func"))?.to_string(),
+                zone,
+                needs_light: false,
+                rect,
+                area_m2: rect.area_m2(),
+                target_m2: rect.area_m2(),
+                deviation_pct: 0.0,
+            });
+        }
+        let env = args.get("envelope").ok_or_else(|| format!("{tag}: envelope is required"))?;
+        let envelope = Rect { x: 0, y: 0, w: num(env, "w", "envelope")?, h: num(env, "h", "envelope")? };
+        Ok((Layout { rooms, cost: 0.0, breakdown: Breakdown::default(), reserve_m2: 0.0 }, envelope))
+    }
+
+    fn side_from_str(v: Option<&str>, what: &str) -> Result<Side, String> {
+        match v {
+            Some("south") => Ok(Side::South),
+            Some("north") => Ok(Side::North),
+            Some("east") => Ok(Side::East),
+            Some("west") => Ok(Side::West),
+            other => Err(format!("{what} must be south, north, east or west, not {other:?}")),
+        }
+    }
+
+    /// Checks the privacy of private rooms against neighbouring plots:
+    /// `{ rooms, envelope, neighbours: [{ side, distance_mm }], private_funcs, min_distance_mm? }` (mm). `neighbours` lists
+    /// only the sides that face a neighbour with the distance to that boundary; `private_funcs` has no default.
+    /// Without `min_distance_mm` the distances are reported and the check is skipped.
+    fn privacy_check(args: &Value) -> Result<Value, String> {
+        use nnx_core::privacy::NeighbourSide;
+        let (layout, envelope) = Self::layout_from_args(args, "privacy")?;
+        let list = args.get("neighbours").and_then(Value::as_array).filter(|n| !n.is_empty()).ok_or("privacy: neighbours are required (each side that faces a neighbour with its distance_mm)")?;
+        let mut neighbours = Vec::new();
+        for n in list {
+            let side = Self::side_from_str(n.get("side").and_then(Value::as_str), "privacy: neighbour side")?;
+            let distance_mm = n.get("distance_mm").and_then(Value::as_i64).ok_or_else(|| format!("privacy: the {side:?} neighbour needs distance_mm as a whole number of millimetres"))?;
+            neighbours.push(NeighbourSide { side, distance_mm });
+        }
+        let private_funcs: Vec<String> = serde_json::from_value(args.get("private_funcs").cloned().unwrap_or(Value::Null)).map_err(|e| format!("privacy: private_funcs must be a list of room functions: {e}"))?;
+        let min = match args.get("min_distance_mm").filter(|v| !v.is_null()) {
+            Some(v) => Some(v.as_i64().ok_or("privacy: min_distance_mm must be a whole number of millimetres")?),
+            None => None,
+        };
+        let report = nnx_core::privacy::check_privacy(&layout, &envelope, &neighbours, &private_funcs, min)?;
+        Ok(json!({ "privacy": report }))
+    }
+
+    /// Reports the sleeping rooms that take the afternoon sun on a west outside wall: `{ rooms, envelope, sleeping_funcs }`
+    /// (mm). `sleeping_funcs` has no default.
+    fn sun_check(args: &Value) -> Result<Value, String> {
+        let (layout, envelope) = Self::layout_from_args(args, "sun")?;
+        let sleeping_funcs: Vec<String> = serde_json::from_value(args.get("sleeping_funcs").cloned().unwrap_or(Value::Null)).map_err(|e| format!("sun: sleeping_funcs must be a list of room functions: {e}"))?;
+        let report = nnx_core::sun::check_sun(&layout, &envelope, &sleeping_funcs)?;
+        Ok(json!({ "sun": report }))
+    }
+
+    /// Compares layout alternatives by how many large structural spans each asks for: `{ envelope: { w, h }, max_span_mm,
+    /// alternatives: [{ label?, rooms: [{ key, func, zone, x, y, w, h }] }] }` (mm). `max_span_mm` is a design input with no
+    /// default; without it nothing is compared. Ranks on counted support lines, not on prices.
+    fn span_compare(args: &Value) -> Result<Value, String> {
+        let alts_in = args.get("alternatives").and_then(Value::as_array).filter(|a| !a.is_empty()).ok_or("span: alternatives are required")?;
+        let limit = match args.get("max_span_mm").filter(|v| !v.is_null()) {
+            Some(v) => Some(v.as_i64().ok_or("span: max_span_mm must be a whole number of millimetres")?),
+            None => None,
+        };
+        let mut layouts = Vec::new();
+        for (i, a) in alts_in.iter().enumerate() {
+            let label = a.get("label").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("#{}", i + 1));
+            let mut one = json!({ "rooms": a.get("rooms").cloned().unwrap_or(Value::Null) });
+            one["envelope"] = args.get("envelope").cloned().unwrap_or(Value::Null);
+            let (layout, _) = Self::layout_from_args(&one, "span")?;
+            layouts.push((label, layout));
+        }
+        let refs: Vec<(String, &nnx_core::layout::Layout)> = layouts.iter().map(|(l, lay)| (l.clone(), lay)).collect();
+        let report = nnx_core::spanalt::compare(&refs, limit)?;
+        Ok(json!({ "span": report }))
+    }
+
+    /// Takes wall weights down onto the beams under them: `{ walls: [{ key, a: [x, y], b: [x, y], thickness_mm, height_mm,
+    /// unit_weight_kn_m3, finish_kn_m2_per_face?, finished_faces?, openings?: [{ offset_mm, width_mm }] }], beams: [{ key, a, b }] }`
+    /// (mm). Thickness, height and unit weight have no defaults. Simply supported beams; a take-down, not a design.
+    fn wall_load(args: &Value) -> Result<Value, String> {
+        let walls: Vec<nnx_core::wallload::WallIn> = serde_json::from_value(args.get("walls").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("wall load: walls need key, a, b ([x, y] whole mm), thickness_mm, height_mm and unit_weight_kn_m3: {e}"))?;
+        let beams: Vec<nnx_core::wallload::BeamIn> = serde_json::from_value(args.get("beams").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("wall load: beams need key, a and b ([x, y] whole mm): {e}"))?;
+        let report = nnx_core::wallload::take_down(&walls, &beams)?;
+        Ok(json!({ "wall_load": report }))
+    }
+
+    /// Serviceability screen: `{ e_mpa?, beams?: [{ key, span_mm, b_mm, h_mm, support: simple|fixed|cantilever, w_kn_m,
+    /// cracked_factor?, long_term_factor?, limit_span_ratio? }], storeys?: [{ key, height_mm, shear_kn, columns: [{ count,
+    /// width_mm, depth_mm }], stiffness_factor? }], max_drift_ratio?, footings?: [{ key, load_kn, width_mm, length_mm, es_mpa, nu,
+    /// influence }], pairs?: [{ a, b, distance_mm }], max_settlement_mm?, max_angular_distortion? }`. The concrete modulus is
+    /// required for beams and storeys; a missing limit leaves its check `unchecked`. Preliminary, not a design.
+    fn drift_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::drift::DriftInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("drift check: inputs are malformed (see the field list for beams, storeys, footings and pairs): {e}"))?;
+        let report = nnx_core::drift::check(&input)?;
+        Ok(json!({ "drift": report }))
+    }
+
+    /// Mat and pile-group screen: `{ screen?: { isolated_area_m2, building_area_m2, max_coverage_ratio? }, mat?: { x_mm, y_mm,
+    /// w_mm, l_mm, thickness_mm?, unit_weight_kn_m3?, allowable_kpa? }, columns?: [{ key, x_mm, y_mm, load_kn, mx_knm?, my_knm? }],
+    /// piles?: [{ key, load_kn, mx_knm?, my_knm?, capacity_kn, uplift_capacity_kn?, spacing_mm?, positions?: [[x, y]],
+    /// min_spacing_mm? }] }`. Every capacity and limit is the caller's input; a missing limit leaves its check `unchecked`.
+    /// Preliminary, not a design.
+    fn deep_foundation_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::deepfound::DeepInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("deep foundation check: inputs are malformed (see the field list for screen, mat, columns and piles): {e}"))?;
+        let report = nnx_core::deepfound::check(&input)?;
+        Ok(json!({ "deep_foundation": report }))
+    }
+
+    /// Explosive thermal spalling screen: `{ elements: [{ key, kind: column|beam|slab|wall|footing, b_mm, h_mm, cover_mm, fc_mpa,
+    /// exposed_sides, moisture_pct?, pp_fibre_kg_m3? }], max_moisture_pct?, max_fc_mpa?, max_cover_mm?, min_pp_fibre_kg_m3? }`.
+    /// Every threshold is the caller's input with its own source; a missing one leaves its check `unchecked`. Preliminary.
+    fn spalling_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::spalling::SpallInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("spalling check: inputs are malformed (see the field list for elements and limits): {e}"))?;
+        let report = nnx_core::spalling::check(&input)?;
+        Ok(json!({ "spalling": report }))
+    }
+
+    /// Luminaire count and grid layout for target illuminance (lumen method): `{ rooms: [{ key, x_mm, y_mm, w_mm, h_mm, target_lux,
+    /// target_source, luminaire, mounting_height_mm? }], luminaires: [{ key, lumens, utilisation, maintenance, watts? }],
+    /// max_spacing_to_height?, max_w_per_m2? }`. Targets (with source) and photometric factors are the caller's; none is assumed.
+    /// Preliminary average-illuminance screen, not a lighting design.
+    fn lighting_plan(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::lighting::LightInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("lighting plan: inputs are malformed (see the field list for rooms and luminaires): {e}"))?;
+        let report = nnx_core::lighting::check(&input)?;
+        Ok(json!({ "lighting": report }))
+    }
+
+    /// Distribution-board load schedules: `{ voltage_v, power_factor, three_phase, demand_factors: { kind: factor }, breaker_sizes_a: [],
+    /// breaker_margin, boards: [{ key, ways, bus_rating_a? }], loads: [{ id, board, kind, watts, phases: 1|3, phase?, description? }],
+    /// max_imbalance_pct?, min_spare_ways? }`. Every value is the caller's; none is assumed. Preliminary schedule, not an electrical design.
+    fn panel_schedule(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::panels::PanelInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("panel schedule: inputs are malformed (see the field list for boards and loads): {e}"))?;
+        let report = nnx_core::panels::check(&input)?;
+        Ok(json!({ "panels": report }))
+    }
+
+    /// Cable routes and voltage drop: `{ voltage_v, power_factor, three_phase, derating_factor, allowance_mm, catalogue: [{ key,
+    /// area_mm2, r_ohm_km, x_ohm_km, ampacity_a, source }], obstacles?: [{ key, x_mm, y_mm, w_mm, h_mm }], clearance_mm?,
+    /// circuits: [{ id, from: {x_mm,y_mm}, to, via?, rise_mm?, watts | current_a, phases: 1|3, cable? }], max_drop_pct? }`. Every
+    /// value is the caller's; none is assumed. Preliminary check, not an electrical design.
+    fn cable_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::cables::CableInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("cable check: inputs are malformed (see the field list for catalogue and circuits): {e}"))?;
+        let report = nnx_core::cables::check(&input)?;
+        Ok(json!({ "cables": report }))
+    }
+
+    /// Insulation options for the wall or roof compared by cost and yearly cooling saving: `{ scope, degree_hours,
+    /// degree_hours_source, cop, tariff_per_kwh, study_years, baseline_insulation_cost_per_m2?, options: [{ name, lambda,
+    /// thicknesses_mm, price_per_m3, install_per_m2, source }] }`. The baseline is the project's stored `wall` or `roof` assembly
+    /// and its U limit; the area comes from the model. Every figure is the caller's; a missing one is refused by name.
+    fn insulation_options(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::insulopt::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("insulation options: inputs are malformed (see the field list for the scope, energy figures and options): {e}"))?;
+        let lib = self
+            .project()
+            .and_then(|p| p.mep)
+            .and_then(|m| m.insulation)
+            .ok_or("insulation options: enter the insulation assemblies in the MEP inputs first (the base assembly is the baseline)")?;
+        let report = nnx_core::insulopt::compare(self.model()?, &lib, &input)?;
+        Ok(json!({ "insulation_options": report }))
+    }
+
+    /// Yearly electricity bill from stated loads and a tariff: `{ loads: [{ name, kw, quantity, demand_factor, hours_per_day,
+    /// active_months, source }], tariff: { blocks: [{ up_to_kwh?, rate_per_kwh }], fixed_per_month, vat_pct, source, source_date },
+    /// generation_kwh_per_month?: [12], generation_source? }`. The tariff and every load figure are the caller's; none is assumed.
+    /// Preliminary estimate, not a utility bill.
+    fn electricity_bill(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::elecbill::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("electricity bill: inputs are malformed (see the field list for loads and tariff): {e}"))?;
+        let report = nnx_core::elecbill::estimate(&input)?;
+        Ok(json!({ "electricity_bill": report }))
+    }
+
+    /// Preliminary energy rating: `{ end_uses: [{ name, kwh_per_year, source }], conditioned_area_m2, area_source,
+    /// bands: [{ label, up_to_kwh_m2? }] (best first, last has no bound), scheme_source, scheme_date,
+    /// generation_kwh_per_year?, generation_source?, emission_factor_kg_per_kwh?, emission_source? }`. The rating scale is the
+    /// caller's; none is built in. Not an official energy certificate.
+    fn energy_certificate(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::energycert::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("energy certificate: inputs are malformed (see the field list for end uses and bands): {e}"))?;
+        let report = nnx_core::energycert::estimate(&input)?;
+        Ok(json!({ "energy_certificate": report }))
+    }
+
+    /// Ground and roof water tanks plus the transfer pump: `{ persons, litres_per_person_day, demand_source, ground_storage_days,
+    /// roof_storage_days, usable_fraction, ground_footprint_m2?, roof_footprint_m2?, max_water_depth_m?, transfer: { fill_hours,
+    /// ground_low_level_m, roof_high_level_m, main: { length_m, diameter_mm, hazen_c, minor_k }, pump_efficiency, motor_efficiency,
+    /// motor_margin, motor_sizes_kw?, max_velocity_mps? }, gravity?: { roof_low_level_m, highest_fixture_level_m, residual_head_m,
+    /// peak_flow_lps, main } }`. Every value is the caller's; a missing limit leaves its check `unchecked`. Preliminary, not a
+    /// plumbing design.
+    fn water_storage_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::pumps::WaterInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("water storage check: inputs are malformed (see the field list for tanks, transfer and gravity): {e}"))?;
+        let report = nnx_core::pumps::check(&input)?;
+        Ok(json!({ "water": report }))
+    }
+
+    /// Fire detection, sprinkler and call-point layout with the sprinkler water demand: `{ rooms: [{ key, x_mm, y_mm, w_mm, h_mm,
+    /// detector?, sprinkler?, zone?, ceiling_height_mm? }], detectors?: [{ key, coverage_m2, max_spacing_mm, source,
+    /// max_wall_distance_mm?, max_ceiling_height_mm? }], sprinklers?: [same], exits?: [{ key, x_mm, y_mm }],
+    /// max_call_point_distance_mm?, max_detectors_per_zone?, max_zone_area_m2?, water?: { design_density_mm_min, design_area_m2,
+    /// duration_min, source, hose_allowance_lpm?, available_storage_m3? } }`. Every figure is the caller's; a missing limit leaves
+    /// its check `unchecked`. Preliminary, not a fire-protection design.
+    fn fire_protection_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::firesys::FireInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("fire protection check: inputs are malformed (see the field list for rooms, devices, exits and water): {e}"))?;
+        let report = nnx_core::firesys::check(&input)?;
+        Ok(json!({ "fire": report }))
+    }
+
+    /// Fire-safety egress: `{ rooms: [{ key, x_mm, y_mm, w_mm, h_mm, exits?: [key] }], exits?: [{ key, x_mm, y_mm, clear_width_mm? }],
+    /// corridors?: [{ key, x_mm, y_mm, w_mm, h_mm, min_width_mm? }], max_travel_distance_mm?, min_corridor_width_mm?,
+    /// min_exit_width_mm?, min_exits_per_room?, source }`. Every limit is the caller's and `source` is required with any limit; a
+    /// missing limit leaves its check `unchecked`. Travel distance is a straight-line lower bound. Preliminary, not a fire design.
+    fn egress_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::egress::EgressInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("egress check: inputs are malformed (see the field list for rooms, exits, corridors and limits): {e}"))?;
+        let report = nnx_core::egress::check(&input)?;
+        Ok(json!({ "egress": report }))
+    }
+
+    /// Accessibility for persons with disabilities: `{ doors?: [{ key, clear_width_mm?, threshold_height_mm? }],
+    /// corridors?: [{ key, w_mm, h_mm, min_width_mm? }], rooms?: [{ key, w_mm, h_mm, accessible? }],
+    /// ramps?: [{ key, rise_mm, run_mm, width_mm? }], min_door_clear_width_mm?, max_threshold_height_mm?, min_corridor_width_mm?,
+    /// min_turning_diameter_mm?, max_ramp_slope?, min_ramp_width_mm?, source }`. Every limit is the caller's and `source` is
+    /// required with any limit; a missing limit leaves its check `unchecked`. Preliminary, not an accessibility audit.
+    fn access_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::access::AccessInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("accessibility check: inputs are malformed (see the field list for doors, corridors, rooms, ramps and limits): {e}"))?;
+        let report = nnx_core::access::check(&input)?;
+        Ok(json!({ "access": report }))
+    }
+
+    /// Shear-wall core around lifts and stairs:`{ walls: [{ key, x_mm, y_mm, w_mm, h_mm }], shafts?: [{ key, kind: lift|stair,
+    /// x_mm, y_mm, w_mm, h_mm, open_sides?, min_clear_x_mm?, min_clear_y_mm? }], e_mpa?, stiffness_factor?, levels?: [{ height_mm,
+    /// fx_kn?, fy_kn? }], axial_kn?, min_wall_thickness_mm?, max_drift_ratio?, max_top_ratio?, max_shear_mpa?,
+    /// max_compression_mpa?, max_tension_mpa? }`. `e_mpa` is required when `levels` are given; a missing limit leaves its check
+    /// `unchecked`. Preliminary, not a design.
+    fn shear_core_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::shearcore::CoreInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("shear core check: inputs are malformed (see the field list for walls, shafts and levels): {e}"))?;
+        let report = nnx_core::shearcore::check(&input)?;
+        Ok(json!({ "shear_core": report }))
+    }
+
+    /// Compares structural alternatives on concrete and steel: `{ criterion: steel_kg|concrete_m3|cost, baseline?, prices?: {
+    /// concrete_per_m3, steel_per_kg: { value, source, date }, currency }, alternatives: [{ label, checks_passed?, members: [{ key,
+    /// kind, count?, b_mm, h_mm, length_mm, bars?: [{ dia_mm, count, length_mm? }], links?: { dia_mm, spacing_mm, length_mm } }] }] }`.
+    /// The criterion has no default and a price needs its source and date. Quantities only: not a design.
+    fn savings_compare(args: &Value) -> Result<Value, String> {
+        let alts: Vec<nnx_core::savings::AlternativeIn> = serde_json::from_value(args.get("alternatives").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("savings: alternatives need label and members (key, kind, b_mm, h_mm, length_mm, bars, links): {e}"))?;
+        let prices: Option<nnx_core::savings::Prices> = match args.get("prices") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(serde_json::from_value(v.clone()).map_err(|e| format!("savings: prices need concrete_per_m3 and steel_per_kg ({{ value, source, date }}) and currency: {e}"))?),
+        };
+        let baseline = match args.get("baseline") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(v.as_u64().ok_or("savings: baseline must be the index of an alternative (0, 1, ...)")? as usize),
+        };
+        let report = nnx_core::savings::compare(&alts, args.get("criterion").and_then(Value::as_str), baseline, prices.as_ref())?;
+        Ok(json!({ "savings": report }))
+    }
+
+    /// Arranges furniture of real sizes in one room and reports whether it fits: `{ room: { w, h }, min_walkway_mm, pieces: [{ key,
+    /// name?, w_mm, d_mm, count?, against_wall?, rotatable? }], doors?: [{ wall: south|north|west|east, offset_mm, width_mm }],
+    /// door_clear_mm?, max_occupancy_share? }` (mm). The walkway has no default; doors need `door_clear_mm`. Access from the doors is
+    /// `unchecked` without doors and the occupancy check is `unchecked` without a limit.
+    fn furniture_fit(args: &Value) -> Result<Value, String> {
+        let spec: nnx_core::furnfit::FitSpec = serde_json::from_value(args.clone())
+            .map_err(|e| format!("furniture fit: room needs w and h, pieces need key, w_mm and d_mm (count, against_wall and rotatable are optional), doors need wall, offset_mm and width_mm, and sizes are whole millimetres: {e}"))?;
+        let report = nnx_core::furnfit::arrange(&spec)?;
+        Ok(json!({ "furniture_fit": report }))
+    }
+
+    /// Classes habitable rooms by cross ventilation against the prevailing wind:
+    /// `{ rooms, envelope, wind_from, wind_source, habitable_funcs }` (mm). The wind side, its source and the functions
+    /// have no default.
+    fn wind_check(args: &Value) -> Result<Value, String> {
+        let (layout, envelope) = Self::layout_from_args(args, "wind")?;
+        let wind_from = match args.get("wind_from").filter(|v| !v.is_null()) {
+            Some(v) => Some(Self::side_from_str(v.as_str(), "wind: wind_from")?),
+            None => None,
+        };
+        let source = args.get("wind_source").and_then(Value::as_str).unwrap_or("");
+        let funcs: Vec<String> = serde_json::from_value(args.get("habitable_funcs").cloned().unwrap_or(Value::Null)).map_err(|e| format!("wind: habitable_funcs must be a list of room functions: {e}"))?;
+        let report = nnx_core::wind::check_wind(&layout, &envelope, wind_from, source, &funcs)?;
+        Ok(json!({ "wind": report }))
+    }
+
+    /// Checks a non-rectangular room (L, T or any horizontal-and-vertical outline):
+    /// `{ rooms, envelope, key, outline: [{ x, y }], min_wall_mm? }` (mm). Reports area, perimeter, shape, an exact rectangle
+    /// decomposition, the notch left in the bounding box and one wall segment per edge with what lies outside it. Without
+    /// `min_wall_mm` the segment-length check is reported as `unchecked`.
+    fn room_shape_check(args: &Value) -> Result<Value, String> {
+        let (layout, envelope) = Self::layout_from_args(args, "room shape")?;
+        let key = args.get("key").and_then(Value::as_str).ok_or("room shape: 'key' (the room being reshaped) is required")?;
+        let outline: Vec<nnx_core::courtyard::Pt> = serde_json::from_value(args.get("outline").cloned().unwrap_or(Value::Null)).map_err(|e| format!("room shape: outline must be a list of {{ x, y }} vertices in whole millimetres: {e}"))?;
+        let min_wall = match args.get("min_wall_mm") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(v.as_i64().ok_or("room shape: 'min_wall_mm' must be a whole number of millimetres")?),
+        };
+        let report = nnx_core::roomshape::check_room_shape(&layout, &envelope, key, &outline, min_wall)?;
+        Ok(json!({ "room_shape": report }))
+    }
+
+    /// Checks a mezzanine or partial floor: `{ rooms, envelope, outline: [{ x, y }], storey_height_mm, level_mm, slab_mm,
+    /// min_clear_below_mm?, min_clear_above_mm?, max_area_share? }` (mm). The vertical set-out is required; each limit left out
+    /// is reported as `unchecked`. Reports area, share of the lower floor, clear heights, covered rooms and open edges.
+    fn mezzanine_check(args: &Value) -> Result<Value, String> {
+        let (layout, envelope) = Self::layout_from_args(args, "mezzanine")?;
+        let outline: Vec<nnx_core::courtyard::Pt> = serde_json::from_value(args.get("outline").cloned().unwrap_or(Value::Null)).map_err(|e| format!("mezzanine: outline must be a list of {{ x, y }} vertices in whole millimetres: {e}"))?;
+        for name in ["storey_height_mm", "level_mm", "slab_mm"] {
+            if args.get(name).and_then(Value::as_i64).is_none() {
+                return Err(format!("mezzanine: '{name}' is required (whole millimetres)"));
+            }
+        }
+        let spec: nnx_core::mezzanine::MezzanineSpec = serde_json::from_value(args.clone()).map_err(|e| format!("mezzanine: limits must be numbers (min_clear_*_mm in whole millimetres, max_area_share between 0 and 1): {e}"))?;
+        let report = nnx_core::mezzanine::check_mezzanine(&layout, &envelope, &outline, &spec)?;
+        Ok(json!({ "mezzanine": report }))
+    }
+
+    /// Checks the usable roof: `{ envelope: { w, h }, items: [{ key, kind: room|canopy|tank, x, y, w, h, height_mm,
+    /// water_depth_mm? }], parapet_mm?, min_parapet_mm?, min_edge_setback_mm?, min_gap_mm?, min_clear_mm?, max_room_share? }`
+    /// (mm). Each limit left out is reported as `unchecked`; tanks need `water_depth_mm`.
+    fn rooftop_check(args: &Value) -> Result<Value, String> {
+        let env = args.get("envelope").ok_or("rooftop: envelope is required")?;
+        let side = |k: &str| env.get(k).and_then(Value::as_i64).ok_or_else(|| format!("rooftop: envelope '{k}' must be a whole number of millimetres"));
+        let roof = Rect { x: 0, y: 0, w: side("w")?, h: side("h")? };
+        let spec: nnx_core::rooftop::RooftopSpec = serde_json::from_value(args.clone())
+            .map_err(|e| format!("rooftop: items need key, kind (room, canopy or tank), x, y, w, h and height_mm in whole millimetres, and limits must be numbers (max_room_share between 0 and 1): {e}"))?;
+        let report = nnx_core::rooftop::check_rooftop(&roof, &spec)?;
+        Ok(json!({ "rooftop": report }))
+    }
+
+    /// Checks a basement level: `{ envelope: { w, h }, outline: { x, y, w, h }, storey_mm, slab_mm, depth_mm, spaces: [{ key,
+    /// kind: parking|storage|service|ramp|core, x, y, w, h, stalls?, run_along?: x|y }], water_table_depth_mm?, min_clear_mm?,
+    /// max_ramp_slope_pct?, min_ramp_width_mm?, min_area_per_stall_m2?, min_exits?, max_travel_mm? }` (mm). A parking space needs
+    /// `stalls`, a ramp needs `run_along`; each limit left out is reported as `unchecked`.
+    fn basement_check(args: &Value) -> Result<Value, String> {
+        let env = args.get("envelope").ok_or("basement: envelope is required")?;
+        let side = |k: &str| env.get(k).and_then(Value::as_i64).ok_or_else(|| format!("basement: envelope '{k}' must be a whole number of millimetres"));
+        let bounds = Rect { x: 0, y: 0, w: side("w")?, h: side("h")? };
+        let spec: nnx_core::basement::BasementSpec = serde_json::from_value(args.clone())
+            .map_err(|e| format!("basement: give outline (x, y, w, h), storey_mm, slab_mm and depth_mm in whole millimetres; spaces need key, kind (parking, storage, service, ramp or core), x, y, w, h (a ramp also run_along x or y, parking also stalls); limits must be numbers: {e}"))?;
+        let report = nnx_core::basement::check_basement(&bounds, &spec)?;
+        Ok(json!({ "basement": report }))
+    }
+
+    /// Packs 90-degree parking stalls into an area: `{ envelope: { w, h }, area: { x, y, w, h }, stall_width_mm, stall_length_mm,
+    /// aisle_width_mm, min_stall_width_mm?, min_stall_length_mm?, min_aisle_width_mm?, required_stalls?, turn?: { vehicle_width_mm,
+    /// wheelbase_mm, front_overhang_mm, centre_radius_mm, lane_width_mm? } }` (mm). Sizes have no defaults; each limit left out
+    /// is reported as `unchecked`.
+    fn parking_plan(args: &Value) -> Result<Value, String> {
+        let env = args.get("envelope").ok_or("parking: envelope is required")?;
+        let side = |k: &str| env.get(k).and_then(Value::as_i64).ok_or_else(|| format!("parking: envelope '{k}' must be a whole number of millimetres"));
+        let bounds = Rect { x: 0, y: 0, w: side("w")?, h: side("h")? };
+        let spec: nnx_core::parking::ParkingSpec = serde_json::from_value(args.clone())
+            .map_err(|e| format!("parking: give area (x, y, w, h), stall_width_mm, stall_length_mm and aisle_width_mm in whole millimetres; turn needs vehicle_width_mm, wheelbase_mm, front_overhang_mm and centre_radius_mm; limits must be numbers: {e}"))?;
+        let report = nnx_core::parking::plan_parking(&bounds, &spec)?;
+        Ok(json!({ "parking": report }))
+    }
+
+    /// Fits sloping ground to surveyed spot levels and checks platforms, steps and ramps: `{ envelope: { w, h }, spots: [{ x, y, z_mm }],
+    /// platforms?: [{ key, x, y, w, h, level_mm }], ramps?: [{ key, from, to, run_mm, width_mm }], max_site_slope_pct?,
+    /// max_plane_residual_mm?, max_platform_ground_range_mm?, max_cut_mm?, max_fill_mm?, max_step_mm?, max_ramp_slope_pct?,
+    /// min_ramp_width_mm? }` (mm). At least three spot levels off one line are required; each limit left out is `unchecked`.
+    fn terrain_check(args: &Value) -> Result<Value, String> {
+        let env = args.get("envelope").ok_or("terrain: envelope is required")?;
+        let side = |k: &str| env.get(k).and_then(Value::as_i64).ok_or_else(|| format!("terrain: envelope '{k}' must be a whole number of millimetres"));
+        let bounds = Rect { x: 0, y: 0, w: side("w")?, h: side("h")? };
+        let spec: nnx_core::terrain::TerrainSpec = serde_json::from_value(args.clone())
+            .map_err(|e| format!("terrain: give spots (x, y, z_mm), platforms (key, x, y, w, h, level_mm) and ramps (key, from, to, run_mm, width_mm) in whole millimetres; limits must be numbers: {e}"))?;
+        let report = nnx_core::terrain::check_terrain(&bounds, &spec)?;
+        Ok(json!({ "terrain": report }))
+    }
+
+    /// Checks a courtyard of any simple outline: `{ rooms, envelope, outline: [{ x, y }] }` (mm). Reports area, perimeter, a
+    /// rectangle decomposition (rectilinear outlines only) and the contact with each neighbouring room.
+    fn courtyard_check(args: &Value) -> Result<Value, String> {
+        let (layout, envelope) = Self::layout_from_args(args, "courtyard")?;
+        let outline: Vec<nnx_core::courtyard::Pt> = serde_json::from_value(args.get("outline").cloned().unwrap_or(Value::Null)).map_err(|e| format!("courtyard: outline must be a list of {{ x, y }} vertices in whole millimetres: {e}"))?;
+        let report = nnx_core::courtyard::check_courtyard(&layout, &envelope, &outline)?;
+        Ok(json!({ "courtyard": report }))
+    }
+
+    /// Reads plot boundary candidates from a DXF drawing: `{ path, units?, index? }`. A drawing without a unit needs `units`;
+    /// several boundaries need `index`. A DWG is refused with the reason.
+    fn plot_import_dxf(args: &Value) -> Result<Value, String> {
+        let path = args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty()).ok_or("plot import: the path of the DXF file is missing")?;
+        let bytes = std::fs::read(path).map_err(|e| format!("plot import: cannot read {path}: {e}"))?;
+        let units = args.get("units").and_then(Value::as_str);
+        let index = match args.get("index") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(v.as_u64().ok_or("plot import: index must be a whole number")? as usize),
+        };
+        let r = nnx_core::plot_import::import_dxf(&bytes, units, index).map_err(|e| format!("plot import: {e}"))?;
+        Ok(json!({ "result": r }))
+    }
+
+    /// Reads the plot boundary from surveyed corner coordinates: `{ text | path, order?, crs?, units? }`. `text` (pasted rows) or
+    /// `path` (a CSV or text file) gives the rows; without a header `order` (`en` or `ne`) is required; a system other than UTM
+    /// needs `units`.
+    /// Learns the user's usual room sizes from earlier projects: `{ paths: [".nnx file", ...] }`. A file that cannot be read or
+    /// has no project is listed in `skipped` with the reason; it does not stop the others. Pass the returned `preferences` to
+    /// `brief_clarify` as `prefs` to start suggested room areas from them.
+    fn prefs_learn(args: &Value) -> Result<Value, String> {
+        let paths = args.get("paths").and_then(Value::as_array).filter(|a| !a.is_empty()).ok_or("preferences: give the paths of the earlier projects")?;
+        let mut projects = Vec::new();
+        let mut skipped = Vec::new();
+        for v in paths {
+            let Some(path) = v.as_str() else {
+                skipped.push(json!({ "path": v, "reason": "the path is not text" }));
+                continue;
+            };
+            match nnx_core::persist::load(std::path::Path::new(path)).map_err(|e| e.to_string()).and_then(|m| nnx_core::project::get(&m)) {
+                Ok(Some(p)) => projects.push(p),
+                Ok(None) => skipped.push(json!({ "path": path, "reason": "the file has no NanoArch project" })),
+                Err(e) => skipped.push(json!({ "path": path, "reason": e })),
+            }
+        }
+        Ok(json!({ "preferences": nnx_core::prefs::learn(&projects), "skipped": skipped }))
+    }
+
+    /// The clarifying conversation: `{ draft, field?, answer? }`. With a field and an answer the answer is applied first (an
+    /// unreadable one is an error and the draft is returned unchanged by the page). The reply carries the draft, the next
+    /// question (`null` when the brief is complete) and every question still open.
+    fn brief_clarify(args: &Value) -> Result<Value, String> {
+        use nnx_core::{briefai::BriefDraft, clarify};
+        let mut draft: BriefDraft = serde_json::from_value(args.get("draft").cloned().ok_or("draft is required")?).map_err(|e| format!("the draft is not valid: {e}"))?;
+        if let Some(field) = args.get("field").and_then(Value::as_str) {
+            let answer = args.get("answer").and_then(Value::as_str).ok_or("answer is required with field")?;
+            clarify::apply_answer(&mut draft, field, answer)?;
+            if field == "rooms"
+                && let Some(p) = args.get("prefs").filter(|p| !p.is_null())
+            {
+                let prefs: nnx_core::prefs::Preferences = serde_json::from_value(p.clone()).map_err(|e| format!("the preferences are not valid: {e}"))?;
+                nnx_core::prefs::apply(&mut draft, &prefs);
+            }
+        }
+        Ok(json!({ "draft": draft, "next": clarify::next_question(&draft), "missing": clarify::missing(&draft), "complete": clarify::is_complete(&draft) }))
+    }
+
+    /// Reads a room-area schedule from an Excel workbook (`path`, or `xlsx_b64` from the page). With a `draft`, the rooms replace
+    /// the draft's and the clarification state comes back with it.
+    fn areas_import(args: &Value) -> Result<Value, String> {
+        use nnx_core::clarify;
+        let bytes = match (args.get("xlsx_b64").and_then(Value::as_str).filter(|t| !t.trim().is_empty()), args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty())) {
+            (Some(b), _) => nnx_core::xlsx::base64_decode(b).map_err(|e| format!("areas import: {e}"))?,
+            (None, Some(p)) => std::fs::read(p).map_err(|e| format!("areas import: cannot read {p}: {e}"))?,
+            (None, None) => return Err("areas import: give the workbook's path, or its content as xlsx_b64".into()),
+        };
+        let table = nnx_core::areatable::import(&bytes, args.get("sheet").and_then(Value::as_str)).map_err(|e| format!("areas import: {e}"))?;
+        let Some(d) = args.get("draft").filter(|d| !d.is_null()) else {
+            return Ok(json!({ "table": table }));
+        };
+        let mut draft: nnx_core::briefai::BriefDraft = serde_json::from_value(d.clone()).map_err(|e| format!("areas import: the draft is not valid: {e}"))?;
+        draft.rooms = table.rooms.clone();
+        draft.notes.push(format!("rooms read from the sheet '{}' of the workbook: {} room(s), {:.1} m² with an area", table.sheet, table.rooms.len(), table.total_area_m2));
+        Ok(json!({ "table": table, "draft": draft, "next": clarify::next_question(&draft), "missing": clarify::missing(&draft), "complete": clarify::is_complete(&draft) }))
+    }
+
+    fn plot_import_survey(args: &Value) -> Result<Value, String> {
+        let text_arg = args.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty());
+        let path_arg = args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty());
+        let text = match (text_arg, path_arg) {
+            (Some(t), _) => t.to_string(),
+            (None, Some(p)) => {
+                let bytes = std::fs::read(p).map_err(|e| format!("survey import: cannot read {p}: {e}"))?;
+                String::from_utf8_lossy(&bytes).trim_start_matches('\u{feff}').to_string()
+            }
+            (None, None) => return Err("survey import: give the corner rows as text, or the path of the file".into()),
+        };
+        let field = |k: &str| args.get(k).and_then(Value::as_str);
+        let r = nnx_core::plot_import::import_survey(&text, field("order"), field("crs"), field("units")).map_err(|e| format!("survey import: {e}"))?;
+        Ok(json!({ "result": r }))
+    }
+
     /// Every advanced structural analysis of the open project in one answer (inputs are the project's own).
     fn structural_report(&self) -> Result<Value, String> {
         let p = self.project().ok_or("choose a layout first")?;
@@ -2070,6 +3190,15 @@ impl App {
         Ok(json!({ "svg": svg, "report": rep, "params": nnx_core::furniture::PARAMS }))
     }
 
+    /// Reports the expansion saved in the project (`meta.expansion`, set through `project_set`) against the built model.
+    fn expansion_check(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let x = p.meta.expansion.clone().ok_or("no expansion is saved: enter a vertical or a horizontal expansion")?;
+        let scene = nnx_core::model3d::build(&self.doc()?.model);
+        let report = nnx_core::expansion::report(&scene, &x, p.plot_area_m2())?;
+        Ok(json!({ "expansion": report }))
+    }
+
     fn vertical_cmd(&self) -> Result<Value, String> {
         let p = self.project().ok_or("choose a layout first")?;
         let v = p.meta.vertical.clone().ok_or("no vertical inputs: enter the elevator, basement or roof annex")?;
@@ -2146,6 +3275,124 @@ impl App {
         Ok(json!({ "html": nnx_core::certificate::certificate_html(&d, arabic), "name": "balady_certificate.pdf" }))
     }
 
+    /// The permit package as numbered A3 sheets with a title-block header and the engineer's stamp box: `{ engineer: { name,
+    /// licence_no, licensing_body, discipline? }, project_no, sheet_prefix, revision, issued_for?, lang? }`. Nothing is defaulted:
+    /// a missing input is named. The stamp has an empty seal and signature area; the package is never marked approved.
+    /// `lang: "both"` returns the Arabic and English packages as a matched pair (`ar`, `en`, shared `sheets`).
+    fn permit_pack(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::permitpack::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("permit pack: inputs are malformed (engineer {{ name, licence_no, licensing_body, discipline? }}, project_no, sheet_prefix, revision, issued_for?): {e}"))?;
+        let lang = args.get("lang").and_then(Value::as_str);
+        let arabic = lang != Some("en");
+        let date: String = utc_now().chars().take(10).collect();
+        let title = self.display_title();
+        let ctx = nnx_core::permitpack::Context { model: &self.doc()?.model, title: &title, labels: self.labels(), arabic, show_structure: self.show_structure, show_mep: self.show_mep, date: &date };
+        if lang == Some("both") {
+            let b = nnx_core::permitpack::build_bilingual(&ctx, &input)?;
+            let part = |p: &nnx_core::permitpack::Pack, name: &str| json!({ "html": p.html, "name": name, "sheets": p.sheets, "notes": p.notes });
+            return Ok(json!({ "bilingual": true, "ar": part(&b.ar, "permit_pack_ar.pdf"), "en": part(&b.en, "permit_pack_en.pdf"), "sheets": b.sheets, "notes": b.notes }));
+        }
+        let pack = nnx_core::permitpack::build(&ctx, &input)?;
+        Ok(json!({ "html": pack.html, "name": "permit_pack.pdf", "sheets": pack.sheets, "notes": pack.notes }))
+    }
+
+    /// The engineer's sign-off form with a statement of responsibility (one A4 page): `{ engineer: { name, licence_no,
+    /// licensing_body, discipline? }, project_no, revision, scope: [..], statement, statement_source, lang? }`. The statement
+    /// wording is the user's input and is never written here; signature, seal and date boxes stay empty.
+    fn signoff_form(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::signoff::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("sign-off form: inputs are malformed (engineer {{ name, licence_no, licensing_body, discipline? }}, project_no, revision, scope [text], statement, statement_source): {e}"))?;
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        let date: String = utc_now().chars().take(10).collect();
+        let title = self.display_title();
+        self.doc()?;
+        let form = nnx_core::signoff::build(&title, &date, arabic, &input)?;
+        Ok(json!({ "html": form.html, "name": "engineer_signoff.pdf", "notes": form.notes }))
+    }
+
+    /// The missing permit-documents checklist (read-only): `{ required: [{ key, name, group? }], list_source, submitted: [{ key,
+    /// reference, date? }] }`. The required list is the user's, with its source; none is built in. Returns the rows, the
+    /// unmatched submitted keys, the counts, the verdict and a CSV (`name`: `permit_documents.csv`).
+    fn permit_documents_check(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::doccheck::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("documents checklist: inputs are malformed (required [{{ key, name, group? }}], list_source, submitted [{{ key, reference, date? }}]): {e}"))?;
+        self.doc()?;
+        let report = nnx_core::doccheck::check(&input)?;
+        let mut v = serde_json::to_value(&report).map_err(|e| e.to_string())?;
+        v["name"] = json!("permit_documents.csv");
+        Ok(v)
+    }
+
+    /// The room finishes schedule (read-only): `{ finishes: [{ code, name, surface: floor|wall|ceiling, source }], assignments:
+    /// [{ key | func, floor?, wall?, ceiling? }], wall_height_mm? (required with a wall finish), level? }`. The catalogue is the
+    /// user's; areas are measured from the model's rooms. Returns the room rows, the totals per finish, the unassigned surfaces
+    /// and a CSV (`name`: `room_finishes.csv`).
+    fn room_finishes_schedule(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::roomfinish::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("room finishes schedule: inputs are malformed (finishes [{{ code, name, surface, source }}], assignments [{{ key|func, floor?, wall?, ceiling? }}], wall_height_mm?, level?): {e}"))?;
+        let schedule = nnx_core::roomfinish::build(&self.doc()?.model, &input)?;
+        let mut v = serde_json::to_value(&schedule).map_err(|e| e.to_string())?;
+        v["name"] = json!("room_finishes.csv");
+        Ok(v)
+    }
+
+    /// The bathroom / kitchen detail (read-only): `{ room (requirement key), level?, title?, fixtures: [{ key, kind?, x_mm, y_mm,
+    /// w_mm, d_mm, group?, source }], doors?: [{ wall, offset_mm, width_mm, swing_mm? }], min_clearance_mm?, clearance_source? }`.
+    /// Fixtures are the user's entries; returns the dimensioned SVG, the per-fixture wall gaps and the fit / overlap / door swing /
+    /// clearance checks (`unchecked` when their inputs are absent).
+    fn wet_room_detail(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::wetroom::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("wet room detail: inputs are malformed (room, fixtures [{{ key, x_mm, y_mm, w_mm, d_mm, source }}], doors? [{{ wall, offset_mm, width_mm, swing_mm? }}], min_clearance_mm?, clearance_source?): {e}"))?;
+        let detail = nnx_core::wetroom::build(&self.doc()?.model, &input)?;
+        serde_json::to_value(&detail).map_err(|e| e.to_string())
+    }
+
+    /// The suspended ceiling plan (read-only): `{ room (requirement key), level?, title?, ceiling_height_mm, soffit_height_mm?,
+    /// tile_w_mm?, tile_d_mm?, devices: [{ key, kind?, x_mm, y_mm (centre), w_mm, d_mm, recess_mm?, source }], min_spacing_mm?,
+    /// spacing_source?, min_ceiling_height_mm?, headroom_source? }`. Heights, devices and limits are the user's entries; returns the
+    /// reflected ceiling plan SVG, the per-device wall gaps, device counts, the tile summary and the fit / overlap / spacing /
+    /// plenum / headroom checks (`unchecked` when their inputs are absent).
+    fn ceiling_plan(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::ceiling::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("ceiling plan: inputs are malformed (room, ceiling_height_mm, soffit_height_mm?, tile_w_mm?, tile_d_mm?, devices [{{ key, x_mm, y_mm, w_mm, d_mm, recess_mm?, source }}], min_spacing_mm?, spacing_source?, min_ceiling_height_mm?, headroom_source?): {e}"))?;
+        let plan = nnx_core::ceiling::build(&self.doc()?.model, &input)?;
+        serde_json::to_value(&plan).map_err(|e| e.to_string())
+    }
+
+    /// The axes and detailed dimensions plan (read-only): `{ level?, title?, axes_x: [{ label, pos_mm }], axes_y: [...] }` or
+    /// `{ from_columns: true, cluster_mm }`, with `tolerance_mm?` and `tolerance_source?`. Returns the axes with bay spacings and
+    /// overall dimensions, each column's offset from its nearest axes, each orthogonal wall's offset from the nearest parallel
+    /// axis, the columns-on-axes check (`unchecked` without a tolerance) and the SVG.
+    fn axes_plan(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::axes::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("axes plan: inputs are malformed (level?, axes_x [{{ label, pos_mm }}], axes_y, from_columns?, cluster_mm?, tolerance_mm?, tolerance_source?): {e}"))?;
+        let plan = nnx_core::axes::build(&self.doc()?.model, &input)?;
+        serde_json::to_value(&plan).map_err(|e| e.to_string())
+    }
+
+    /// The stair detail (read-only): `{ rise_mm, riser_count, going_mm, width_mm, nosing_mm?, landing_after_riser?, landing_length_mm?,
+    /// room?, level?, run_axis?, limits?: { min_riser_mm?, max_riser_mm?, ..., source }, title? }`. Every figure is the user's;
+    /// returns the numbered step table, the flights, the section + plan SVG and the riser / going / width / landing / 2R+G / pitch /
+    /// fit checks (`unchecked` when their limit is absent).
+    fn stair_detail(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::stairdetail::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("stair detail: inputs are malformed (rise_mm, riser_count, going_mm, width_mm, nosing_mm?, landing_after_riser?, landing_length_mm?, room?, run_axis?, limits?): {e}"))?;
+        let detail = nnx_core::stairdetail::build(&self.doc()?.model, &input)?;
+        serde_json::to_value(&detail).map_err(|e| e.to_string())
+    }
+
+    /// The number audit file of the open project: every number with the source and date entered beside it, and the list of
+    /// numbers that have none. Read-only; returns the entries, the counts and a CSV text (`name`: `number_audit.csv`).
+    fn number_audit(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let file = nnx_core::numaudit::audit(&p)?;
+        let csv = nnx_core::numaudit::to_csv(&file);
+        let mut v = serde_json::to_value(&file).map_err(|e| e.to_string())?;
+        v["csv"] = json!(csv);
+        v["name"] = json!("number_audit.csv");
+        Ok(v)
+    }
+
     /// Every advanced MEP analysis (solar, smart home, Wi-Fi, CCTV, EV, balancing, greywater, head loss) of the open project.
     fn mepx_report(&self) -> Result<Value, String> {
         let p = self.project().ok_or("choose a layout first")?;
@@ -2207,6 +3454,27 @@ impl App {
             }
         }
         Ok(v)
+    }
+
+    /// Ground shadows through the year: `{ latitude_deg, hours: [..], days: [..] | monthly: true, north_offset_deg, probes?: [[x, y]] }`.
+    /// Latitude, hours, the days (or the explicit `monthly`: the 21st of every month) and the north offset are the user's; none is defaulted.
+    fn sun_shadows(&self, args: &Value) -> Result<Value, String> {
+        let scene = nnx_core::model3d::build_styled(&self.doc()?.model, self.style());
+        let latitude_deg = args.get("latitude_deg").and_then(Value::as_f64).ok_or("sun_shadows: latitude_deg is missing")?;
+        let north_offset_deg = args.get("north_offset_deg").and_then(Value::as_f64).ok_or("sun_shadows: north_offset_deg is missing (0 when the plan's up is true north)")?;
+        let hours: Vec<f64> = serde_json::from_value(args.get("hours").cloned().unwrap_or(Value::Null)).map_err(|e| format!("sun_shadows: hours must be a list of solar hours: {e}"))?;
+        let monthly = args.get("monthly").and_then(Value::as_bool).unwrap_or(false);
+        let days: Vec<u32> = match (monthly, args.get("days")) {
+            (true, Some(d)) if !d.is_null() => return Err("sun_shadows: give either days or monthly, not both".to_string()),
+            (true, _) => nnx_core::shadows::MONTH_21ST.to_vec(),
+            (false, d) => serde_json::from_value(d.cloned().unwrap_or(Value::Null)).map_err(|e| format!("sun_shadows: days must be a list of days of the year (or monthly: true): {e}"))?,
+        };
+        let probes: Vec<[f64; 2]> = match args.get("probes") {
+            Some(p) if !p.is_null() => serde_json::from_value(p.clone()).map_err(|e| format!("sun_shadows: probes must be a list of [x, y] metres: {e}"))?,
+            _ => Vec::new(),
+        };
+        let input = nnx_core::shadows::ShadowInput { latitude_deg, days, hours, north_offset_deg, probes };
+        Ok(json!({ "shadows": nnx_core::shadows::study(&scene, &input)? }))
     }
 
     /// The finish catalog, the project's choice and the quantities (with prices only where the user entered a rate).
@@ -2279,14 +3547,27 @@ impl App {
 
     /// The standalone HTML tour: one file with the 3D scene and a viewer inside.
     fn tour_export(&self, args: &Value) -> Result<Value, String> {
+        self.tour_file(args, false)
+    }
+
+    /// The client presentation page: the same single offline file without the structure, the services or any engineering control.
+    fn client_view_export(&self, args: &Value) -> Result<Value, String> {
+        self.tour_file(args, true)
+    }
+
+    fn tour_file(&self, args: &Value, client: bool) -> Result<Value, String> {
         let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
         let scene = nnx_core::model3d::build_styled(&self.doc()?.model, self.style());
         let (facade, floor) = match self.project() {
             Some(p) => (p.meta.finishes.facade.as_deref().and_then(|i| nnx_core::finishes::find("facade", i)).map(|f| f.color), p.meta.finishes.floor.as_deref().and_then(|i| nnx_core::finishes::find("floor", i)).map(|f| f.color)),
             None => (None, None),
         };
-        let html = nnx_core::tour::tour_html(&scene, &self.display_title(), arabic, facade, floor)?;
-        Ok(json!({ "html": html, "name": "tour.html" }))
+        let (html, name) = if client {
+            (nnx_core::tour::tour_client_html(&scene, &self.display_title(), arabic, facade, floor)?, "client-view.html")
+        } else {
+            (nnx_core::tour::tour_html(&scene, &self.display_title(), arabic, facade, floor)?, "tour.html")
+        };
+        Ok(json!({ "html": html, "name": name }))
     }
 
     /// A binary STL of the solids at the scale entered (`scale: 100` is 1:100), optionally one level.
@@ -2310,6 +3591,17 @@ impl App {
     /// the setbacks entered for it.
     fn site_plan(&self) -> Result<Value, String> {
         let p = self.project().ok_or("choose a layout first")?;
+        let r = self.site_result()?;
+        let layout = match &p.meta.site_layout {
+            Some(l) => Some(nnx_core::site_layout::layout(&r, l)?),
+            None => None,
+        };
+        Ok(json!({ "svg": nnx_core::site::site_svg_with(&r, &self.display_title(), layout.as_ref()), "name": "site-plan.svg", "result": r, "layout": layout }))
+    }
+
+    /// The site analysis of the open project (plot outline, edges, setbacks, building).
+    fn site_result(&self) -> Result<nnx_core::site::SiteResult, String> {
+        let p = self.project().ok_or("choose a layout first")?;
         let input = match p.site_input() {
             Some(i) => i,
             None => {
@@ -2319,12 +3611,18 @@ impl App {
                 i
             }
         };
-        let r = nnx_core::site::analyse(&input).map_err(|e| e.join("; "))?;
-        let layout = match &p.meta.site_layout {
-            Some(l) => Some(nnx_core::site_layout::layout(&r, l)?),
-            None => None,
-        };
-        Ok(json!({ "svg": nnx_core::site::site_svg_with(&r, &self.display_title(), layout.as_ref()), "name": "site-plan.svg", "result": r, "layout": layout }))
+        nnx_core::site::analyse(&input).map_err(|e| e.join("; "))
+    }
+
+    /// The site plan with the user's fences and gates (read-only): `{ title?, fences: [{ edge, kind?, height_m, thickness_m,
+    /// source }], gates?: [{ key, edge, kind (vehicle | pedestrian), offset_m, width_m, operation? (swing_in | swing_out |
+    /// sliding), source }] }`. Edge numbers follow `site_plan`'s `result.edges`. Returns the drawing, the fence and gate
+    /// schedule and the fenced lengths.
+    fn site_fence_plan(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::siteplan::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("site fence plan: inputs are malformed (fences [{{ edge, height_m, thickness_m, source }}], gates? [{{ key, edge, kind, offset_m, width_m, source }}]): {e}"))?;
+        let plan = nnx_core::siteplan::build(&self.site_result()?, &input)?;
+        serde_json::to_value(&plan).map_err(|e| e.to_string())
     }
 
     /// The architectural style the project names (`meta.style`), if it names one of the four.
@@ -2356,6 +3654,13 @@ impl App {
         }
         let svg = nnx_core::elevation::section_svg(model, &cut, &self.view_opts()).map_err(|e| e.to_string())?;
         Ok(json!({ "svg": svg, "name": format!("section-{name}.svg"), "cut": format!("{cut:?}") }))
+    }
+
+    /// Every elevation and section of the building in one call (four elevations, A-A, B-B and one section per stair shaft), each
+    /// showing all levels. Read-only; the per-view `levels_missing` and the overall `complete` say whether a level was left out.
+    fn auto_views(&self) -> Result<Value, String> {
+        let set = nnx_core::autoviews::build(&self.doc()?.model, &self.view_opts())?;
+        serde_json::to_value(set).map_err(|e| e.to_string())
     }
 
     /// Clashes between ducts, pipes and drains and the structure.
@@ -2620,6 +3925,28 @@ mod tests {
         assert!(svg.starts_with("<svg") && svg.contains("المجلس"));
     }
 
+    #[test]
+    fn alternatives_carry_declared_scores_and_are_ranked_best_first() {
+        let mut app = App::default();
+        let g = app.handle("generate", &json!({ "brief": brief() })).unwrap();
+        let alts = g["alternatives"].as_array().unwrap();
+        let overall: Vec<f64> = alts.iter().map(|a| a["scores"]["overall"].as_f64().expect("every alternative of this brief is scored")).collect();
+        assert!(overall.windows(2).all(|w| w[0] >= w[1]), "not ranked best first: {overall:?}");
+        for a in alts {
+            for k in ["lighting", "connectivity", "privacy"] {
+                let v = a["scores"][k].as_f64().unwrap_or_else(|| panic!("{k} missing"));
+                assert!((0.0..=100.0).contains(&v), "{k} = {v}");
+            }
+            assert_eq!(a["scores"]["weights"]["lighting"], 1.0);
+        }
+        // Weighting only lighting ranks by lighting alone.
+        let g = app.handle("generate", &json!({ "brief": brief(), "score_weights": { "lighting": 1.0, "connectivity": 0.0, "privacy": 0.0 } })).unwrap();
+        let light: Vec<f64> = g["alternatives"].as_array().unwrap().iter().map(|a| a["scores"]["lighting"].as_f64().unwrap()).collect();
+        assert!(light.windows(2).all(|w| w[0] >= w[1]), "not ranked by lighting: {light:?}");
+        let err = app.handle("generate", &json!({ "brief": brief(), "score_weights": { "lighting": -1.0, "connectivity": 1.0, "privacy": 1.0 } })).unwrap_err();
+        assert!(err.contains("lighting"), "{err}");
+    }
+
     /// Two rooms on a 14 x 18 m buildable area (plot 18 x 22 m, 2 m setbacks). Synthetic.
     fn two_room_brief() -> Value {
         json!({ "title": "t", "width_m": 18.0, "length_m": 22.0, "setback_front_m": 2.0, "setback_back_m": 2.0, "setback_side_m": 2.0, "entry": "south",
@@ -2677,6 +4004,35 @@ mod tests {
         let q = app.handle("qto", &json!({})).unwrap();
         assert!(q["items"].as_array().unwrap().iter().any(|i| i["code"] == "FOOTING.COUNT"));
         assert!(q["csv"].as_str().unwrap().contains("preliminary"));
+    }
+
+    #[test]
+    fn quantities_by_element_add_up_to_the_items_and_name_what_has_no_breakdown() {
+        let mut app = App::default();
+        app.handle("generate", &json!({ "brief": brief() })).unwrap();
+        app.handle("select", &json!({ "index": 0 })).unwrap();
+        let q = app.handle("qto", &json!({})).unwrap();
+        let r = app.handle("qto_elements", &json!({})).unwrap();
+        let elements = r["elements"].as_array().unwrap();
+        assert!(!elements.is_empty());
+        for item in q["items"].as_array().unwrap() {
+            let code = item["code"].as_str().unwrap();
+            if r["not_linked"].as_array().unwrap().iter().any(|c| c == code) {
+                continue;
+            }
+            let sum: f64 = elements.iter().flat_map(|e| e["quantities"].as_array().unwrap()).filter(|x| x["code"] == code).map(|x| x["quantity"].as_f64().unwrap()).sum();
+            assert!((sum - item["quantity"].as_f64().unwrap()).abs() < 0.01, "{code}: {sum} vs {}", item["quantity"]);
+        }
+        // One element on its own returns only its rows.
+        let id = elements[0]["id"].as_str().unwrap();
+        let one = app.handle("qto_elements", &json!({ "element": id })).unwrap();
+        assert_eq!(one["elements"].as_array().unwrap().len(), 1);
+        assert_eq!(one["elements"][0]["quantities"], elements[0]["quantities"]);
+        // Bad input is refused by name.
+        assert!(app.handle("qto_elements", &json!({ "element": "nonsense" })).unwrap_err().contains("element id"));
+        assert!(app.handle("qto_elements", &json!({ "element": "00000000-0000-0000-0000-000000000000" })).unwrap_err().contains("not in the model"));
+        assert!(app.handle("qto_elements", &json!({ "phase": "BOGUS" })).is_err());
+        assert!(App::default().handle("qto_elements", &json!({})).is_err());
     }
 
     #[test]
@@ -3057,6 +4413,30 @@ mod tests {
     }
 
     #[test]
+    fn bid_comparison_is_read_only_and_ranks_only_complete_bids() {
+        let mut app = started();
+        let inputs = json!({ "project": { "currency": "XXX" }, "items": { "SLAB.VOL": { "rate": 100, "rate_source": "test" } } });
+        let r = app.handle("boq", &json!({ "inputs": inputs })).unwrap();
+        let codes: Vec<String> = r["report"]["rows"].as_array().unwrap().iter().filter(|x| x["reference_only"] == false).map(|x| x["code"].as_str().unwrap().to_string()).collect();
+        assert!(codes.len() >= 2);
+        let rates = |k: f64| codes.iter().map(|c| (c.clone(), json!(k))).collect::<serde_json::Map<_, _>>();
+        let bid = |n: &str, k: f64| json!({ "contractor": n, "source": "synthetic", "date": "2026-11-01", "currency": "XXX", "rates": rates(k) });
+        let before = hash(&app);
+        let r = app.handle("bid_compare", &json!({ "bids": [bid("A", 2.0), bid("B", 1.0)] })).unwrap();
+        assert_eq!(hash(&app), before, "the comparison changes nothing");
+        assert_eq!(r["comparison"]["lowest_complete"], "B");
+        assert!(r["csv"].as_str().unwrap().contains("contractor,source,date"));
+        let mut partial = bid("C", 0.5);
+        partial["rates"] = json!({ codes[0].clone(): 0.5 });
+        let r = app.handle("bid_compare", &json!({ "bids": [bid("A", 2.0), partial] })).unwrap();
+        assert_eq!(r["comparison"]["totals"][1]["rank"], Value::Null);
+        assert!(app.handle("bid_compare", &json!({})).unwrap_err().contains("bids is required"));
+        assert!(app.handle("bid_compare", &json!({ "bids": [bid("A", 2.0)] })).unwrap_err().contains("at least two"));
+        assert!(app.handle("bid_compare", &json!({ "bids": [bid("A", 2.0), { "contractor": "Z", "extra": 1 }] })).is_err());
+        assert!(App::default().handle("bid_compare", &json!({ "bids": [] })).is_err());
+    }
+
+    #[test]
     fn boq_prices_what_the_user_priced_lists_materials_exports_and_saves() {
         let mut app = started();
         app.handle("mep", &json!({ "inputs": mep_inputs(), "apply": true })).unwrap();
@@ -3101,6 +4481,30 @@ mod tests {
         let with_points = app.handle("model3d", &json!({})).unwrap();
         assert_eq!(with_points["boxes"].as_array().unwrap().iter().filter(|b| b["kind"] == "MepPoint").count(), mep_points(&app));
         assert!(App::default().handle("model3d", &json!({})).is_err(), "no plan, no model");
+    }
+
+    #[test]
+    fn sun_shadows_run_over_the_year_and_name_every_missing_input() {
+        let mut app = started();
+        let base = json!({ "latitude_deg": 24.0, "north_offset_deg": 0.0, "hours": [9.0, 12.0, 15.0], "monthly": true });
+        let r = app.handle("sun_shadows", &base).unwrap();
+        let days = r["shadows"]["days"].as_array().unwrap();
+        assert_eq!(days.len(), 12, "the 21st of every month");
+        let longest = |d: usize| days[d]["hours"][1]["longest_shadow_m"].as_f64().unwrap();
+        assert!(longest(11) > longest(5), "the December noon shadow is longer than the June one");
+        assert!(days[5]["hours"][1]["polygons"].as_array().unwrap().len() > 10, "one polygon per wall, slab, column or beam");
+        for key in ["latitude_deg", "north_offset_deg", "hours"] {
+            let mut b = base.clone();
+            b.as_object_mut().unwrap().remove(key);
+            assert!(app.handle("sun_shadows", &b).unwrap_err().contains(key), "{key}");
+        }
+        let mut no_days = base.clone();
+        no_days.as_object_mut().unwrap().remove("monthly");
+        assert!(app.handle("sun_shadows", &no_days).unwrap_err().contains("days"));
+        let mut both = base.clone();
+        both["days"] = json!([80]);
+        assert!(app.handle("sun_shadows", &both).unwrap_err().contains("not both"));
+        assert!(App::default().handle("sun_shadows", &base).is_err(), "no plan, no model");
     }
 
     // ------------------------------------------------------------------ several floors
@@ -3798,9 +5202,61 @@ mod tests {
         assert!(text.is_ascii() && text.contains("\\X2\\"), "Arabic room names are escaped");
         assert!(text.contains("FILE_NAME('model.ifc','20"), "a UTC timestamp is written");
         assert!(App::default().handle("export_ifc", &json!({})).is_err());
+        assert_eq!(r["profile"], "standard");
+        assert!(!text.contains("IFCWALLTYPE("), "the standard profile writes no type objects");
+        let rv = app.handle("export_ifc", &json!({ "profile": "revit" })).unwrap();
+        let rt = rv["ifc"].as_str().unwrap();
+        assert_eq!(rv["profile"], "revit");
+        assert!(rt.contains("IFCWALLTYPE(") && rt.contains("IFCRELDEFINESBYTYPE(") && rt.contains("'Pset_DoorCommon'"));
+        assert_eq!(rv["counts"]["IfcWall"], r["counts"]["IfcWall"], "the same products in both profiles");
+        assert!(app.handle("export_ifc", &json!({ "profile": "archicad" })).unwrap_err().contains("unknown profile"));
         if let Ok(path) = std::env::var("NANOARCH_IFC_OUT") {
             std::fs::write(path, text).unwrap();
         }
+    }
+
+    #[test]
+    fn export_bundle_packs_chosen_files_into_numbered_folders_and_refuses_bad_requests() {
+        let mut app = started2();
+        app.handle("mep", &json!({ "inputs": mep_inputs(), "apply": true })).unwrap();
+        let r = app.handle("export_bundle", &json!({ "include": ["dxf", "ifc", "plan_html"], "lang": "en" })).unwrap();
+        let paths: Vec<String> = r["paths"].as_array().unwrap().iter().map(|p| p.as_str().unwrap().to_string()).collect();
+        assert_eq!(paths.len(), 4);
+        assert_eq!(paths[0], "00-index/manifest.json");
+        assert!(paths[1].starts_with("01-models/") && paths[1].ends_with(".ifc"), "{paths:?}");
+        assert!(paths[2].starts_with("02-drawings/") && paths[3].starts_with("02-drawings/"), "{paths:?}");
+        let zip = nnx_core::xlsx::base64_decode(r["zip_b64"].as_str().unwrap()).unwrap();
+        assert_eq!(&zip[..4], b"PK");
+        assert!(r["name"].as_str().unwrap().ends_with("-delivery.zip"));
+        let m: Value = serde_json::from_str(r["manifest"].as_str().unwrap()).unwrap();
+        assert_eq!(m["file_count"], 3);
+        // nothing is chosen for the user
+        assert!(app.handle("export_bundle", &json!({})).unwrap_err().contains("include"));
+        assert!(app.handle("export_bundle", &json!({ "include": [] })).unwrap_err().contains("empty"));
+        assert!(app.handle("export_bundle", &json!({ "include": ["dwg"] })).unwrap_err().contains("unknown item"));
+        assert!(app.handle("export_bundle", &json!({ "include": ["ifc", "ifc"] })).unwrap_err().contains("twice"));
+        // no saved BOQ inputs: the priced workbook is refused, not faked
+        assert!(app.handle("export_bundle", &json!({ "include": ["boq"] })).unwrap_err().contains("BOQ inputs"));
+        assert!(App::default().handle("export_bundle", &json!({ "include": ["ifc"] })).is_err());
+    }
+
+    #[test]
+    fn dxf_export_applies_an_office_layer_style_and_refuses_a_bad_one() {
+        let mut app = started2();
+        app.handle("mep", &json!({ "inputs": mep_inputs(), "apply": true })).unwrap();
+        let plain = app.handle("export_dxf", &json!({})).unwrap();
+        let style = json!({ "name": "Office", "source": "Office CAD manual, section 4", "layers": [{ "layer": "S-COLS", "name": "STR-COLUMN", "color": 11, "linetype": "HIDDEN" }] });
+        let styled = app.handle("export_dxf", &json!({ "layer_style": style })).unwrap();
+        assert_eq!(styled["counts"]["STR-COLUMN"], plain["counts"]["S-COLS"]);
+        assert!(styled["counts"].get("S-COLS").is_none());
+        assert!(styled["dxf"].as_str().unwrap().contains("STR-COLUMN") && !styled["dxf"].as_str().unwrap().contains("S-COLS"));
+        assert_eq!(styled["layer_style"]["applied"][0]["used"], true);
+        assert_eq!(styled["layer_style"]["source"], "Office CAD manual, section 4");
+        // no style: the engine's own layers
+        assert!(plain.get("layer_style").is_none());
+        let no_source = json!({ "name": "Office", "source": "", "layers": [{ "layer": "S-COLS", "color": 11 }] });
+        assert!(app.handle("export_dxf", &json!({ "layer_style": no_source })).unwrap_err().contains("source"));
+        assert!(app.handle("export_dxf", &json!({ "layer_style": { "name": "x" } })).unwrap_err().contains("layer_style"));
     }
 
     #[test]
@@ -3861,9 +5317,16 @@ mod tests {
     fn started_with_project() -> App {
         let mut app = App::default();
         let meta = json!({ "title": "x", "buildingType": "villa", "style": "najdi", "smartTech": ["lighting"], "climateZone": "zone-a" });
-        app.handle("generate", &json!({ "brief": brief(), "struct": {}, "meta": meta })).unwrap();
-        app.handle("select", &json!({ "index": 0, "struct": {} })).unwrap();
+        let g = app.handle("generate", &json!({ "brief": brief(), "struct": {}, "meta": meta })).unwrap();
+        app.handle("select", &json!({ "index": generator_best(&g), "struct": {} })).unwrap();
         app
+    }
+
+    /// Alternatives are ranked by the declared scores; some tests assert things about the generator's own best layout
+    /// (lowest annealing cost), which is not always the top-scored one.
+    fn generator_best(g: &Value) -> usize {
+        let alts = g["alternatives"].as_array().unwrap();
+        (0..alts.len()).min_by(|&a, &b| alts[a]["cost"].as_f64().unwrap().total_cmp(&alts[b]["cost"].as_f64().unwrap())).unwrap()
     }
 
     fn setbacks(front: f64, back: f64, side: f64) -> Value {
@@ -3945,6 +5408,1059 @@ mod tests {
         assert!((app.project().unwrap().plot_area_m2().unwrap() - (18.0 * 10.0 + 8.0 * 12.0)).abs() < 1e-9);
         let skipped = app.handle("sbc_check", &json!({})).unwrap()["skipped"].to_string();
         assert!(skipped.contains("not a rectangle"), "{skipped}");
+    }
+
+    #[test]
+    fn a_dxf_plot_boundary_is_imported_through_the_backend() {
+        let mut app = App::default();
+        let dir = std::env::temp_dir().join(format!("nnx_plot_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("plot.dxf");
+        std::fs::write(&f, "0
+SECTION
+2
+HEADER
+9
+$INSUNITS
+70
+6
+0
+ENDSEC
+0
+SECTION
+2
+ENTITIES
+0
+LWPOLYLINE
+8
+P
+90
+4
+70
+1
+10
+0
+20
+0
+10
+18
+20
+0
+10
+18
+20
+22
+10
+0
+20
+22
+0
+ENDSEC
+0
+EOF
+").unwrap();
+        let r = app.handle("plot_import_dxf", &json!({ "path": f.to_str().unwrap() })).unwrap();
+        assert_eq!(r["result"]["selected"], 0);
+        assert!((r["result"]["candidates"][0]["area_m2"].as_f64().unwrap() - 396.0).abs() < 1e-9);
+        assert!(app.handle("plot_import_dxf", &json!({})).unwrap_err().contains("path"));
+        assert!(app.handle("plot_import_dxf", &json!({ "path": dir.join("none.dxf").to_str().unwrap() })).unwrap_err().contains("cannot read"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn privacy_check_flags_close_neighbour_walls_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([
+            { "key": "bed1", "func": "bedroom", "zone": "private", "x": 0, "y": 0, "w": 6000, "h": 10000 },
+            { "key": "hall", "func": "hall", "zone": "public", "x": 6000, "y": 0, "w": 6000, "h": 10000 }
+        ]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 10000 }, "neighbours": [{ "side": "west", "distance_mm": 1500 }], "private_funcs": ["bedroom"], "min_distance_mm": 3000 });
+        assert_eq!(app.handle("privacy_check", &base).unwrap()["privacy"]["status"], "exposed");
+        let mut skipped = base.clone();
+        skipped.as_object_mut().unwrap().remove("min_distance_mm");
+        assert_eq!(app.handle("privacy_check", &skipped).unwrap()["privacy"]["status"], "unchecked");
+        let mut no_funcs = base.clone();
+        no_funcs.as_object_mut().unwrap().remove("private_funcs");
+        assert!(app.handle("privacy_check", &no_funcs).unwrap_err().contains("private_funcs"));
+        let mut bad_side = base.clone();
+        bad_side["neighbours"] = json!([{ "side": "up", "distance_mm": 1 }]);
+        assert!(app.handle("privacy_check", &bad_side).unwrap_err().contains("neighbour side"));
+        assert!(app.handle("privacy_check", &json!({ "rooms": rooms, "envelope": { "w": 1, "h": 1 } })).unwrap_err().contains("neighbours are required"));
+    }
+
+    #[test]
+    fn span_compare_ranks_alternatives_and_names_bad_input() {
+        let mut app = App::default();
+        let wide = json!([{ "key": "hall", "func": "hall", "zone": "public", "x": 0, "y": 0, "w": 13000, "h": 5000 }]);
+        let split = json!([
+            { "key": "a", "func": "hall", "zone": "public", "x": 0, "y": 0, "w": 6000, "h": 5000 },
+            { "key": "b", "func": "hall", "zone": "public", "x": 6000, "y": 0, "w": 6000, "h": 5000 }
+        ]);
+        let base = json!({ "envelope": { "w": 13000, "h": 5000 }, "max_span_mm": 6000, "alternatives": [{ "label": "A", "rooms": wide }, { "label": "B", "rooms": split }] });
+        let r = app.handle("span_compare", &base).unwrap();
+        assert_eq!(r["span"]["best"], 1);
+        assert_eq!(r["span"]["support_lines_saved_vs_first"], 2);
+        let mut no_limit = base.clone();
+        no_limit.as_object_mut().unwrap().remove("max_span_mm");
+        assert!(app.handle("span_compare", &no_limit).unwrap_err().contains("max_span_mm is required"));
+        assert!(app.handle("span_compare", &json!({ "envelope": { "w": 1, "h": 1 }, "max_span_mm": 6000 })).unwrap_err().contains("alternatives are required"));
+    }
+
+    #[test]
+    fn drift_check_screens_beams_storeys_and_footings_and_names_missing_input() {
+        let mut app = App::default();
+        let args = json!({
+            "e_mpa": 25000.0,
+            "beams": [{ "key": "b1", "span_mm": 5000, "b_mm": 300, "h_mm": 500, "support": "simple", "w_kn_m": 10.0, "limit_span_ratio": 360 }],
+            "footings": [{ "key": "F1", "load_kn": 400, "width_mm": 2000, "length_mm": 2000, "es_mpa": 10, "nu": 0.3, "influence": 0.82 }]
+        });
+        let r = app.handle("drift_check", &args).unwrap();
+        assert_eq!(r["drift"]["beams"][0]["immediate_mm"], 1.042);
+        assert_eq!(r["drift"]["beams"][0]["status"], "ok");
+        assert_eq!(r["drift"]["settlements"][0]["settlement_mm"], 14.924);
+        assert_eq!(r["drift"]["settlements"][0]["status"], "unchecked");
+        let mut no_e = args.clone();
+        no_e.as_object_mut().unwrap().remove("e_mpa");
+        assert!(app.handle("drift_check", &no_e).unwrap_err().contains("e_mpa is required"));
+        assert!(app.handle("drift_check", &json!({})).unwrap_err().contains("nothing to check"));
+        assert!(app.handle("drift_check", &json!({ "beams": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn panel_schedule_balances_phases_and_refuses_missing_inputs() {
+        let mut app = App::default();
+        let args = json!({
+            "voltage_v": 230, "power_factor": 1, "three_phase": true, "breaker_margin": 1.25,
+            "breaker_sizes_a": [16, 32, 63], "demand_factors": { "lighting": 1.0 },
+            "boards": [{ "key": "DB1", "ways": 12 }],
+            "loads": [
+                { "id": "L1", "board": "DB1", "kind": "lighting", "watts": 2300, "phases": 1 },
+                { "id": "L2", "board": "DB1", "kind": "lighting", "watts": 2300, "phases": 1 },
+                { "id": "L3", "board": "DB1", "kind": "lighting", "watts": 2300, "phases": 1 }
+            ]
+        });
+        let r = app.handle("panel_schedule", &args).unwrap();
+        assert_eq!(r["panels"]["boards"][0]["imbalance_pct"], 0.0);
+        assert_eq!(r["panels"]["boards"][0]["main_breaker_a"], 16.0);
+        assert_eq!(r["panels"]["boards"][0]["status"], "unchecked");
+        let mut no_v = args.clone();
+        no_v.as_object_mut().unwrap().remove("voltage_v");
+        assert!(app.handle("panel_schedule", &no_v).unwrap_err().contains("voltage_v is required"));
+        assert!(app.handle("panel_schedule", &json!({ "boards": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn water_storage_check_sizes_tanks_and_refuses_missing_inputs() {
+        let mut app = App::default();
+        let args = json!({
+            "persons": 100, "litres_per_person_day": 200, "demand_source": "test data",
+            "ground_storage_days": 1, "roof_storage_days": 0.5, "usable_fraction": 0.8,
+            "transfer": {
+                "fill_hours": 2, "ground_low_level_m": 0, "roof_high_level_m": 20,
+                "main": { "length_m": 30, "diameter_mm": 50, "hazen_c": 130, "minor_k": 0 },
+                "pump_efficiency": 0.5, "motor_efficiency": 0.8, "motor_margin": 1.25, "motor_sizes_kw": [0.37, 1.5]
+            }
+        });
+        let r = app.handle("water_storage_check", &args).unwrap();
+        assert_eq!(r["water"]["ground"]["gross_m3"], 25.0);
+        assert_eq!(r["water"]["transfer"]["motor_kw"], 1.5);
+        assert_eq!(r["water"]["gravity_status"], "unchecked");
+        let mut no_p = args.clone();
+        no_p.as_object_mut().unwrap().remove("persons");
+        assert!(app.handle("water_storage_check", &no_p).unwrap_err().contains("persons is required"));
+        assert!(app.handle("water_storage_check", &json!({ "persons": "x" })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn insulation_options_compare_against_the_stored_base_assembly() {
+        let mut app = started();
+        let args = json!({
+            "scope": "wall", "degree_hours": 50000, "degree_hours_source": "test data", "cop": 3, "tariff_per_kwh": 0.2, "study_years": 10,
+            "options": [{ "name": "pir", "lambda": 0.025, "thicknesses_mm": [30, 60], "price_per_m3": 400, "install_per_m2": 8, "source": "test data" }]
+        });
+        assert!(app.handle("insulation_options", &args).unwrap_err().contains("enter the insulation assemblies"));
+        app.handle("mep", &json!({ "inputs": mep_inputs(), "apply": false, "show": false })).unwrap();
+        let r = app.handle("insulation_options", &args).unwrap();
+        let rep = &r["insulation_options"];
+        assert_eq!(rep["scope"], "wall");
+        assert_eq!(rep["rows"].as_array().unwrap().len(), 2);
+        assert!(rep["rows"][1]["u_value"].as_f64().unwrap() < rep["rows"][0]["u_value"].as_f64().unwrap());
+        assert!(rep["area_m2"].as_f64().unwrap() > 0.0);
+        let mut no_cop = args.clone();
+        no_cop.as_object_mut().unwrap().remove("cop");
+        assert!(app.handle("insulation_options", &no_cop).unwrap_err().contains("cop is required"));
+        assert!(app.handle("insulation_options", &json!({ "cop": "x" })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn electricity_bill_estimates_from_stated_loads_and_tariff() {
+        let mut app = App::default();
+        let args = json!({
+            "loads": [{ "name": "ac", "kw": 2, "quantity": 2, "demand_factor": 0.5, "hours_per_day": 10, "active_months": [6, 7], "source": "test data" }],
+            "tariff": { "blocks": [{ "up_to_kwh": 300, "rate_per_kwh": 0.1 }, { "rate_per_kwh": 0.2 }],
+                        "fixed_per_month": 5, "vat_pct": 0, "source": "test tariff", "source_date": "2026-01-01" }
+        });
+        let r = app.handle("electricity_bill", &args).unwrap();
+        let rep = &r["electricity_bill"];
+        // June: 2 kW x 2 x 0.5 x 10 h x 30 d = 600 kWh -> 30 + 60 = 90 + 5.
+        assert_eq!(rep["months"][5]["total"].as_f64().unwrap(), 95.0);
+        let mut no_src = args.clone();
+        no_src["tariff"].as_object_mut().unwrap().remove("source");
+        assert!(app.handle("electricity_bill", &no_src).unwrap_err().contains("tariff.source is required"));
+        assert!(app.handle("electricity_bill", &json!({ "loads": "x" })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn energy_certificate_rates_from_entered_scale_and_refuses_missing_inputs() {
+        let mut app = App::default();
+        let args = json!({
+            "end_uses": [{ "name": "cooling", "kwh_per_year": 6000, "source": "test data" }, { "name": "lighting", "kwh_per_year": 2000, "source": "test data" }],
+            "conditioned_area_m2": 100, "area_source": "model",
+            "bands": [{ "label": "A", "up_to_kwh_m2": 50 }, { "label": "B", "up_to_kwh_m2": 100 }, { "label": "C" }],
+            "scheme_source": "test scheme", "scheme_date": "2026-01-01"
+        });
+        let r = app.handle("energy_certificate", &args).unwrap();
+        let rep = &r["energy_certificate"];
+        assert_eq!(rep["band"], "B");
+        assert_eq!(rep["next_better"]["reduction_kwh_per_year"].as_f64().unwrap(), 3000.0);
+        let mut no_src = args.clone();
+        no_src.as_object_mut().unwrap().remove("scheme_source");
+        assert!(app.handle("energy_certificate", &no_src).unwrap_err().contains("scheme_source is required"));
+        assert!(app.handle("energy_certificate", &json!({ "end_uses": "x" })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn fire_protection_check_lays_out_devices_and_refuses_missing_inputs() {
+        let mut app = App::default();
+        let args = json!({
+            "rooms": [{ "key": "hall", "x_mm": 0, "y_mm": 0, "w_mm": 6000, "h_mm": 5000, "detector": "D1", "sprinkler": "S1", "zone": "Z1" }],
+            "detectors": [{ "key": "D1", "coverage_m2": 20, "max_spacing_mm": 5000, "source": "test datasheet" }],
+            "sprinklers": [{ "key": "S1", "coverage_m2": 12, "max_spacing_mm": 4000, "source": "test datasheet" }],
+            "exits": [{ "key": "E1", "x_mm": 0, "y_mm": 0 }],
+            "water": { "design_density_mm_min": 5, "design_area_m2": 30, "duration_min": 60, "source": "test table" }
+        });
+        let r = app.handle("fire_protection_check", &args).unwrap();
+        assert_eq!(r["fire"]["total_detectors"], 2);
+        assert_eq!(r["fire"]["water"]["required_storage_m3"], 9.0);
+        assert_eq!(r["fire"]["water"]["status"], "unchecked");
+        assert_eq!(r["fire"]["call_points"]["status"], "unchecked");
+        let mut no_cov = args.clone();
+        no_cov["detectors"][0].as_object_mut().unwrap().remove("coverage_m2");
+        assert!(app.handle("fire_protection_check", &no_cov).unwrap_err().contains("coverage_m2 is required"));
+        assert!(app.handle("fire_protection_check", &json!({ "rooms": "x" })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn egress_check_measures_travel_and_widths_and_refuses_missing_source() {
+        let mut app = App::default();
+        let args = json!({
+            "rooms": [{ "key": "hall", "x_mm": 0, "y_mm": 0, "w_mm": 6000, "h_mm": 8000 }],
+            "exits": [{ "key": "E1", "x_mm": 0, "y_mm": 0, "clear_width_mm": 800 }],
+            "corridors": [{ "key": "C1", "x_mm": 0, "y_mm": 0, "w_mm": 20000, "h_mm": 1200 }],
+            "max_travel_distance_mm": 9000,
+            "min_corridor_width_mm": 1100,
+            "min_exit_width_mm": 900,
+            "source": "test clause"
+        });
+        let r = app.handle("egress_check", &args).unwrap();
+        assert_eq!(r["egress"]["overall"], "fails");
+        let checks = r["egress"]["checks"].as_array().unwrap();
+        let by = |rule: &str| checks.iter().find(|c| c["rule"] == rule).unwrap().clone();
+        assert_eq!(by("travel_distance")["status"], "fails");
+        assert_eq!(by("travel_distance")["value"].as_f64().unwrap().round(), 10000.0);
+        assert_eq!(by("corridor_width")["status"], "passes");
+        assert_eq!(by("exit_width")["status"], "fails");
+        let mut no_src = args.clone();
+        no_src.as_object_mut().unwrap().remove("source");
+        assert!(app.handle("egress_check", &no_src).unwrap_err().contains("source is required"));
+        assert!(app.handle("egress_check", &json!({ "rooms": "x" })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn access_check_measures_doors_and_ramps_and_refuses_missing_source() {
+        let mut app = App::default();
+        let args = json!({
+            "doors": [{ "key": "D1", "clear_width_mm": 750, "threshold_height_mm": 0 }],
+            "rooms": [{ "key": "WC", "w_mm": 1600, "h_mm": 2000 }],
+            "ramps": [{ "key": "R1", "rise_mm": 150, "run_mm": 1800 }],
+            "min_door_clear_width_mm": 800,
+            "min_turning_diameter_mm": 1500,
+            "max_ramp_slope": 0.0834,
+            "min_ramp_width_mm": 1000,
+            "source": "test clause"
+        });
+        let r = app.handle("access_check", &args).unwrap();
+        assert_eq!(r["access"]["overall"], "fails");
+        let checks = r["access"]["checks"].as_array().unwrap();
+        let by = |rule: &str| checks.iter().find(|c| c["rule"] == rule).unwrap().clone();
+        assert_eq!(by("door_width")["status"], "fails");
+        assert_eq!(by("threshold")["status"], "unchecked");
+        assert_eq!(by("turning_space")["status"], "passes");
+        assert_eq!(by("ramp_slope")["status"], "passes");
+        assert_eq!(by("ramp_width")["status"], "unchecked");
+        let mut no_src = args.clone();
+        no_src.as_object_mut().unwrap().remove("source");
+        assert!(app.handle("access_check", &no_src).unwrap_err().contains("source is required"));
+        assert!(app.handle("access_check", &json!({ "doors": "x" })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn cable_check_sizes_by_drop_and_refuses_missing_inputs() {
+        let mut app = App::default();
+        let args = json!({
+            "voltage_v": 230, "power_factor": 1, "three_phase": false, "derating_factor": 1, "allowance_mm": 0,
+            "catalogue": [
+                { "key": "c4", "area_mm2": 4, "r_ohm_km": 5, "x_ohm_km": 0, "ampacity_a": 30, "source": "test data" },
+                { "key": "c10", "area_mm2": 10, "r_ohm_km": 2, "x_ohm_km": 0, "ampacity_a": 60, "source": "test data" }
+            ],
+            "circuits": [{ "id": "C1", "from": { "x_mm": 0, "y_mm": 0 }, "to": { "x_mm": 50000, "y_mm": 0 }, "current_a": 25, "phases": 1 }],
+            "max_drop_pct": 3
+        });
+        let r = app.handle("cable_check", &args).unwrap();
+        assert_eq!(r["cables"]["circuits"][0]["cable"], "c10");
+        assert_eq!(r["cables"]["circuits"][0]["status"], "ok");
+        let mut no_v = args.clone();
+        no_v.as_object_mut().unwrap().remove("voltage_v");
+        assert!(app.handle("cable_check", &no_v).unwrap_err().contains("voltage_v is required"));
+        assert!(app.handle("cable_check", &json!({ "circuits": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn lighting_plan_counts_luminaires_and_refuses_missing_targets() {
+        let mut app = App::default();
+        let args = json!({
+            "rooms": [{ "key": "r1", "x_mm": 0, "y_mm": 0, "w_mm": 5000, "h_mm": 4000, "target_lux": 300, "target_source": "client brief", "luminaire": "L1" }],
+            "luminaires": [{ "key": "L1", "lumens": 4000, "utilisation": 0.5, "maintenance": 0.8 }]
+        });
+        let r = app.handle("lighting_plan", &args).unwrap();
+        assert_eq!(r["lighting"]["rooms"][0]["count"], 4);
+        assert_eq!(r["lighting"]["rooms"][0]["status"], "unchecked");
+        let mut no_target = args.clone();
+        no_target["rooms"][0].as_object_mut().unwrap().remove("target_lux");
+        assert!(app.handle("lighting_plan", &no_target).unwrap_err().contains("target_lux is required"));
+        assert!(app.handle("lighting_plan", &json!({ "rooms": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn spalling_check_screens_elements_and_never_passes_without_limits() {
+        let mut app = App::default();
+        let args = json!({
+            "elements": [
+                { "key": "c1", "kind": "column", "b_mm": 400, "h_mm": 400, "cover_mm": 40, "fc_mpa": 90, "exposed_sides": 4, "moisture_pct": 2.0, "pp_fibre_kg_m3": 2.0 },
+                { "key": "c2", "kind": "column", "b_mm": 400, "h_mm": 400, "cover_mm": 40, "fc_mpa": 90, "exposed_sides": 4, "moisture_pct": 2.0 }
+            ],
+            "max_moisture_pct": 3.0, "max_fc_mpa": 60.0, "max_cover_mm": 70.0, "min_pp_fibre_kg_m3": 2.0
+        });
+        let r = app.handle("spalling_check", &args).unwrap();
+        assert_eq!(r["spalling"]["elements"][0]["status"], "mitigated");
+        assert_eq!(r["spalling"]["elements"][1]["status"], "fails");
+        let no_limits = json!({ "elements": [args["elements"][0].clone()] });
+        let r = app.handle("spalling_check", &no_limits).unwrap();
+        assert_eq!(r["spalling"]["elements"][0]["status"], "unchecked");
+        assert!(app.handle("spalling_check", &json!({ "elements": [] })).unwrap_err().contains("nothing to check"));
+        assert!(app.handle("spalling_check", &json!({ "elements": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn deep_foundation_check_screens_mat_and_piles_and_names_missing_input() {
+        let mut app = App::default();
+        let args = json!({
+            "mat": { "x_mm": 0, "y_mm": 0, "w_mm": 10000, "l_mm": 10000, "allowable_kpa": 150.0 },
+            "columns": [
+                { "key": "a", "x_mm": 2000, "y_mm": 2000, "load_kn": 1000 },
+                { "key": "b", "x_mm": 8000, "y_mm": 2000, "load_kn": 1000 },
+                { "key": "c", "x_mm": 2000, "y_mm": 8000, "load_kn": 1000 },
+                { "key": "d", "x_mm": 8000, "y_mm": 8000, "load_kn": 1000 }
+            ],
+            "piles": [{ "key": "C1", "load_kn": 1600, "capacity_kn": 500, "positions": [[-750, -750], [750, -750], [-750, 750], [750, 750]] }]
+        });
+        let r = app.handle("deep_foundation_check", &args).unwrap();
+        assert_eq!(r["deep_foundation"]["mat"]["max_kpa"], 40.0);
+        assert_eq!(r["deep_foundation"]["mat"]["status"], "ok");
+        assert_eq!(r["deep_foundation"]["piles"][0]["max_kn"], 400.0);
+        assert_eq!(r["deep_foundation"]["piles"][0]["spacing_status"], "unchecked");
+        let mut no_spacing = args.clone();
+        no_spacing["piles"][0].as_object_mut().unwrap().remove("positions");
+        assert!(app.handle("deep_foundation_check", &no_spacing).unwrap_err().contains("spacing_mm is required"));
+        assert!(app.handle("deep_foundation_check", &json!({})).unwrap_err().contains("nothing to check"));
+        assert!(app.handle("deep_foundation_check", &json!({ "piles": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn shear_core_check_reports_enclosure_section_and_lateral_and_names_missing_input() {
+        let mut app = App::default();
+        let args = json!({
+            "walls": [
+                { "key": "S", "x_mm": 0, "y_mm": 0, "w_mm": 3000, "h_mm": 200 },
+                { "key": "N", "x_mm": 0, "y_mm": 2800, "w_mm": 3000, "h_mm": 200 },
+                { "key": "W", "x_mm": 0, "y_mm": 200, "w_mm": 200, "h_mm": 2600 },
+                { "key": "E", "x_mm": 2800, "y_mm": 200, "w_mm": 200, "h_mm": 2600 }
+            ],
+            "shafts": [{ "key": "L1", "kind": "lift", "x_mm": 200, "y_mm": 200, "w_mm": 2600, "h_mm": 2600 }],
+            "e_mpa": 25000.0,
+            "levels": [{ "height_mm": 12000, "fx_kn": 100.0 }],
+            "max_shear_mpa": 1.0
+        });
+        let r = app.handle("shear_core_check", &args).unwrap();
+        assert_eq!(r["shear_core"]["shafts"][0]["enclosure"], "enclosed");
+        assert_eq!(r["shear_core"]["section"]["area_mm2"], 2_240_000.0);
+        assert_eq!(r["shear_core"]["lateral"]["base_moment_about_y_knm"], 1200.0);
+        assert_eq!(r["shear_core"]["lateral"]["shear_status"], "ok");
+        assert_eq!(r["shear_core"]["lateral"]["top_status"], "unchecked");
+        let mut no_e = args.clone();
+        no_e.as_object_mut().unwrap().remove("e_mpa");
+        assert!(app.handle("shear_core_check", &no_e).unwrap_err().contains("e_mpa is required"));
+        assert!(app.handle("shear_core_check", &json!({ "walls": [] })).unwrap_err().contains("no walls"));
+        assert!(app.handle("shear_core_check", &json!({ "walls": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn snapshot_report_builds_html_and_csv_between_two_versions() {
+        let mut app = started_with_project();
+        app.handle("snapshot_save", &json!({ "name": "Rev A" })).unwrap();
+        let same = app.handle("snapshot_report", &json!({ "a": "S1", "lang": "en" })).unwrap();
+        assert_eq!(same["has_changes"], false);
+        assert!(same["html"].as_str().unwrap().contains("No difference between the two versions"));
+        let ar = app.handle("snapshot_report", &json!({ "a": "S1" })).unwrap();
+        assert!(ar["html"].as_str().unwrap().contains("dir=\"rtl\""));
+        assert!(ar["csv"].as_str().unwrap().starts_with("section,id,"));
+        assert_eq!(ar["name"], "change_report.pdf");
+        assert!(app.handle("snapshot_report", &json!({})).is_err());
+        assert!(app.handle("snapshot_report", &json!({ "a": "S9" })).is_err());
+        assert!(App::default().handle("snapshot_report", &json!({ "a": "S1" })).is_err());
+    }
+
+    #[test]
+    fn quality_report_scores_the_open_project_and_refuses_bad_input() {
+        let mut app = started_with_project();
+        let r = app.handle("quality_report", &json!({})).unwrap();
+        assert_eq!(r["name"], "quality_report.csv");
+        let crits = r["report"]["criteria"].as_array().unwrap();
+        assert_eq!(crits.len(), 4);
+        let integ = crits.iter().find(|c| c["id"] == "integrity").unwrap();
+        assert!(integ["score"].as_f64().is_some_and(|s| (0.0..=100.0).contains(&s)));
+        let prov = crits.iter().find(|c| c["id"] == "provenance").unwrap();
+        let audit = app.handle("number_audit", &json!({})).unwrap();
+        assert_eq!(prov["total"], audit["total"], "provenance counts exactly what the number audit counts");
+        assert_eq!(prov["counted"], audit["sourced"]);
+        let pre = app.handle("precheck", &json!({})).unwrap();
+        let errs = pre["issues"].as_array().unwrap().iter().filter(|i| i["level"] == "error").count();
+        assert_eq!(r["report"]["integrity_errors"].as_u64().unwrap() as usize, errs);
+        assert!(r["csv"].as_str().unwrap().starts_with("criterion,score"));
+        let w = app.handle("quality_report", &json!({ "weights": { "integrity": 1.0, "rules": 0.0, "coverage": 0.0, "provenance": 0.0 } })).unwrap();
+        assert_eq!(w["report"]["overall"], integ["score"], "with only integrity weighted the overall is the integrity score");
+        assert!(app.handle("quality_report", &json!({ "weights": { "rules": -1.0 } })).unwrap_err().contains("rules"));
+        assert!(app.handle("quality_report", &json!({ "weights": { "bogus": 1.0 } })).is_err());
+        assert!(App::default().handle("quality_report", &json!({})).is_err());
+    }
+
+    #[test]
+    fn assistant_explains_every_warning_and_applies_a_one_click_fix_as_one_undoable_step() {
+        let mut app = started_with_project();
+        let r = app.handle("assistant", &json!({})).unwrap();
+        let items = r["advice"]["items"].as_array().unwrap();
+        let pre = app.handle("precheck", &json!({})).unwrap();
+        let integrity_n = items.iter().filter(|i| i["source"] == "integrity").count();
+        assert_eq!(integrity_n, pre["issues"].as_array().unwrap().len(), "every integrity issue is explained");
+        let rules = app.handle("check_rules", &json!({ "sourced": true })).unwrap();
+        assert_eq!(items.iter().filter(|i| i["source"] == "rule").count(), rules["findings"].as_array().unwrap().len());
+        assert_eq!(items.iter().filter(|i| i["source"] == "skipped").count(), rules["skipped"].as_array().unwrap().len());
+        assert!(items.iter().all(|i| !i["why_ar"].as_str().unwrap().is_empty() && !i["how_en"].as_str().unwrap().is_empty()));
+
+        // A synthetic rule with a fix: every door narrower than the synthetic limit gets a one-click fix.
+        let pack = json!({
+            "id": "SYN", "edition": "synthetic", "version": "1",
+            "rules": [{ "id": "syn.door", "clause": "SYN-1", "applies_to": { "kind": "Door" }, "check": "width >= param.min",
+                "params": { "min": { "value": 1234, "source": "synthetic test value" } }, "severity": "warning",
+                "message": "synthetic door limit", "fix": { "prop": "width", "value": "param.min" } }]
+        })
+        .to_string();
+        let args = json!({ "pack": pack });
+        let list = app.handle("assistant", &args).unwrap();
+        let fix_items: Vec<&Value> = list["advice"]["items"].as_array().unwrap().iter().filter(|i| i["code"] == "syn.door").collect();
+        assert!(!fix_items.is_empty(), "the generated plan has doors under the synthetic limit");
+        assert!(fix_items.iter().all(|i| !i["fix"].is_null()));
+        let before = fix_items.len();
+        assert_eq!(list["advice"]["fixable"].as_u64().unwrap() as usize, before);
+        let id = fix_items[0]["id"].as_str().unwrap().to_string();
+        let h = hash(&app);
+        let done = app.handle("assistant_apply", &json!({ "pack": pack, "id": id })).unwrap();
+        assert_eq!(done["applied"]["changes"][0]["to"], 1234);
+        let after = done["advice"]["items"].as_array().unwrap().iter().filter(|i| i["code"] == "syn.door").count();
+        assert_eq!(after, before - 1, "exactly the fixed finding is gone");
+        assert_ne!(hash(&app), h);
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(hash(&app), h, "one undo restores the model");
+
+        // Refusals: unknown id, an item without a fix, a missing id, no project.
+        assert!(app.handle("assistant_apply", &json!({ "pack": pack, "id": "rule:nope:x" })).unwrap_err().contains("not in the current warning list"));
+        if let Some(nofix) = items.iter().find(|i| i["fix"].is_null()) {
+            assert!(app.handle("assistant_apply", &json!({ "id": nofix["id"] })).unwrap_err().contains("no automatic fix"));
+        }
+        assert!(app.handle("assistant_apply", &json!({})).unwrap_err().contains("id is required"));
+        assert!(App::default().handle("assistant", &json!({})).is_err());
+    }
+
+    #[test]
+    fn number_audit_lists_every_number_with_its_source_or_flags_it() {
+        let mut app = started_with_project();
+        let r = app.handle("number_audit", &json!({})).unwrap();
+        assert_eq!(r["name"], "number_audit.csv");
+        assert_eq!(r["total"].as_u64().unwrap(), r["sourced"].as_u64().unwrap() + r["unsourced"].as_u64().unwrap());
+        assert_eq!(r["entries"].as_array().unwrap().len() as u64, r["total"].as_u64().unwrap());
+        assert_eq!(r["unsourced_paths"].as_array().unwrap().len() as u64, r["unsourced"].as_u64().unwrap());
+        assert!(r["csv"].as_str().unwrap().starts_with("path,value,status,source,date
+"));
+        assert!(App::default().handle("number_audit", &json!({})).is_err());
+    }
+
+    #[test]
+    fn permit_pack_numbers_sheets_stamps_the_engineer_and_names_missing_inputs() {
+        let mut app = started_with_project();
+        let args = json!({
+            "engineer": { "name": "Eng <A>", "licence_no": "L-123", "licensing_body": "Test council", "discipline": "Architectural" },
+            "project_no": "P-7", "sheet_prefix": "A", "revision": "Rev B", "issued_for": "Review", "lang": "en"
+        });
+        let r = app.handle("permit_pack", &args).unwrap();
+        let h = r["html"].as_str().unwrap();
+        assert_eq!(r["name"], "permit_pack.pdf");
+        let sheets = r["sheets"].as_array().unwrap();
+        assert_eq!(sheets[0]["number"], "A-01");
+        assert_eq!(sheets[0]["kind"], "index");
+        assert!(sheets.len() >= 2 && sheets[1]["number"] == "A-02" && sheets[1]["kind"] == "plan");
+        assert_eq!(h.matches("<section class=\"sheet\">").count(), sheets.len());
+        assert!(h.contains("Eng &lt;A&gt;") && !h.contains("Eng <A>") && h.contains("L-123") && h.contains("Test council") && h.contains("Rev B") && h.contains("P-7"));
+        assert!(h.contains("Not valid until stamped and signed") && h.contains("class=\"seal\"") && !h.to_lowercase().contains("approved by"));
+        let n = sheets.len();
+        assert!(h.contains(&format!("{} / {n}", n)), "page x / total");
+        // Nothing is defaulted: every missing input is named at once.
+        let mut bad = args.clone();
+        bad.as_object_mut().unwrap().remove("project_no");
+        bad["engineer"]["licence_no"] = json!("  ");
+        let e = app.handle("permit_pack", &bad).unwrap_err();
+        assert!(e.contains("engineer.licence_no") && e.contains("project_no") && !e.contains("revision"), "{e}");
+        assert!(app.handle("permit_pack", &json!({ "engineer": "x" })).unwrap_err().contains("malformed"));
+        // Office letterhead: optional, printed on every sheet, escaped; a non-embedded logo is refused by name.
+        let mut lh = args.clone();
+        lh["letterhead"] = json!({ "office_name": "Studio <Z>", "footer": "CR 9" });
+        let h2 = app.handle("permit_pack", &lh).unwrap()["html"].as_str().unwrap().to_string();
+        assert!(h2.contains("Studio &lt;Z&gt;") && h2.contains("class=\"lf\"") && !h2.contains("Studio <Z>"));
+        assert!(!h.contains("class=\"lh\""));
+        lh["letterhead"]["logo_data_uri"] = json!("https://example.test/x.png");
+        assert!(app.handle("permit_pack", &lh).unwrap_err().contains("letterhead.logo_data_uri"));
+        assert!(App::default().handle("permit_pack", &args).is_err());
+        // lang "both": a matched Arabic/English pair with the same sheet numbers.
+        let mut both = args.clone();
+        both["lang"] = json!("both");
+        let r = app.handle("permit_pack", &both).unwrap();
+        assert_eq!(r["bilingual"], true);
+        let (ar, en) = (r["ar"]["html"].as_str().unwrap(), r["en"]["html"].as_str().unwrap());
+        assert!(ar.contains("dir=\"rtl\"") && ar.contains("غير نافذة حتى يختمها") && en.contains("dir=\"ltr\"") && en.contains("Not valid until stamped"));
+        let nk = |v: &Value| v.as_array().unwrap().iter().map(|s| (s["number"].clone(), s["kind"].clone())).collect::<Vec<_>>();
+        assert_eq!(nk(&r["ar"]["sheets"]), nk(&r["en"]["sheets"]), "same numbers and kinds; titles are translated");
+        assert_eq!(nk(&r["sheets"]), nk(&r["en"]["sheets"]));
+        assert_ne!(r["ar"]["sheets"][0]["title"], r["en"]["sheets"][0]["title"]);
+        assert_eq!(r["ar"]["name"], "permit_pack_ar.pdf");
+        assert_eq!(r["en"]["name"], "permit_pack_en.pdf");
+        both["project_no"] = json!("");
+        assert!(app.handle("permit_pack", &both).unwrap_err().contains("project_no"));
+    }
+
+    #[test]
+    fn signoff_form_prints_user_statement_leaves_boxes_empty_and_names_missing_inputs() {
+        let mut app = started_with_project();
+        let args = json!({
+            "engineer": { "name": "Eng <A>", "licence_no": "L-123", "licensing_body": "Test council" },
+            "project_no": "P-7", "revision": "Rev B", "scope": ["Architectural drawings A-01..A-03", " "],
+            "statement": "I take responsibility <as worded>.", "statement_source": "Council form 9, 2026-01-01", "lang": "en"
+        });
+        let r = app.handle("signoff_form", &args).unwrap();
+        let h = r["html"].as_str().unwrap();
+        assert_eq!(r["name"], "engineer_signoff.pdf");
+        assert!(h.contains("Eng &lt;A&gt;") && h.contains("L-123") && h.contains("Test council") && h.contains("I take responsibility &lt;as worded&gt;.") && h.contains("Council form 9"));
+        assert_eq!(h.matches("<li>").count(), 1, "blank scope entries are dropped");
+        assert!(h.contains("void until the licensed engineer signs") && !h.to_lowercase().contains("approved by"));
+        let mut bad = args.clone();
+        bad.as_object_mut().unwrap().remove("statement");
+        bad["scope"] = json!([" "]);
+        let e = app.handle("signoff_form", &bad).unwrap_err();
+        assert!(e.contains("statement") && e.contains("scope") && !e.contains("revision"), "{e}");
+        assert!(app.handle("signoff_form", &json!({ "engineer": "x" })).unwrap_err().contains("malformed"));
+        assert!(App::default().handle("signoff_form", &args).is_err());
+    }
+
+    #[test]
+    fn permit_documents_check_lists_missing_items_and_names_bad_input() {
+        let mut app = started_with_project();
+        let args = json!({
+            "required": [{ "key": "deed", "name": "Title deed" }, { "key": "arch", "name": "Architectural drawings" }],
+            "list_source": "Municipality form 3, 2026-01-01",
+            "submitted": [{ "key": "arch", "reference": "A-01", "date": "2026-02-03" }]
+        });
+        let r = app.handle("permit_documents_check", &args).unwrap();
+        assert_eq!(r["name"], "permit_documents.csv");
+        assert_eq!((r["missing"].as_u64(), r["overall"].as_str()), (Some(1), Some("incomplete")));
+        assert_eq!(r["rows"][0]["status"], "missing");
+        assert_eq!(r["rows"][1]["status"], "submitted");
+        let e = app.handle("permit_documents_check", &json!({ "required": [] })).unwrap_err();
+        assert!(e.contains("list_source") && e.contains("required"), "{e}");
+        assert!(app.handle("permit_documents_check", &json!({ "required": "x" })).unwrap_err().contains("malformed"));
+        assert!(App::default().handle("permit_documents_check", &args).is_err());
+    }
+
+    #[test]
+    fn room_finishes_schedule_lists_the_model_rooms_and_names_bad_input() {
+        let mut app = started_with_project();
+        let args = json!({
+            "finishes": [{ "code": "F1", "name": "Porcelain", "surface": "floor", "source": "Spec 09, 2026-01-01" }],
+            "assignments": [{ "func": "no-such-function", "floor": "F1" }]
+        });
+        let r = app.handle("room_finishes_schedule", &args).unwrap();
+        assert_eq!(r["name"], "room_finishes.csv");
+        let rows = r["rows"].as_array().unwrap();
+        assert!(!rows.is_empty());
+        assert_eq!(r["complete"], false);
+        assert_eq!(r["unassigned"].as_array().unwrap().len(), rows.len() * 3);
+        let e = app.handle("room_finishes_schedule", &json!({ "finishes": [] })).unwrap_err();
+        assert!(e.contains("finishes") && e.contains("assignments"), "{e}");
+        assert!(app.handle("room_finishes_schedule", &json!({ "finishes": "x" })).unwrap_err().contains("malformed"));
+        assert!(App::default().handle("room_finishes_schedule", &args).is_err());
+    }
+
+    #[test]
+    fn stair_detail_needs_the_users_dimensions_and_reports_unentered_limits_as_unchecked() {
+        let mut app = started_with_project();
+        let e = app.handle("stair_detail", &json!({})).unwrap_err();
+        assert!(e.contains("rise_mm") && e.contains("riser_count"), "{e}");
+        assert!(app.handle("stair_detail", &json!({ "rise_mm": "x" })).unwrap_err().contains("malformed"));
+        let v = app.handle("stair_detail", &json!({ "rise_mm": 3000, "riser_count": 15, "going_mm": 250, "width_mm": 1200 })).unwrap();
+        assert_eq!((v["riser_height_mm"].as_f64(), v["tread_count"].as_u64(), v["overall"].as_str()), (Some(200.0), Some(14), Some("incomplete")));
+        assert!(v["svg"].as_str().unwrap().starts_with("<svg"));
+        assert!(App::default().handle("stair_detail", &json!({})).is_err());
+    }
+
+    #[test]
+    fn wet_room_detail_needs_the_users_fixtures_and_a_model_room() {
+        let mut app = started_with_project();
+        let e = app.handle("wet_room_detail", &json!({ "room": "no-such-room", "fixtures": [{ "key": "wc", "x_mm": 0, "y_mm": 0, "w_mm": 400, "d_mm": 700, "source": "Data sheet" }] })).unwrap_err();
+        assert!(e.contains("no room with key"), "{e}");
+        let e = app.handle("wet_room_detail", &json!({ "room": "x" })).unwrap_err();
+        assert!(e.contains("fixtures"), "{e}");
+        assert!(app.handle("wet_room_detail", &json!({ "fixtures": "x" })).unwrap_err().contains("malformed"));
+        assert!(App::default().handle("wet_room_detail", &json!({})).is_err());
+    }
+
+    #[test]
+    fn ceiling_plan_needs_the_users_heights_and_devices_and_a_model_room() {
+        let mut app = started_with_project();
+        let dev = json!({ "key": "L1", "x_mm": 500, "y_mm": 500, "w_mm": 300, "d_mm": 300, "source": "Data sheet" });
+        let e = app.handle("ceiling_plan", &json!({ "room": "no-such-room", "ceiling_height_mm": 2700, "devices": [dev] })).unwrap_err();
+        assert!(e.contains("no room with key"), "{e}");
+        let e = app.handle("ceiling_plan", &json!({ "room": "x" })).unwrap_err();
+        assert!(e.contains("ceiling_height_mm") && e.contains("devices"), "{e}");
+        assert!(app.handle("ceiling_plan", &json!({ "devices": "x" })).unwrap_err().contains("malformed"));
+        assert!(App::default().handle("ceiling_plan", &json!({})).is_err());
+    }
+
+    #[test]
+    fn axes_plan_needs_the_users_axes_or_the_columns_to_read_them_from() {
+        let mut app = started_with_project();
+        let e = app.handle("axes_plan", &json!({})).unwrap_err();
+        assert!(e.contains("axes_x"), "{e}");
+        let e = app.handle("axes_plan", &json!({ "from_columns": true })).unwrap_err();
+        assert!(e.contains("cluster_mm"), "{e}");
+        assert!(app.handle("axes_plan", &json!({ "axes_x": "x" })).unwrap_err().contains("malformed"));
+        assert!(App::default().handle("axes_plan", &json!({})).is_err());
+    }
+
+    #[test]
+    fn site_fence_plan_cuts_the_users_gates_into_the_users_fences() {
+        let mut app = started_with_project();
+        let e = app.handle("site_fence_plan", &json!({})).unwrap_err();
+        assert!(e.contains("fences"), "{e}");
+        assert!(app.handle("site_fence_plan", &json!({ "fences": "x" })).unwrap_err().contains("malformed"));
+        let n = app.handle("site_plan", &json!({})).unwrap()["result"]["edges"].as_array().unwrap().len();
+        let fences: Vec<Value> = (0..n).map(|e| json!({ "edge": e, "kind": "solid wall", "height_m": 2.4, "thickness_m": 0.2, "source": "Brief" })).collect();
+        let out = app.handle("site_fence_plan", &json!({ "fences": fences, "gates": [{ "key": "G1", "edge": 0, "kind": "vehicle", "offset_m": 1.0, "width_m": 3.0, "source": "Brief" }] })).unwrap();
+        assert_eq!((out["vehicle_gates"].as_u64(), out["fences"][0]["gates"].as_u64()), (Some(1), Some(1)));
+        assert!(out["svg"].as_str().unwrap().starts_with("<svg"));
+        let e = app.handle("site_fence_plan", &json!({ "fences": [{ "edge": 0, "height_m": 2.4, "thickness_m": 0.2 }] })).unwrap_err();
+        assert!(e.contains("source"), "{e}");
+        assert!(App::default().handle("site_fence_plan", &json!({})).is_err());
+    }
+
+    #[test]
+    fn wall_load_takes_walls_down_to_beams_and_names_bad_input() {
+        let mut app = App::default();
+        let args = json!({
+            "walls": [{ "key": "w1", "a": [0, 0], "b": [5000, 0], "thickness_mm": 200, "height_mm": 3000, "unit_weight_kn_m3": 14.0 }],
+            "beams": [{ "key": "b1", "a": [0, 0], "b": [5000, 0] }]
+        });
+        let r = app.handle("wall_load", &args).unwrap();
+        assert_eq!(r["wall_load"]["beams"][0]["total_kn"], 42.0);
+        assert_eq!(r["wall_load"]["beams"][0]["max_moment_knm"], 26.25);
+        let mut no_g = args.clone();
+        no_g["walls"][0].as_object_mut().unwrap().remove("unit_weight_kn_m3");
+        assert!(app.handle("wall_load", &no_g).unwrap_err().contains("unit_weight_kn_m3 is required"));
+        assert!(app.handle("wall_load", &json!({ "beams": args["beams"] })).unwrap_err().contains("walls need"));
+    }
+
+    #[test]
+    fn savings_compare_ranks_alternatives_and_names_missing_input() {
+        let mut app = App::default();
+        let m = |b: f64| json!({ "key": "c", "kind": "column", "count": 4, "b_mm": b, "h_mm": b, "length_mm": 3000, "bars": [{ "dia_mm": 16, "count": 8 }] });
+        let args = json!({ "criterion": "concrete_m3", "alternatives": [
+            { "label": "A", "checks_passed": true, "members": [m(400.0)] },
+            { "label": "B", "checks_passed": true, "members": [m(300.0)] } ] });
+        let r = app.handle("savings_compare", &args).unwrap();
+        assert_eq!(r["savings"]["best"], 1);
+        assert_eq!(r["savings"]["alternatives"][1]["saving_concrete"]["pct"], 43.75);
+        let mut no_c = args.clone();
+        no_c.as_object_mut().unwrap().remove("criterion");
+        assert!(app.handle("savings_compare", &no_c).unwrap_err().contains("criterion is required"));
+        let mut cost = args.clone();
+        cost["criterion"] = json!("cost");
+        assert!(app.handle("savings_compare", &cost).unwrap_err().contains("needs prices"));
+        assert!(app.handle("savings_compare", &json!({ "criterion": "steel_kg" })).unwrap_err().contains("alternatives need"));
+    }
+
+    #[test]
+    fn sun_check_flags_west_bedrooms_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([
+            { "key": "bed1", "func": "bedroom", "zone": "private", "x": 0, "y": 0, "w": 6000, "h": 10000 },
+            { "key": "hall", "func": "hall", "zone": "public", "x": 6000, "y": 0, "w": 6000, "h": 10000 }
+        ]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 10000 }, "sleeping_funcs": ["bedroom"] });
+        let r = app.handle("sun_check", &base).unwrap();
+        assert_eq!(r["sun"]["status"], "west_exposed");
+        assert_eq!(r["sun"]["west_rooms"][0]["room"], "bed1");
+        let mut no_funcs = base.clone();
+        no_funcs.as_object_mut().unwrap().remove("sleeping_funcs");
+        assert!(app.handle("sun_check", &no_funcs).unwrap_err().contains("sleeping_funcs"));
+    }
+
+    #[test]
+    fn courtyard_check_measures_an_l_shaped_courtyard_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([{ "key": "a", "func": "bedroom", "zone": "private", "x": 0, "y": 0, "w": 3000, "h": 12000 }]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 12000 }, "outline": [
+            { "x": 3000, "y": 3000 }, { "x": 9000, "y": 3000 }, { "x": 9000, "y": 6000 }, { "x": 6000, "y": 6000 }, { "x": 6000, "y": 9000 }, { "x": 3000, "y": 9000 }] });
+        let r = app.handle("courtyard_check", &base).unwrap();
+        assert_eq!(r["courtyard"]["shape"], "l_shape");
+        assert!((r["courtyard"]["area_m2"].as_f64().unwrap() - 27.0).abs() < 1e-9);
+        assert_eq!(r["courtyard"]["contacts"][0]["room"], "a");
+        assert_eq!(r["courtyard"]["contacts"][0]["length_mm"], 6000);
+        let mut over = base.clone();
+        over["outline"] = json!([{ "x": 1000, "y": 1000 }, { "x": 5000, "y": 1000 }, { "x": 5000, "y": 5000 }]);
+        assert!(app.handle("courtyard_check", &over).unwrap_err().contains("covers part of the room"));
+        let mut none = base.clone();
+        none.as_object_mut().unwrap().remove("outline");
+        assert!(app.handle("courtyard_check", &none).unwrap_err().contains("outline"));
+    }
+
+    #[test]
+    fn room_shape_check_measures_an_l_room_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([{ "key": "living", "func": "living", "zone": "public", "x": 0, "y": 0, "w": 8000, "h": 8000 }]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 12000 }, "key": "living", "min_wall_mm": 3000, "outline": [
+            { "x": 0, "y": 0 }, { "x": 8000, "y": 0 }, { "x": 8000, "y": 4000 }, { "x": 4000, "y": 4000 }, { "x": 4000, "y": 8000 }, { "x": 0, "y": 8000 }] });
+        let r = app.handle("room_shape_check", &base).unwrap();
+        assert_eq!(r["room_shape"]["shape"], "l_shape");
+        assert!((r["room_shape"]["area_m2"].as_f64().unwrap() - 48.0).abs() < 1e-9);
+        assert_eq!(r["room_shape"]["length_check"], "pass");
+        assert_eq!(r["room_shape"]["walls"][0]["faces"], "south");
+        let mut none = base.clone();
+        none.as_object_mut().unwrap().remove("min_wall_mm");
+        assert_eq!(app.handle("room_shape_check", &none).unwrap()["room_shape"]["length_check"], "unchecked");
+        let mut bad = base.clone();
+        bad["min_wall_mm"] = json!("x");
+        assert!(app.handle("room_shape_check", &bad).unwrap_err().contains("min_wall_mm"));
+        let mut nokey = base.clone();
+        nokey.as_object_mut().unwrap().remove("key");
+        assert!(app.handle("room_shape_check", &nokey).unwrap_err().contains("key"));
+        let mut slanted = base.clone();
+        slanted["outline"] = json!([{ "x": 0, "y": 0 }, { "x": 4000, "y": 0 }, { "x": 2000, "y": 3000 }]);
+        assert!(app.handle("room_shape_check", &slanted).unwrap_err().contains("slanted"));
+    }
+
+    #[test]
+    fn mezzanine_check_measures_a_partial_floor_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([{ "key": "shop", "func": "living", "zone": "public", "x": 0, "y": 0, "w": 10000, "h": 10000 }]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 10000, "h": 10000 }, "storey_height_mm": 5400, "level_mm": 2800, "slab_mm": 300,
+            "min_clear_below_mm": 2300, "outline": [{ "x": 0, "y": 5000 }, { "x": 10000, "y": 5000 }, { "x": 10000, "y": 10000 }, { "x": 0, "y": 10000 }] });
+        let r = app.handle("mezzanine_check", &base).unwrap();
+        assert!((r["mezzanine"]["area_m2"].as_f64().unwrap() - 50.0).abs() < 1e-9);
+        assert_eq!(r["mezzanine"]["clear_below_mm"], 2500);
+        assert_eq!(r["mezzanine"]["clear_below_check"], "pass");
+        assert_eq!(r["mezzanine"]["clear_above_check"], "unchecked");
+        let mut missing = base.clone();
+        missing.as_object_mut().unwrap().remove("level_mm");
+        assert!(app.handle("mezzanine_check", &missing).unwrap_err().contains("level_mm"));
+        let mut bad = base.clone();
+        bad["max_area_share"] = json!("x");
+        assert!(app.handle("mezzanine_check", &bad).unwrap_err().contains("limits must be numbers"));
+        let mut deep = base.clone();
+        deep["slab_mm"] = json!(3000);
+        assert!(app.handle("mezzanine_check", &deep).unwrap_err().contains("thinner"));
+    }
+
+    #[test]
+    fn furniture_fit_arranges_pieces_and_names_bad_input() {
+        let mut app = App::default();
+        let base = json!({ "room": { "w": 4000, "h": 3500 }, "min_walkway_mm": 800,
+            "pieces": [{ "key": "bed", "w_mm": 1600, "d_mm": 2000 }, { "key": "chair", "w_mm": 500, "d_mm": 500, "count": 2 }],
+            "doors": [{ "wall": "south", "offset_mm": 500, "width_mm": 900 }], "door_clear_mm": 900 });
+        let r = app.handle("furniture_fit", &base).unwrap();
+        assert_eq!(r["furniture_fit"]["status"], "fits");
+        assert_eq!(r["furniture_fit"]["placements"].as_array().unwrap().len(), 3);
+        assert_eq!(r["furniture_fit"]["access_check"], "pass");
+        assert_eq!(r["furniture_fit"]["occupancy_check"], "unchecked");
+        let mut no_walk = base.clone();
+        no_walk.as_object_mut().unwrap().remove("min_walkway_mm");
+        assert!(app.handle("furniture_fit", &no_walk).unwrap_err().contains("min_walkway_mm"));
+        let mut bad = base.clone();
+        bad["pieces"][0]["w_mm"] = json!("wide");
+        assert!(app.handle("furniture_fit", &bad).unwrap_err().contains("whole millimetres"));
+        let mut small = base.clone();
+        small["room"] = json!({ "w": 1500, "h": 1500 });
+        small["doors"] = json!([]);
+        let r = app.handle("furniture_fit", &small).unwrap();
+        assert_eq!(r["furniture_fit"]["status"], "no_arrangement_found");
+    }
+
+    #[test]
+    fn expansion_is_saved_in_the_project_reported_and_undone() {
+        let mut app = started_with_project();
+        assert!(app.handle("expansion_check", &json!({})).unwrap_err().contains("no expansion is saved"));
+        let bad = json!({ "meta": { "expansion": { "vertical": { "extraStoreys": 11, "storeyHeightMm": 3200.0 } } } });
+        assert!(app.handle("project_set", &bad).unwrap_err().contains("more than 10"));
+        let ok = json!({ "meta": { "expansion": { "vertical": { "extraStoreys": 1, "storeyHeightMm": 3200.0, "maxStoreys": 4, "limitsSource": "municipality letter" }, "note": "phase 2" } } });
+        assert_eq!(app.handle("project_set", &ok).unwrap()["changed"], json!(true));
+        let r = app.handle("expansion_check", &json!({})).unwrap();
+        let v = &r["expansion"]["vertical"];
+        assert_eq!(v["extra_storeys"], json!(1));
+        assert_eq!(v["storeys_check"], json!("pass"));
+        assert_eq!(v["height_check"], json!("unchecked"));
+        assert_eq!(v["limits_source"], json!("municipality letter"));
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.handle("expansion_check", &json!({})).unwrap_err().contains("no expansion is saved"));
+    }
+
+    #[test]
+    fn rooftop_check_measures_the_roof_and_names_bad_input() {
+        let mut app = App::default();
+        let base = json!({ "envelope": { "w": 10000, "h": 10000 }, "min_edge_setback_mm": 500,
+            "items": [{ "key": "stair", "kind": "room", "x": 1000, "y": 1000, "w": 3000, "h": 4000, "height_mm": 2600 },
+                      { "key": "t1", "kind": "tank", "x": 6000, "y": 6000, "w": 2000, "h": 2000, "height_mm": 1500, "water_depth_mm": 1200 }] });
+        let r = app.handle("rooftop_check", &base).unwrap();
+        assert!((r["rooftop"]["free_m2"].as_f64().unwrap() - 84.0).abs() < 1e-9);
+        assert!((r["rooftop"]["tank_water_kg"].as_f64().unwrap() - 4800.0).abs() < 1e-6);
+        assert_eq!(r["rooftop"]["edge_check"], "pass");
+        assert_eq!(r["rooftop"]["gap_check"], "unchecked");
+        let mut no_env = base.clone();
+        no_env.as_object_mut().unwrap().remove("envelope");
+        assert!(app.handle("rooftop_check", &no_env).unwrap_err().contains("envelope is required"));
+        let mut bad = base.clone();
+        bad["items"][0]["kind"] = json!("garden");
+        assert!(app.handle("rooftop_check", &bad).unwrap_err().contains("kind (room, canopy or tank)"));
+        let mut dry = base.clone();
+        dry["items"][1].as_object_mut().unwrap().remove("water_depth_mm");
+        assert!(app.handle("rooftop_check", &dry).unwrap_err().contains("needs water_depth_mm"));
+    }
+
+    #[test]
+    fn basement_check_measures_the_level_and_names_bad_input() {
+        let mut app = App::default();
+        let base = json!({ "envelope": { "w": 20000, "h": 30000 }, "outline": { "x": 2000, "y": 2000, "w": 16000, "h": 26000 },
+            "storey_mm": 3500, "slab_mm": 300, "depth_mm": 3000, "max_ramp_slope_pct": 20.0,
+            "spaces": [{ "key": "bays", "kind": "parking", "x": 2000, "y": 2000, "w": 16000, "h": 10000, "stalls": 12 },
+                       { "key": "ramp", "kind": "ramp", "x": 2000, "y": 13000, "w": 4000, "h": 15000, "run_along": "y" }] });
+        let r = app.handle("basement_check", &base).unwrap();
+        assert!((r["basement"]["excavation_m3"].as_f64().unwrap() - 1248.0).abs() < 1e-9);
+        assert_eq!(r["basement"]["parking_stalls"], 12);
+        assert_eq!(r["basement"]["ramp_slope_check"], "pass");
+        assert_eq!(r["basement"]["groundwater_check"], "unchecked");
+        let mut no_env = base.clone();
+        no_env.as_object_mut().unwrap().remove("envelope");
+        assert!(app.handle("basement_check", &no_env).unwrap_err().contains("envelope is required"));
+        let mut bad = base.clone();
+        bad["spaces"][0]["kind"] = json!("garage");
+        assert!(app.handle("basement_check", &bad).unwrap_err().contains("kind (parking, storage, service, ramp or core)"));
+        let mut dry = base.clone();
+        dry["spaces"][1].as_object_mut().unwrap().remove("run_along");
+        assert!(app.handle("basement_check", &dry).unwrap_err().contains("needs run_along"));
+        let mut no_depth = base.clone();
+        no_depth.as_object_mut().unwrap().remove("depth_mm");
+        assert!(app.handle("basement_check", &no_depth).unwrap_err().contains("depth_mm"));
+    }
+
+    #[test]
+    fn parking_plan_packs_stalls_and_names_bad_input() {
+        let mut app = App::default();
+        let base = json!({ "envelope": { "w": 40000, "h": 40000 }, "area": { "x": 1000, "y": 2000, "w": 15000, "h": 16000 },
+            "stall_width_mm": 2500, "stall_length_mm": 5000, "aisle_width_mm": 6000, "required_stalls": 12,
+            "turn": { "vehicle_width_mm": 1800, "wheelbase_mm": 2700, "front_overhang_mm": 900, "centre_radius_mm": 5000, "lane_width_mm": 4000 } });
+        let r = app.handle("parking_plan", &base).unwrap();
+        assert_eq!(r["parking"]["stall_count"], 12);
+        assert_eq!(r["parking"]["stalls"].as_array().unwrap().len(), 12);
+        assert_eq!(r["parking"]["count_check"], "pass");
+        assert_eq!(r["parking"]["turn_check"], "pass");
+        assert_eq!(r["parking"]["aisle_check"], "unchecked");
+        let mut no_env = base.clone();
+        no_env.as_object_mut().unwrap().remove("envelope");
+        assert!(app.handle("parking_plan", &no_env).unwrap_err().contains("envelope is required"));
+        let mut no_stall = base.clone();
+        no_stall.as_object_mut().unwrap().remove("stall_width_mm");
+        assert!(app.handle("parking_plan", &no_stall).unwrap_err().contains("stall_width_mm"));
+        let mut zero = base.clone();
+        zero["aisle_width_mm"] = json!(0);
+        assert!(app.handle("parking_plan", &zero).unwrap_err().contains("aisle_width_mm is required"));
+    }
+
+    #[test]
+    fn terrain_check_fits_ground_and_names_bad_input() {
+        let mut app = App::default();
+        let base = json!({ "envelope": { "w": 20000, "h": 20000 },
+            "spots": [{ "x": 0, "y": 0, "z_mm": 100000 }, { "x": 20000, "y": 0, "z_mm": 101000 }, { "x": 0, "y": 20000, "z_mm": 100000 }],
+            "platforms": [{ "key": "A", "x": 0, "y": 0, "w": 10000, "h": 10000, "level_mm": 100250 }],
+            "max_cut_mm": 300 });
+        let r = app.handle("terrain_check", &base).unwrap();
+        assert_eq!(r["terrain"]["ground"]["fall_side"], "x_min");
+        assert_eq!(r["terrain"]["cut_check"], "pass");
+        assert_eq!(r["terrain"]["fill_check"], "unchecked");
+        let mut no_env = base.clone();
+        no_env.as_object_mut().unwrap().remove("envelope");
+        assert!(app.handle("terrain_check", &no_env).unwrap_err().contains("envelope is required"));
+        let mut few = base.clone();
+        few["spots"] = json!([{ "x": 0, "y": 0, "z_mm": 1 }]);
+        assert!(app.handle("terrain_check", &few).unwrap_err().contains("at least 3 spot levels"));
+        let mut bad = base.clone();
+        bad["spots"][0].as_object_mut().unwrap().remove("z_mm");
+        assert!(app.handle("terrain_check", &bad).unwrap_err().contains("z_mm"));
+    }
+
+    #[test]
+    fn wind_check_classes_rooms_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([
+            { "key": "a", "func": "bedroom", "zone": "private", "x": 0, "y": 0, "w": 6000, "h": 10000 },
+            { "key": "b", "func": "hall", "zone": "public", "x": 6000, "y": 0, "w": 6000, "h": 10000 }
+        ]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 10000 }, "wind_from": "north", "wind_source": "met station 2020", "habitable_funcs": ["bedroom"] });
+        let r = app.handle("wind_check", &base).unwrap();
+        assert_eq!(r["wind"]["rooms"][0]["flow"], "cross");
+        let mut no_dir = base.clone();
+        no_dir.as_object_mut().unwrap().remove("wind_from");
+        assert!(app.handle("wind_check", &no_dir).unwrap_err().contains("prevailing wind"));
+        let mut no_src = base.clone();
+        no_src.as_object_mut().unwrap().remove("wind_source");
+        assert!(app.handle("wind_check", &no_src).unwrap_err().contains("source"));
+        let mut bad = base.clone();
+        bad["wind_from"] = json!("up");
+        assert!(app.handle("wind_check", &bad).unwrap_err().contains("wind_from"));
+        let mut no_funcs = base.clone();
+        no_funcs.as_object_mut().unwrap().remove("habitable_funcs");
+        assert!(app.handle("wind_check", &no_funcs).unwrap_err().contains("habitable_funcs"));
+    }
+
+    #[test]
+    fn entrances_check_separates_guest_and_family_doors_and_names_bad_input() {
+        let mut app = App::default();
+        let rooms = json!([
+            { "key": "majlis", "func": "majlis", "zone": "public", "x": 0, "y": 0, "w": 5000, "h": 4000 },
+            { "key": "hall", "func": "hall", "zone": "public", "x": 5000, "y": 0, "w": 7000, "h": 4000 }
+        ]);
+        let base = json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 10000 }, "entry": "south", "min_separation_mm": 6000 });
+        let r = app.handle("entrances_check", &base).unwrap();
+        assert_eq!(r["entrances"]["status"], "separated");
+        assert_eq!(r["entrances"]["separation_mm"], 10800);
+        let skipped = app.handle("entrances_check", &json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 10000 }, "entry": "south" })).unwrap();
+        assert_eq!(skipped["entrances"]["status"], "unchecked");
+        assert!(app.handle("entrances_check", &json!({ "rooms": rooms, "envelope": { "w": 12000, "h": 10000 }, "entry": "up" })).unwrap_err().contains("entry"));
+        assert!(app.handle("entrances_check", &json!({ "envelope": { "w": 1, "h": 1 }, "entry": "south" })).unwrap_err().contains("rooms are required"));
+    }
+
+    #[test]
+    fn ifc_review_reads_a_file_and_refuses_a_revit_file() {
+        let mut app = App::default();
+        let dir = std::env::temp_dir().join(format!("nanoarch_ifcrev_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ifc = dir.join("a.ifc");
+        std::fs::write(&ifc, "ISO-10303-21;
+HEADER;
+FILE_SCHEMA(('IFC4'));
+ENDSEC;
+DATA;
+#1=IFCPROJECT('7777777777777777777777',$,'P',$,$,$,$,$,$);
+ENDSEC;
+END-ISO-10303-21;
+").unwrap();
+        let r = app.handle("ifc_review", &json!({ "path": ifc.to_str().unwrap() })).unwrap();
+        assert_eq!(r["review"]["schema"], "IFC4");
+        assert_eq!(r["review"]["project_name"], "P");
+        assert!(r["review"]["findings"].as_array().unwrap().iter().any(|f| f["code"] == "no_storeys"));
+        let rvt = dir.join("a.rvt");
+        std::fs::write(&rvt, [0xD0u8, 0xCF, 0x11, 0xE0, 0, 0]).unwrap();
+        assert!(app.handle("ifc_review", &json!({ "path": rvt.to_str().unwrap() })).unwrap_err().contains("Revit"));
+        assert!(app.handle("ifc_review", &json!({})).unwrap_err().contains("path"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn learned_preferences_reach_the_suggested_room_areas() {
+        let mut app = App::default();
+        let err = app.handle("prefs_learn", &json!({ "paths": [] })).unwrap_err();
+        assert!(err.contains("paths"));
+        let r = app.handle("prefs_learn", &json!({ "paths": ["C:/nonexistent/none.nnx"] })).unwrap();
+        assert_eq!(r["skipped"].as_array().unwrap().len(), 1);
+        assert_eq!(r["preferences"]["projects_used"], 0);
+        let prefs = json!({ "rooms": [{ "func": "bedroom", "median_m2": 21.5, "min_m2": 18.0, "max_m2": 25.0, "samples": 5 }], "projects_read": 2, "projects_used": 2, "too_few": [] });
+        let draft = json!({ "building_type": "villa", "floors": 1, "city": "Riyadh", "climate_zone": 1, "style": "contemporary" });
+        let r = app.handle("brief_clarify", &json!({ "draft": draft, "field": "rooms", "answer": "2", "prefs": prefs })).unwrap();
+        assert_eq!(r["draft"]["rooms"][0]["area_m2"], 21.5);
+    }
+
+    #[test]
+    fn the_clarifying_conversation_asks_only_what_is_missing_and_ends_when_complete() {
+        let mut app = App::default();
+        let r = app.handle("brief_clarify", &json!({ "draft": { "building_type": "villa", "floors": 1, "city": "Riyadh", "climate_zone": 1, "style": "contemporary" } })).unwrap();
+        assert_eq!(r["next"]["field"], "plot_size");
+        assert_eq!(r["missing"].as_array().unwrap().len(), 2);
+        let r = app.handle("brief_clarify", &json!({ "draft": r["draft"], "field": "plot_size", "answer": "20x30" })).unwrap();
+        assert_eq!(r["next"]["field"], "rooms");
+        let r = app.handle("brief_clarify", &json!({ "draft": r["draft"], "field": "rooms", "answer": "3" })).unwrap();
+        assert_eq!((r["complete"].as_bool(), r["next"].is_null()), (Some(true), true));
+        assert!(app.handle("brief_clarify", &json!({ "draft": r["draft"], "field": "floors", "answer": "many" })).unwrap_err().contains(" | "));
+        assert!(app.handle("brief_clarify", &json!({})).unwrap_err().contains("draft is required"));
+    }
+
+    #[test]
+    fn an_excel_area_schedule_fills_the_draft_rooms_through_the_backend() {
+        let mut app = App::default();
+        let b64 = nnx_core::xlsx::base64_encode(include_bytes!("../nnx-core/tests/data/areas_deflated.xlsx"));
+        let r = app.handle("areas_import", &json!({ "xlsx_b64": b64 })).unwrap();
+        assert_eq!(r["table"]["rooms"][0]["func"], "kitchen");
+        assert!(r.get("draft").is_none());
+        let draft = json!({ "building_type": "villa", "floors": 1, "city": "Riyadh", "climate_zone": 1, "style": "contemporary", "rooms": [{ "func": "bedroom", "name": "old", "area_m2": 9.0, "floor": 1, "assumed": false }] });
+        let r = app.handle("areas_import", &json!({ "xlsx_b64": b64, "draft": draft })).unwrap();
+        assert_eq!(r["draft"]["rooms"].as_array().unwrap().len(), 1);
+        assert_eq!(r["draft"]["rooms"][0]["area_m2"], 14.5);
+        assert_eq!(r["next"]["field"], "plot_size");
+        assert!(app.handle("areas_import", &json!({})).unwrap_err().contains("workbook's path"));
+        assert!(app.handle("areas_import", &json!({ "path": "C:/nope/none.xlsx" })).unwrap_err().contains("cannot read"));
+    }
+
+    #[test]
+    fn surveyed_utm_corners_are_imported_through_the_backend() {
+        let mut app = App::default();
+        let t = "E,N\n500000,2700000\n500018,2700000\n500018,2700022\n500000,2700022\n";
+        let r = app.handle("plot_import_survey", &json!({ "text": t, "crs": "UTM 38N" })).unwrap();
+        assert!((r["result"]["candidates"][0]["area_m2"].as_f64().unwrap() - 396.0).abs() < 1e-6);
+        assert!(app.handle("plot_import_survey", &json!({})).unwrap_err().contains("corner rows"));
+        assert!(app.handle("plot_import_survey", &json!({ "text": t })).unwrap_err().contains("unit"));
+        assert!(app.handle("plot_import_survey", &json!({ "path": "C:/nope/none.csv" })).unwrap_err().contains("cannot read"));
     }
 
     #[test]
@@ -4329,6 +6845,8 @@ mod tests {
         let clashes = app.handle("clashes", &json!({})).unwrap();
         // Whatever remains is reported by the clash check, never hidden.
         assert!(clashes["runs"].as_u64().unwrap() > 0);
+        // The same report comes back with the apply itself, so no separate request is needed to see what hits the structure.
+        assert_eq!(r["structure_clashes"], clashes);
         let mut bad = mep_inputs();
         bad["routing"] = json!({ "ahu_room": "living", "supply_delta_t_c": 10, "duct_velocity_mps": 5, "duct_height_mm": 250, "ceiling_height_mm": 2300, "return_offset_mm": 400, "avoid_structure": true });
         let m = app.handle("mep", &json!({ "inputs": bad })).unwrap();
@@ -4338,7 +6856,7 @@ mod tests {
     fn every_starter_template_applies_and_generates_a_plan_with_no_empty_room_area() {
         let list = App::default().handle("templates", &json!({})).unwrap();
         let ids: Vec<String> = list["templates"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap().to_string()).collect();
-        assert_eq!(ids, vec!["villa_jubail", "palace", "apartments_4"]);
+        assert_eq!(ids, vec!["villa_jubail", "palace", "apartments_4", "duplex", "annex"]);
         assert!(App::default().handle("template_apply", &json!({ "id": "nope" })).is_err());
         for id in ids {
             let r = App::default().handle("template_apply", &json!({ "id": id })).unwrap();
@@ -4347,9 +6865,11 @@ mod tests {
             // The page sends exactly this: the plot, the setbacks from the rule, the rooms with their areas.
             let rooms: Vec<Value> = t["rooms"].as_array().unwrap().iter().map(|x| json!({ "key": x["key"], "name": x["name"], "func": x["func"], "area": x["area_m2"], "zone": x["zone"], "light": x["func"] != "bathroom", "floor": x["floor"] })).collect();
             assert!(rooms.iter().all(|x| x["area"].as_f64().unwrap() > 0.0));
-            let st = t["stair"].as_array().unwrap();
-            let brief = json!({ "title": t["project_title"], "width_m": t["plot_width_m"], "length_m": t["plot_length_m"], "setback_front_m": r["setbacks"]["front_m"], "setback_back_m": r["setbacks"]["back_m"], "setback_side_m": r["setbacks"]["side_m"], "entry": "south", "rooms": rooms,
-                "stair": { "width_m": st[0], "length_m": st[1], "side": st[2] } });
+            // A single-storey template (the annex) has no stair, as the page sends it.
+            let mut brief = json!({ "title": t["project_title"], "width_m": t["plot_width_m"], "length_m": t["plot_length_m"], "setback_front_m": r["setbacks"]["front_m"], "setback_back_m": r["setbacks"]["back_m"], "setback_side_m": r["setbacks"]["side_m"], "entry": "south", "rooms": rooms });
+            if let Some(st) = t["stair"].as_array() {
+                brief["stair"] = json!({ "width_m": st[0], "length_m": st[1], "side": st[2] });
+            }
             let meta = json!({ "buildingType": t["building_type"], "style": t["style"], "climateZone": t["city"] });
             let mut app = App::default();
             let g = app.handle("generate", &json!({ "brief": brief, "struct": { "floors": t["floors"] }, "meta": meta })).unwrap_or_else(|e| panic!("{id}: {e}"));
@@ -4360,6 +6880,21 @@ mod tests {
             let site = app.handle("site_plan", &json!({})).unwrap();
             assert_eq!(site["result"]["setbacks_m"][0], r["setbacks"]["front_m"], "{id}");
         }
+    }
+
+    #[test]
+    fn auto_views_draws_every_elevation_and_section_with_all_levels_and_needs_a_project() {
+        let mut app = started_with_project();
+        let r = app.handle("auto_views", &json!({})).unwrap();
+        let views = r["views"].as_array().unwrap();
+        assert!(views.len() >= 6, "four elevations and A-A, B-B at least");
+        assert_eq!(views.iter().filter(|v| v["kind"] == "elevation").count(), 4);
+        assert!(views.iter().all(|v| v["svg"].as_str().unwrap().starts_with("<svg")));
+        assert_eq!(r["complete"], true, "{}", r["notes"]);
+        let levels = r["model_levels"].as_array().unwrap().len();
+        assert!(views.iter().all(|v| v["levels_shown"].as_array().unwrap().len() >= levels.max(1)));
+        let mut empty = App::default();
+        assert!(empty.handle("auto_views", &json!({})).is_err());
     }
 
     #[test]
@@ -4650,12 +7185,12 @@ mod tests {
                 let key = v["en"].as_str().unwrap().split(' ').next().unwrap();
                 assert!(sel["warnings"].to_string().contains(&format!("room '{key}' cannot reach")), "alternative {i}: {v} is not explained by {}", sel["warnings"]);
             }
-            if i == 0 {
-                assert!(bad.is_empty(), "the first alternative reaches the ratio everywhere: {bad:?}");
+            if i == generator_best(&g) {
+                assert!(bad.is_empty(), "the generator's best alternative reaches the ratio everywhere: {bad:?}");
             }
         }
         // Moving a partition rebuilds the windows with the same target.
-        app.handle("select", &json!({ "index": 0, "struct": {} })).unwrap();
+        app.handle("select", &json!({ "index": generator_best(&g), "struct": {} })).unwrap();
         let wall = app.doc.as_ref().unwrap().model.elements.values().find(|e| e.kind == "Wall" && e.props["isExterior"] == json!(false)).map(|e| e.id.to_string()).unwrap();
         for delta in [300, -300] {
             if let Ok(r) = app.handle("move_partition", &json!({ "wall": wall, "delta_mm": delta })) {
@@ -4844,6 +7379,55 @@ mod tests {
     }
 
     #[test]
+    fn the_structural_calc_report_lists_assumptions_then_results_and_changes_nothing() {
+        let mut app = sized_app();
+        assert!(app.handle("structural_calc_report", &json!({})).unwrap_err().contains("run `sizing` first"));
+        app.handle("sizing", &json!({ "inputs": sizing_inputs() })).unwrap();
+        let h = hash(&app);
+        let r = app.handle("structural_calc_report", &json!({ "lang": "en" })).unwrap();
+        assert_eq!(hash(&app), h, "the report must not edit the project");
+        let rep = &r["calc_report"];
+        let get = |k: &str| rep["assumptions"].as_array().unwrap().iter().find(|a| a["key"] == k).unwrap()["value"].clone();
+        assert_eq!(get("sizing.footing_thickness_mm"), "500");
+        assert_eq!(get("sizing.rebar.cover_mm"), "40");
+        // Inputs the test never entered stay unset and are named; the report is not complete.
+        assert_eq!(get("design.fy_mpa"), Value::Null);
+        assert_eq!(rep["status"], "incomplete");
+        assert!(rep["missing_assumptions"].as_array().unwrap().iter().any(|m| m == "design.fy_mpa"));
+        let md = r["markdown"].as_str().unwrap();
+        assert!(md.find("## 1.").unwrap() < md.find("## 2.").unwrap());
+        let ar = app.handle("structural_calc_report", &json!({ "lang": "ar" })).unwrap();
+        assert!(ar["markdown"].as_str().unwrap().contains("الفرضيات"));
+        assert!(app.handle("structural_calc_report", &json!({ "lang": "fr" })).unwrap_err().contains("lang"));
+    }
+
+    #[test]
+    fn the_rebar_drawings_command_draws_the_stored_sizing_inputs_and_changes_nothing() {
+        let mut app = sized_app();
+        assert!(app.handle("rebar_drawings", &json!({})).unwrap_err().contains("run `sizing` first"));
+        app.handle("sizing", &json!({ "inputs": sizing_inputs() })).unwrap();
+        let h = hash(&app);
+        let r = app.handle("rebar_drawings", &json!({})).unwrap();
+        assert_eq!(hash(&app), h, "drawing must not edit the project");
+        // A beam the template cannot fit (a 100 mm deep member with 16 mm bars, 8 mm stirrups and 40 mm cover) is listed with its
+        // reason and not drawn; nothing else is skipped.
+        for s in r["skipped"].as_array().unwrap() {
+            assert!(s["reason"].as_str().unwrap().contains("overlap"), "{s}");
+            assert!(s["members"].as_array().unwrap().iter().all(|m| m.as_str().unwrap().starts_with("BM-") || m.as_str().unwrap().starts_with("TB-")), "{s}");
+        }
+        let kinds: Vec<&str> = r["sheets"].as_array().unwrap().iter().map(|s| s["kind"].as_str().unwrap()).collect();
+        assert!(kinds.contains(&"column") && kinds.contains(&"footing") && kinds.contains(&"beam"), "{kinds:?}");
+        let dxf = r["dxf"].as_str().unwrap();
+        assert!(dxf.starts_with("0\nSECTION") && dxf.ends_with("0\nEOF\n") && dxf.contains("S-RBAR-LINK"));
+        // Every column of the report is on a sheet.
+        let rep = app.handle("sizing", &json!({ "inputs": sizing_inputs() })).unwrap();
+        let drawn: Vec<&str> = r["sheets"].as_array().unwrap().iter().flat_map(|s| s["members"].as_array().unwrap()).map(|m| m.as_str().unwrap()).collect();
+        for c in rep["report"]["columns"].as_array().unwrap() {
+            assert!(drawn.contains(&c["name"].as_str().unwrap()), "{} is not drawn", c["name"]);
+        }
+    }
+
+    #[test]
     fn the_sizing_command_schedules_columns_footings_tie_beams_concrete_and_bars_by_element_id() {
         let mut app = sized_app();
         let r = app.handle("sizing", &json!({ "inputs": sizing_inputs() })).unwrap();
@@ -4862,6 +7446,11 @@ mod tests {
         assert!(!rep["tie_beams"].as_array().unwrap().is_empty() && rep["concrete_total_m3"].as_f64().unwrap() > 0.0 && rep["steel_total_kg"].as_f64().unwrap() > 0.0);
         assert!(rep["bars"].as_array().unwrap().iter().filter(|b| !b["element"].as_str().unwrap().starts_with("TB-")).all(|b| b["id"].is_string()));
         assert!(r["bbs_csv"].as_str().unwrap().contains("COL-1/V") && r["concrete_csv"].as_str().unwrap().contains("TOTAL") && r["members_csv"].as_str().unwrap().contains("FND-1"));
+        // The schedule with shapes and bends agrees with the report's own steel total and carries a type mark on every line.
+        assert!(r["bbs_error"].is_null(), "{}", r["bbs_error"]);
+        assert!((r["bbs"]["total_kg"].as_f64().unwrap() - rep["steel_total_kg"].as_f64().unwrap()).abs() < 0.01);
+        assert!(r["bbs"]["lines"].as_array().unwrap().iter().all(|l| l["type_mark"].as_str().unwrap().starts_with('M')));
+        assert!(r["bbs_summary_csv"].as_str().unwrap().contains("unit_kg_m") && r["bbs_lines_csv"].as_str().unwrap().contains("TOTAL"));
         // The inputs live in the project: undo takes them out, the same inputs again are not a change.
         assert!(app.project().unwrap().sizing.is_some());
         let h = hash(&app);
@@ -5130,6 +7719,79 @@ mod tests {
     }
 
     #[test]
+    fn change_log_lists_committed_steps_read_only_and_refuses_a_bad_limit() {
+        assert!(App::default().handle("change_log", &json!({})).is_err());
+        let mut app = started();
+        let before = app.handle("change_log", &json!({})).unwrap();
+        let n = before["log"]["entries"].as_array().unwrap().len();
+        assert!(app.handle("change_log", &json!({ "limit": 0 })).unwrap_err().contains("at least 1"));
+        assert!(app.handle("change_log", &json!({ "limit": "x" })).is_err());
+        // Reading the log changes nothing: it is not itself a step.
+        assert_eq!(app.handle("change_log", &json!({})).unwrap()["log"]["entries"].as_array().unwrap().len(), n);
+        let ph = json!({ "photos": [{ "id": "p1", "file": "p1.jpg", "taken": "2026-03-01", "elements": ["COL-1"] }] });
+        app.handle("site_photos_set", &ph).unwrap();
+        let after = app.handle("change_log", &json!({})).unwrap();
+        let e = after["log"]["entries"].as_array().unwrap();
+        assert_eq!(e.len(), n + 1);
+        assert_eq!(e.last().unwrap()["label"], "Site photos");
+        assert_eq!(e.last().unwrap()["origin"], "user");
+        assert_eq!(app.handle("change_log", &json!({ "limit": 1 })).unwrap()["log"]["entries"].as_array().unwrap().len(), 1);
+        assert!(after["csv"].as_str().unwrap().contains("Site photos"));
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.handle("change_log", &json!({})).unwrap()["log"]["entries"].as_array().unwrap().len(), n);
+    }
+
+    #[test]
+    fn site_photos_are_linked_to_existing_elements_stored_as_one_undoable_edit_and_reported_per_element() {
+        let mut app = started();
+        assert!(App::default().handle("site_photos", &json!({})).is_err());
+        assert!(app.handle("site_photos_set", &json!({})).is_err());
+        let ph = |id: &str, date: &str, el: &str, pct: f64| json!({ "id": id, "file": format!("{id}.jpg"), "taken": date, "elements": [el], "observedPct": pct });
+        // A reference that matches no element is refused by name and nothing is stored.
+        let bad = json!({ "photos": [ph("p1", "2026-03-01", "NOPE-9", 10.0)] });
+        assert!(app.handle("site_photos_set", &bad).unwrap_err().contains("NOPE-9"));
+        assert!(app.handle("site_photos", &json!({})).unwrap()["inputs"]["photos"].as_array().unwrap().is_empty());
+        let bad_date = json!({ "photos": [ph("p1", "2026-02-30", "COL-1", 10.0)] });
+        assert!(app.handle("site_photos_set", &bad_date).unwrap_err().contains("not a date"));
+        let ok = json!({ "photos": [ph("p2", "2026-03-10", "COL-1", 60.0), ph("p1", "2026-03-01", "COL-1", 30.0)] });
+        let r = app.handle("site_photos_set", &ok).unwrap();
+        assert_eq!(r["changed"], true);
+        let el = &r["report"]["elements"][0];
+        assert_eq!(el["name"], "COL-1");
+        assert_eq!(el["latest_photo"], "p2");
+        assert_eq!(el["latest_observed_pct"], 60.0);
+        assert_eq!(r["report"]["first_taken"], "2026-03-01");
+        assert!(r["csv"].as_str().unwrap().lines().count() == 3);
+        assert_eq!(app.handle("site_photos_set", &ok).unwrap()["changed"], false);
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.handle("site_photos", &json!({})).unwrap()["inputs"]["photos"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn design_decisions_need_an_author_are_stored_as_one_undoable_edit_and_reported_by_decider() {
+        let mut app = started();
+        assert!(App::default().handle("decisions", &json!({})).is_err());
+        assert!(app.handle("decisions_set", &json!({})).is_err());
+        let d = |id: &str, date: &str, by: &str| json!({ "id": id, "date": date, "title": "t", "decision": "x", "decidedBy": by, "elements": ["COL-1"] });
+        assert!(app.handle("decisions_set", &json!({ "decisions": [d("d1", "2026-03-01", " ")] })).unwrap_err().contains("who made it"));
+        let bad = json!({ "decisions": [{ "id": "d1", "date": "2026-03-01", "title": "t", "decision": "x", "decidedBy": "Owner", "elements": ["NOPE-9"] }] });
+        assert!(app.handle("decisions_set", &bad).unwrap_err().contains("NOPE-9"));
+        assert!(app.handle("decisions", &json!({})).unwrap()["inputs"]["decisions"].as_array().unwrap().is_empty());
+        let mut second = d("d2", "2026-04-01", "Architect");
+        second["supersedes"] = json!("d1");
+        let ok = json!({ "decisions": [second, d("d1", "2026-03-01", "Owner")] });
+        let r = app.handle("decisions_set", &ok).unwrap();
+        assert_eq!(r["changed"], true);
+        assert_eq!(r["report"]["decisions"][0]["id"], "d1");
+        assert_eq!(r["report"]["decisions"][0]["status"], "superseded");
+        assert_eq!(r["report"]["active"], 1);
+        assert_eq!(r["csv"].as_str().unwrap().lines().count(), 3);
+        assert_eq!(app.handle("decisions_set", &ok).unwrap()["changed"], false);
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.handle("decisions", &json!({})).unwrap()["inputs"]["decisions"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
     fn as_built_rows_are_stored_in_the_project_and_deviations_are_judged_by_the_users_tolerance() {
         let mut app = started();
         let r = app.handle("asbuilt", &json!({})).unwrap();
@@ -5168,10 +7830,36 @@ mod tests {
         let html = t["html"].as_str().unwrap();
         assert!(html.contains("<canvas id=\"gl\">") && html.contains("\"k\":\"Wall\"") && !html.contains("src=\"http"));
         assert_eq!(t["name"], "tour.html");
+        let c = app.handle("client_view_export", &json!({ "lang": "en" })).unwrap();
+        assert_eq!(c["name"], "client-view.html");
+        let ch = c["html"].as_str().unwrap();
+        assert!(ch.contains("\"client\":true") && !ch.contains("\"k\":\"Column\"") && ch.contains("\"k\":\"Wall\""));
+        assert!(App::default().handle("client_view_export", &json!({})).is_err());
         assert!(App::default().handle("tour_export", &json!({})).is_err() && App::default().handle("stl_export", &json!({ "scale": 100.0 })).is_err());
     }
 
     // ------------------------------------------------------------------ Milestone 6: execution commands
+
+    #[test]
+    fn progress_certificates_are_stored_apart_from_the_milestones_and_report_the_payable_amount() {
+        let mut app = complete_app();
+        let pay = json!({ "payment": { "contractValue": 1000.0, "contractSource": "synthetic contract", "milestones": [{ "id": "m1", "name": "Footings", "link": { "kind": "task", "key": "footing_pour" }, "trigger": "finish", "pct": 100.0 }] } });
+        app.handle("payment_set", &pay).unwrap();
+        let prog = json!({ "progress": { "retentionPct": 5.0, "retentionSource": "synthetic clause", "certificates": [{ "id": "c1", "date": "2026-02-01", "reference": "report 1", "lines": [{ "milestone": "m1", "completionPct": 40.0 }] }] } });
+        let r = app.handle("progress_payments_set", &prog).unwrap();
+        assert_eq!(r["changed"], true);
+        // 40% of 1000 = 400, retention 5% = 20, payable 380.
+        assert_eq!(r["report"]["certificates"][0]["payable_now"], 380.0);
+        assert!(r["csv"].as_str().unwrap().contains("TOTAL"));
+        // The milestones survive, and the stored certificates are read back.
+        assert_eq!(app.handle("payment", &json!({})).unwrap()["report"]["milestones"][0]["id"], "m1");
+        assert_eq!(app.handle("progress_payments", &json!({})).unwrap()["report"]["total_paid_net"], 380.0);
+        // An unknown milestone is refused by name and nothing is stored.
+        let bad = json!({ "progress": { "certificates": [{ "id": "c1", "date": "2026-02-01", "reference": "r", "lines": [{ "milestone": "zz", "completionPct": 1.0 }] }] } });
+        assert!(app.handle("progress_payments_set", &bad).unwrap_err().contains("not a payment milestone"));
+        assert_eq!(app.handle("progress_payments", &json!({})).unwrap()["report"]["total_paid_net"], 380.0);
+        assert!(app.handle("progress_payments_set", &json!({})).is_err());
+    }
 
     #[test]
     fn the_schedule_setup_is_kept_in_the_project_and_the_m6_features_read_it() {
@@ -5203,6 +7891,42 @@ mod tests {
         // A refused schedule input is not stored.
         assert!(app.handle("schedule", &json!({ "rates": {}, "start": "nope", "workdays": [true, true, true, true, true, true, true] })).is_err());
         assert_eq!(app.handle("exec", &json!({})).unwrap()["inputs"]["schedule"]["start"], "2026-11-15");
+    }
+
+    #[test]
+    fn material_requests_split_the_boq_materials_by_schedule_stage_and_change_nothing() {
+        let mut app = complete_app();
+        // Without a schedule there are no stages to order by: refused with the reason, nothing invented.
+        assert!(app.handle("material_requests", &json!({})).is_err());
+        let rates = all_rates(&mut app);
+        app.handle("schedule", &schedule_args(rates)).unwrap();
+        // SYNTHETIC consumption factors; not real material data.
+        let mats: serde_json::Map<String, Value> = ["SLAB.*", "COLUMN.*", "FOOTING.*", "BEAM.*", "WALL.*", "PLASTER.*", "FLOOR.*"]
+            .iter()
+            .map(|k| (k.to_string(), json!([{ "material": "cement", "unit": "bag", "per_unit": 7, "source": "test" }])))
+            .collect();
+        let boq_args = json!({ "inputs": { "project": { "name": "t", "currency": "XXX" }, "materials": mats }, "lang": "en" });
+        app.handle("boq", &boq_args).unwrap();
+        let hash = |a: &App| format!("{:?}", a.doc.as_ref().unwrap().undo_label());
+        let before = hash(&app);
+        let r = app.handle("material_requests", &json!({})).unwrap();
+        assert_eq!(hash(&app), before, "the request list changes nothing");
+        let stages = r["report"]["stages"].as_array().unwrap();
+        assert!(!stages.is_empty(), "{r}");
+        let total = |v: &Value| v.as_array().unwrap().iter().filter(|m| m["material"] == "cement").map(|m| m["quantity"].as_f64().unwrap()).sum::<f64>();
+        let staged: f64 = stages.iter().map(|s| total(&s["requests"])).sum();
+        let whole = total(&app.handle("boq", &boq_args).unwrap()["report"]["materials"]);
+        assert!(whole > 0.0, "the BOQ has cement");
+        assert!((staged + total(&r["report"]["unassigned"]) - whole).abs() < 0.01, "stages + unassigned = the BOQ material list");
+        assert!(r["csv"].as_str().unwrap().contains("stage,stage_start,material"));
+        // A lead time for a material nothing needs, or without its source, is refused by name.
+        let bad = app.handle("material_requests", &json!({ "inputs": { "lead": { "nonesuch": { "days": 5, "source": "s" } } } })).unwrap_err();
+        assert!(bad.contains("nonesuch"));
+        assert!(app.handle("material_requests", &json!({ "inputs": { "lead": { "cement": { "days": 5, "source": "" } } } })).is_err());
+        assert!(app.handle("material_requests", &json!({ "inputs": { "nope": 1 } })).is_err());
+        let ok = app.handle("material_requests", &json!({ "inputs": { "as_of": "2026-11-20", "lead": { "cement": { "days": 10, "source": "synthetic quotation" } } } }));
+        assert!(ok.is_ok(), "{ok:?}");
+        assert!(App::default().handle("material_requests", &json!({})).is_err());
     }
 
     #[test]
@@ -5416,6 +8140,114 @@ mod tests {
         app.handle("undo", &json!({})).unwrap();
         assert_eq!(app.handle("overlays", &json!({})).unwrap()["overlays"].as_array().unwrap().len(), 1);
         assert!(app.handle("overlay_remove", &json!({ "id": "zz" })).is_err());
+    }
+
+    const PL_RULES: &str = r#"{ "id": "OFFICE", "edition": "synthetic", "version": "1", "rules": [ { "id": "room.area", "clause": "OS-1", "applies_to": { "kind": "Space" }, "check": "area >= param.min", "params": { "min": { "value": 30, "source": "Synthetic office standard, OS-1" } }, "severity": "warning", "message": "room below office minimum" } ] }"#;
+
+    fn pl_args(rules: Value) -> Value {
+        json!({ "plugin": { "id": "office_std", "name": "Synthetic office", "version": "1.0", "publisher": "Synthetic Office", "source": "Synthetic office standard 2027", "rules": rules,
+            "templates": [ { "id": "flat", "titleAr": "شقة", "titleEn": "Flat", "buildingType": "apartment", "plotWidthM": 12.0, "plotLengthM": 20.0, "floors": 1,
+                "rooms": [ { "key": "bed", "name": "Bed", "func": "bedroom", "areaM2": 5.0, "floor": 1 }, { "key": "hall", "name": "Hall", "func": "hall", "areaM2": 12.0, "floor": 1 } ] } ] } })
+    }
+
+    #[test]
+    fn an_office_plugin_is_reviewed_stored_layered_into_the_check_and_serves_its_template_without_invented_setbacks() {
+        let mut app = started();
+        let rules: Value = serde_json::from_str(PL_RULES).unwrap();
+        // Refused by name: no publisher.
+        let mut bad = pl_args(rules.clone());
+        bad["plugin"]["publisher"] = json!("");
+        assert!(app.handle("plugin_add", &bad).unwrap_err().contains("publisher"));
+        // A rule value without a source is refused through the overlay validation.
+        let nosrc: Value = serde_json::from_str(&PL_RULES.replace("Synthetic office standard, OS-1", "")).unwrap();
+        assert!(app.handle("plugin_add", &pl_args(nosrc)).unwrap_err().contains("no source"));
+        // A rule set that replaces nothing needs no confirmation and is stored.
+        let r = app.handle("plugin_add", &pl_args(rules.clone())).unwrap();
+        assert_eq!(r["stored"], true);
+        assert_eq!(r["plugins"][0]["templates"][0]["address"], "office_std/flat");
+        // The enabled plugin's pack is a layer of the check, named by its label.
+        let c = app.handle("check_rules", &json!({})).unwrap();
+        assert_eq!(c["layers"], json!(["OFFICE@synthetic/1"]));
+        assert!(c["findings"].as_array().unwrap().iter().any(|f| f["rule"] == "room.area" && f["layer"] == "OFFICE@synthetic/1"), "{c}");
+        // Installing the same id again replaces it, so it needs confirmation.
+        let again = app.handle("plugin_add", &pl_args(rules)).unwrap();
+        assert_eq!(again["stored"], false);
+        assert_eq!(again["review"]["needs_confirm"], true);
+        // The template comes back with the SBC notes for the 5 m2 bedroom and the hall, and no setbacks.
+        let t = app.handle("plugin_template", &json!({ "address": "office_std/flat" })).unwrap();
+        assert!(t["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("below the SBC minimum")), "{t}");
+        assert!(t["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("not checked")), "{t}");
+        assert!(t["setbacks"].is_null());
+        // Disabled: no layer, no template. Removal is undoable.
+        app.handle("plugin_toggle", &json!({ "id": "office_std", "enabled": false })).unwrap();
+        assert!(app.handle("check_rules", &json!({})).is_err());
+        assert!(app.handle("plugin_template", &json!({ "address": "office_std/flat" })).unwrap_err().contains("disabled"));
+        app.handle("plugin_remove", &json!({ "id": "office_std" })).unwrap();
+        assert!(app.handle("plugins", &json!({})).unwrap()["plugins"].as_array().unwrap().is_empty());
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.handle("plugins", &json!({})).unwrap()["plugins"].as_array().unwrap().len(), 1);
+        assert!(app.handle("plugin_remove", &json!({ "id": "zz" })).is_err());
+    }
+
+    #[test]
+    fn a_municipality_entry_needs_sources_is_stored_applied_in_one_undoable_step_and_removed() {
+        let mut app = started();
+        let good = json!({ "entry": {
+            "municipality": "Synthetic Municipality", "zone": "R1", "document": "synthetic circular 7",
+            "minSetbackFrontM": { "value": 4.0, "source": "synthetic circular 7, art. 2" },
+            "maxCoverageRatio": { "value": 0.5, "source": "synthetic circular 7, art. 3" },
+            "maxHeightM": { "value": 12.0, "source": "synthetic circular 7, art. 4" } } });
+        // A value without a source is refused by name; nothing is stored.
+        let mut nosrc = good.clone();
+        nosrc["entry"]["maxHeightM"]["source"] = json!("");
+        assert!(app.handle("municipality_add", &nosrc).unwrap_err().contains("height"));
+        assert!(app.handle("municipalities", &json!({})).unwrap()["municipalities"].as_array().unwrap().is_empty());
+        let r = app.handle("municipality_add", &good).unwrap();
+        assert_eq!(r["added"], "mn1");
+        assert_eq!(r["municipalities"][0]["set"], 3);
+        assert_eq!(r["municipalities"][0]["unset"], json!(["rear setback", "side setback", "floors", "floor-area ratio"]));
+        // The same municipality and zone twice is refused.
+        assert!(app.handle("municipality_add", &good).is_err());
+        // Storing does not touch the project's limits; applying does, once, and names the limit it only stored.
+        assert!(r["limits"]["minSetbackFrontM"].is_null());
+        let a = app.handle("municipality_apply", &json!({ "id": "mn1" })).unwrap();
+        assert_eq!(a["changed"].as_array().unwrap().len(), 2);
+        assert_eq!(a["limits"]["minSetbackFrontM"]["source"], "synthetic circular 7, art. 2");
+        assert_eq!(a["stored_only"], json!(["height"]));
+        assert!(app.handle("municipality_apply", &json!({ "id": "mn1" })).is_err());
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.handle("municipalities", &json!({})).unwrap()["limits"]["minSetbackFrontM"].is_null());
+        app.handle("municipality_remove", &json!({ "id": "mn1" })).unwrap();
+        assert!(app.handle("municipalities", &json!({})).unwrap()["municipalities"].as_array().unwrap().is_empty());
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.handle("municipalities", &json!({})).unwrap()["municipalities"].as_array().unwrap().len(), 1);
+        assert!(app.handle("municipality_remove", &json!({ "id": "zz" })).is_err());
+    }
+
+    #[test]
+    fn zoning_check_measures_the_model_against_an_entry_without_applying_it() {
+        let mut app = started();
+        let entry = |zone: &str, height: f64, floors: f64| json!({ "entry": {
+            "municipality": "Synthetic Municipality", "zone": zone, "document": "synthetic circular 9",
+            "maxHeightM": { "value": height, "source": "synthetic circular 9, art. 4" },
+            "maxFloors": { "value": floors, "source": "synthetic circular 9, art. 5" } } });
+        assert!(app.handle("zoning_check", &json!({ "id": "mn1" })).unwrap_err().contains("no municipality entry"));
+        app.handle("municipality_add", &entry("R1", 100.0, 50.0)).unwrap();
+        app.handle("municipality_add", &entry("R2", 0.5, 1.0)).unwrap();
+        let ok = app.handle("zoning_check", &json!({ "id": "mn1" })).unwrap();
+        let rows = ok["rows"].as_array().unwrap();
+        let row = |rule: &str| rows.iter().find(|r| r["rule"] == rule).unwrap().clone();
+        assert!(ok["measured"]["height_m"].as_f64().unwrap() > 0.5, "{ok}");
+        assert!(ok["measured"]["floors"].as_u64().unwrap() >= 1);
+        assert_eq!(row("height")["status"], "passes");
+        assert_eq!(row("floors")["status"], "passes");
+        assert_eq!(row("coverage")["status"], "unchecked", "a limit the entry leaves unset is never passed");
+        assert_ne!(ok["overall"], "passes");
+        let bad = app.handle("zoning_check", &json!({ "id": "mn2" })).unwrap();
+        assert_eq!(bad["overall"], "fails");
+        assert_eq!(bad["rows"].as_array().unwrap().iter().find(|r| r["rule"] == "height").unwrap()["status"], "fails");
+        // Read-only: the project's limits were not touched.
+        assert!(app.handle("municipalities", &json!({})).unwrap()["limits"]["maxCoverageRatio"].is_null());
     }
 
     // ------------------------------------------------------------------ Milestone 8: BIM drafting

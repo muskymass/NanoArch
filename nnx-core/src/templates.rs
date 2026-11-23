@@ -143,7 +143,57 @@ pub fn all() -> Vec<Template> {
             assumptions: vec!["one apartment per floor".into()],
         }
     };
-    let mut v = vec![villa, palace, apartments];
+    let duplex = {
+        let mut rooms = Vec::new();
+        for f in 1..=2 {
+            rooms.push(room(&format!("f{f}living"), "الصالة", "living", Some(28.0), f));
+            rooms.push(room(&format!("f{f}kitchen"), "المطبخ", "kitchen", None, f));
+            rooms.extend(sleeping_floor(f, 3, 2, 20.0, 15.0, 5.0));
+        }
+        Template {
+            id: "duplex",
+            title_ar: "دوبلكس سكني (400 م² - معاصر)",
+            title_en: "Residential duplex (400 m² - contemporary)",
+            project_title: "دوبلكس سكني",
+            building_type: "villa",
+            style: "contemporary",
+            city: "Riyadh",
+            plot_width_m: 16.0,
+            plot_length_m: 25.0,
+            floors: 2,
+            rule: RuleSet::MinistryVilla,
+            street_width_m: 15.0,
+            stair: Some((2.5, 5.0, "west")),
+            rooms,
+            assumptions: vec!["one dwelling per floor; the Ministry villa guideline (clause 4-1) is applied because the guidelines give no separate rule for a duplex: confirm with the municipality".into()],
+        }
+    };
+    let annex = {
+        let rooms = vec![
+            room("majlis", "المجلس", "majlis", Some(30.0), 1),
+            room("kitchen", "المطبخ", "kitchen", None, 1),
+            room("bed1", "غرفة", "bedroom", Some(16.0), 1),
+            room("bath1", "حمام", "bathroom", None, 1),
+        ];
+        Template {
+            id: "annex",
+            title_ar: "ملحق سكني (180 م² - معاصر)",
+            title_en: "Residential annex (180 m² - contemporary)",
+            project_title: "ملحق سكني",
+            building_type: "house",
+            style: "contemporary",
+            city: "Riyadh",
+            plot_width_m: 12.0,
+            plot_length_m: 15.0,
+            floors: 1,
+            rule: RuleSet::MinistryVilla,
+            street_width_m: 15.0,
+            stair: None,
+            rooms,
+            assumptions: vec!["a stand-alone annex on its own plot; for an annex inside the main plot the setbacks of the whole plot govern: the Ministry villa guideline (clause 4-1) is applied, confirm with the municipality".into()],
+        }
+    };
+    let mut v = vec![villa, palace, apartments, duplex, annex];
     for t in &mut v {
         t.assumptions.insert(0, format!("plot {} x {} m, {} floor(s), street {} m at the front: assumptions, edit them", t.plot_width_m, t.plot_length_m, t.floors, t.street_width_m));
         t.assumptions.push("room areas are starting targets of this application, each above the SBC minimum for its type: review them".into());

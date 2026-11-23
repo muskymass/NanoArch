@@ -91,11 +91,10 @@ pub fn print_html(model: &Model, opts: &PrintOpts) -> Result<String, String> {
                 if let Ok(d) = e.typed::<Door>() {
                     *door_sizes.entry((d.width, d.height, d.is_egress)).or_default() += 1;
                 }
-            } else if e.kind == Window::KIND {
-                if let Ok(w) = e.typed::<Window>() {
+            } else if e.kind == Window::KIND
+                && let Ok(w) = e.typed::<Window>() {
                     *window_sizes.entry((w.width, w.height, w.sill_height)).or_default() += 1;
                 }
-            }
         }
         let door_rows: String = door_sizes
             .iter()

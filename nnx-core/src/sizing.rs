@@ -158,6 +158,27 @@ pub struct BarRow {
     pub source: String,
 }
 
+/// What one reinforced member was given, resolved (your template or the `rebar` design): the data a reinforcement drawing needs.
+#[derive(Debug, Clone, Serialize)]
+pub struct MemberDetail {
+    pub name: String,
+    pub id: Option<String>,
+    /// `column`, `footing`, `beam` or `tie_beam`.
+    pub kind: String,
+    /// Plan section: column b x h, footing length x width, beam width x depth.
+    pub b_mm: f64,
+    pub h_mm: f64,
+    /// Column storey height or beam clear length; for a footing, its thickness when you entered it.
+    pub length_mm: Option<f64>,
+    pub cover_mm: f64,
+    pub anchorage_mm: f64,
+    pub hook_mm: f64,
+    pub source: String,
+    pub column: Option<ColumnBars>,
+    pub mesh: Option<MeshBars>,
+    pub beam: Option<BeamBars>,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SizingReport {
     pub columns: Vec<ColumnRow>,
@@ -167,6 +188,8 @@ pub struct SizingReport {
     pub concrete_total_m3: f64,
     pub bars: Vec<BarRow>,
     pub steel_total_kg: f64,
+    /// One entry per reinforced member, for the drawings (`rebardraw`).
+    pub details: Vec<MemberDetail>,
     /// What the design chose per element, with its status.
     pub designs: Vec<crate::rebar::DesignRow>,
     /// Section -> the inputs that are missing, so it was not computed.
@@ -469,6 +492,7 @@ pub fn compute(model: &Model, soil_kpa: Option<f64>, inp: &SizingInputs) -> Sizi
                 let perimeter = 2.0 * ((col.b as f64 - 2.0 * c) + (col.h as f64 - 2.0 * c)) + 2.0 * hk;
                 let n = if t.tie_spacing_mm > 0.0 { (h / t.tie_spacing_mm).floor() as u64 + 1 } else { 0 };
                 bars(&mut rep.bars, (&row.name, Some(row.id.clone()), src), &format!("{}/T", row.name), "ties", t.tie_dia_mm, n, perimeter);
+                rep.details.push(MemberDetail { name: row.name.clone(), id: Some(row.id.clone()), kind: "column".into(), b_mm: col.b as f64, h_mm: col.h as f64, length_mm: Some(h), cover_mm: c, anchorage_mm: a, hook_mm: hk, source: src.into(), column: Some(t.clone()), mesh: None, beam: None });
             }
             for (row, (_, f)) in rep.footings.clone().iter().zip(&fnds) {
                 let (m, c, src) = match (&rb.footing, des.footings.get(&row.name)) {
@@ -482,13 +506,16 @@ pub fn compute(model: &Model, soil_kpa: Option<f64>, inp: &SizingInputs) -> Sizi
                 let (l, w) = (f.length as f64, f.width as f64);
                 bars(&mut rep.bars, (&row.name, Some(row.id.clone()), src), &format!("{}/X", row.name), "bottom mesh, along x", m.bar_dia_mm, ((w - 2.0 * c) / m.spacing_mm).floor() as u64 + 1, l - 2.0 * c + 2.0 * hk);
                 bars(&mut rep.bars, (&row.name, Some(row.id.clone()), src), &format!("{}/Y", row.name), "bottom mesh, along y", m.bar_dia_mm, ((l - 2.0 * c) / m.spacing_mm).floor() as u64 + 1, w - 2.0 * c + 2.0 * hk);
+                rep.details.push(MemberDetail { name: row.name.clone(), id: Some(row.id.clone()), kind: "footing".into(), b_mm: l, h_mm: w, length_mm: thick, cover_mm: c, anchorage_mm: a, hook_mm: hk, source: src.into(), column: None, mesh: Some(m.clone()), beam: None });
             }
             let beam_bars = |rep: &mut SizingReport, name: &str, id: Option<String>, b_mm: f64, depth: f64, len: f64, t: &BeamBars, c: f64, src: &str| {
                 bars(&mut rep.bars, (name, id.clone(), src), &format!("{name}/T"), "top bars", t.top_dia_mm, t.top_count as u64, len - 2.0 * c + 2.0 * hk);
                 bars(&mut rep.bars, (name, id.clone(), src), &format!("{name}/B"), "bottom bars", t.bottom_dia_mm, t.bottom_count as u64, len - 2.0 * c + 2.0 * hk);
                 let perimeter = 2.0 * ((b_mm - 2.0 * c) + (depth - 2.0 * c)) + 2.0 * hk;
                 let n = if t.stirrup_spacing_mm > 0.0 { ((len - 2.0 * c) / t.stirrup_spacing_mm).floor() as u64 + 1 } else { 0 };
-                bars(&mut rep.bars, (name, id, src), &format!("{name}/S"), "stirrups", t.stirrup_dia_mm, n, perimeter);
+                bars(&mut rep.bars, (name, id.clone(), src), &format!("{name}/S"), "stirrups", t.stirrup_dia_mm, n, perimeter);
+                let kind = if name.starts_with("TB-") { "tie_beam" } else { "beam" };
+                rep.details.push(MemberDetail { name: name.into(), id, kind: kind.into(), b_mm, h_mm: depth, length_mm: Some(len), cover_mm: c, anchorage_mm: a, hook_mm: hk, source: src.into(), column: None, mesh: None, beam: Some(t.clone()) });
             };
             for (name, id, b, below) in &beam_rows {
                 let (t, c, src) = match (&rb.beam, des.beams.get(name)) {

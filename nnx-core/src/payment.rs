@@ -37,6 +37,8 @@ pub struct PaymentInputs {
     pub contract_from_boq: bool,
     pub currency: Option<String>,
     pub milestones: Vec<Milestone>,
+    /// Progress certificates: how far each milestone is completed, and what each certificate pays.
+    pub progress: crate::progress::ProgressInputs,
 }
 
 impl PaymentInputs {
@@ -66,7 +68,8 @@ impl PaymentInputs {
                 _ => {}
             }
         }
-        Ok(())
+        let ids: BTreeSet<&str> = self.milestones.iter().map(|m| m.id.as_str()).collect();
+        self.progress.check(&ids)
     }
 }
 

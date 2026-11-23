@@ -476,7 +476,7 @@ fn the_tender_pack_combines_the_project_the_priced_boq_and_the_tier_and_lists_ev
     let mut lib = boq::BoqLib::default();
     lib.project.currency = Some("SAR".into());
     lib.project.name = Some("Synthetic villa".into());
-    lib.items.insert("SLAB.VOL".into(), boq::ItemData { spec: Some("Grade per the drawings".into()), spec_source: Some("synthetic".into()), rate: Some(10.0), rate_source: Some("synthetic".into()), waste_pct: None });
+    lib.items.insert("SLAB.VOL".into(), boq::ItemData { spec: Some("Grade per the drawings".into()), spec_source: Some("synthetic".into()), rate: Some(10.0), rate_source: Some("synthetic".into()), rate_date: None, waste_pct: None });
     lib.markups.push(boq::Markup { name: "Contingency".into(), pct: 10.0, source: Some("synthetic".into()) });
     let boq_report = boq::compute(&all, &lib);
     let cost = costtier::compute(&all, &p.meta.execution.cost);

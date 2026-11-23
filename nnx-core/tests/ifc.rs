@@ -264,3 +264,59 @@ fn entrance_steps_need_both_numbers_and_an_entrance_role_and_keep_their_total_ri
     let text = export(&g.doc);
     assert!(text.contains("IFCPROPERTYSINGLEVALUE('Risers',$,IFCREAL(3.),$)") && text.contains("IFCPROPERTYSINGLEVALUE('RiserHeightMm',$,IFCREAL(150.),$)"));
 }
+
+#[test]
+fn the_revit_profile_adds_types_common_property_sets_and_quantities_without_changing_the_products() {
+    let g = golden();
+    let std_out = ifc::export_ifc(&g.doc.model, &opts()).unwrap();
+    let out = ifc::export_ifc_revit(&g.doc.model, &opts()).unwrap();
+    let text = &out.text;
+    for class in ["IfcWall", "IfcDoor", "IfcWindow", "IfcSlab", "IfcColumn", "IfcBeam", "IfcSpace"] {
+        assert_eq!(out.counts[class], std_out.counts[class], "{class}: same products in both profiles");
+    }
+    assert!(!std_out.text.contains("IFCWALLTYPE(") && !std_out.text.contains("IFCRELDEFINESBYTYPE("), "standard output is unchanged");
+    // The golden walls differ in thickness (200 exterior, 100 interior): two wall types, one per measured size.
+    assert_eq!(count(text, "IFCWALLTYPE"), 2);
+    assert_eq!((count(text, "IFCDOORTYPE"), count(text, "IFCWINDOWTYPE"), count(text, "IFCSLABTYPE"), count(text, "IFCCOLUMNTYPE"), count(text, "IFCBEAMTYPE")), (1, 1, 1, 1, 1));
+    assert_eq!(count(text, "IFCRELDEFINESBYTYPE"), 7);
+    assert!(text.contains("IFCWALLTYPE(") && text.contains(",'Wall 200 mm exterior',$,$,$,$,$,.STANDARD.)"));
+    assert!(text.contains(",'Door 900 x 2100 mm',$,$,$,$,$,.DOOR.,.NOTDEFINED.,$,$)") && text.contains(",'Window 1500 x 1200 mm',$,$,$,$,$,.WINDOW.,.NOTDEFINED.,$,$)"));
+    // The instance carries its type name, the standard sets, and the quantities measured from the model.
+    assert!(text.contains("IFCDOOR(") && text.contains("'Door 900 x 2100 mm',$,$,#"));
+    assert!(text.contains("'Pset_DoorCommon'") && text.contains("'Pset_WindowCommon'") && text.contains("'Pset_SlabCommon'") && text.contains("'Pset_ColumnCommon'") && text.contains("'Pset_BeamCommon'") && text.contains("'Pset_SpaceCommon'"));
+    assert!(text.contains("IFCPROPERTYSINGLEVALUE('FireExit',$,IFCBOOLEAN(.T.),$)"), "the door is an egress door in the model");
+    assert!(text.contains("IFCQUANTITYAREA('GrossArea',$,$,20.,$)"), "4 m x 5 m slab");
+    assert!(text.contains("IFCQUANTITYAREA('CrossSectionArea',$,$,0.09,$)"), "300 x 300 column");
+    assert!(text.contains("IFCQUANTITYAREA('CrossSectionArea',$,$,0.1,$)"), "200 x 500 beam");
+    assert!(text.contains("IFCQUANTITYLENGTH('Width',$,$,150.,$)"), "slab thickness");
+    // No invented material, layer, fire rating or load-bearing flag.
+    for forbidden in ["IFCMATERIAL", "FireRating", "LoadBearing", "IFCMAPCONVERSION"] {
+        assert!(!text.contains(forbidden), "{forbidden} must not be written: the model has no such value");
+    }
+    // Well-formed: every reference is defined, ids have no gaps, ASCII only.
+    let ents = entities(text);
+    let defined: BTreeSet<usize> = ents.iter().map(|e| e.0).collect();
+    assert_eq!(defined.len(), ents.len());
+    assert!(text.is_ascii());
+    for (id, body) in &ents {
+        let plain: String = body.split('\'').enumerate().filter(|(i, _)| i % 2 == 0).map(|(_, s)| s).collect();
+        let mut rest = plain.as_str();
+        while let Some(i) = rest.find('#') {
+            rest = &rest[i + 1..];
+            let n: usize = rest.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap();
+            assert!(defined.contains(&n), "#{id} refers to missing #{n}");
+        }
+    }
+    // Deterministic like the standard export.
+    assert_eq!(text, &ifc::export_ifc_revit(&g.doc.model, &opts()).unwrap().text);
+}
+
+#[test]
+fn a_door_in_the_revit_profile_is_external_only_when_its_host_wall_says_so() {
+    let g = golden();
+    let text = ifc::export_ifc_revit(&g.doc.model, &opts()).unwrap().text;
+    // Door and window both sit in the exterior wall; the pset lists IsExternal true for them (and the wall itself).
+    let door_pset = entities(&text).into_iter().find(|(_, b)| b.starts_with("IFCPROPERTYSET(") && b.contains("'Pset_DoorCommon'")).unwrap().1;
+    assert!(door_pset.matches('#').count() == 3, "Reference, IsExternal, FireExit: {door_pset}");
+    assert!(text.matches("IFCPROPERTYSINGLEVALUE('IsExternal',$,IFCBOOLEAN(.T.),$)").count() >= 3);
+}

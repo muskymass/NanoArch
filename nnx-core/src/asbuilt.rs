@@ -148,19 +148,23 @@ fn design(e: &crate::model::Element) -> Vec<(&'static str, f64)> {
     Vec::new()
 }
 
+/// Finds the element a name refers to: a schedule name (`COL-3`), `room:<requirement key>`, or an element id.
+/// `names` is [`schedule_names`] of the same model.
+pub fn resolve_ref(model: &Model, names: &BTreeMap<String, String>, name: &str) -> Option<Id> {
+    if let Some(k) = name.strip_prefix("room:") {
+        return model.elements.values().find(|e| e.typed::<Space>().is_ok_and(|s| s.requirement_key == k)).map(|e| e.id);
+    }
+    if let Some((id, _)) = names.iter().find(|(_, n)| n.as_str() == name) {
+        return id.parse().ok();
+    }
+    name.parse().ok().filter(|i| model.get(i).is_some())
+}
+
 pub fn compare(model: &Model, ab: &AsBuilt) -> DevReport {
     let mut rep = DevReport::default();
     let names = schedule_names(model, None);
-    let by_name: BTreeMap<&str, &String> = names.iter().map(|(id, n)| (n.as_str(), id)).collect();
     for row in &ab.rows {
-        let id: Option<Id> = if let Some(k) = row.name.strip_prefix("room:") {
-            model.elements.values().find(|e| e.typed::<Space>().is_ok_and(|s| s.requirement_key == k)).map(|e| e.id)
-        } else if let Some(i) = by_name.get(row.name.as_str()) {
-            i.parse().ok()
-        } else {
-            row.name.parse().ok().filter(|i| model.get(i).is_some())
-        };
-        let Some(el) = id.and_then(|i| model.get(&i)) else {
+        let Some(el) = resolve_ref(model, &names, &row.name).and_then(|i| model.get(&i)) else {
             rep.unmatched.push(row.name.clone());
             continue;
         };

@@ -13,6 +13,18 @@ pub struct Transaction {
     forward: Vec<Command>,
 }
 
+/// One committed transaction with the model before and after it (see [`Document::steps`]).
+#[derive(Debug, Clone)]
+pub struct Step {
+    /// 1-based position in the undo stack (the oldest still-undoable step is 1).
+    pub seq: usize,
+    pub label: String,
+    pub origin: Origin,
+    pub commands: Vec<Command>,
+    pub before: Model,
+    pub after: Model,
+}
+
 #[derive(Debug)]
 pub struct Document {
     pub model: Model,
@@ -99,6 +111,30 @@ impl Document {
 
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
+    }
+
+    /// The committed (not undone) steps from the oldest to the newest, each with the model as it was just before and just after it.
+    /// States are rebuilt from the current model by applying the stored inverses backwards, so nothing is kept per commit.
+    /// `limit` keeps only the newest steps (`None` = all); the older ones are not walked.
+    pub fn steps(&self, limit: Option<usize>) -> Vec<Step> {
+        let n = self.undo.len();
+        let take = limit.map_or(n, |l| l.min(n));
+        let mut state = self.model.clone();
+        let mut out = Vec::with_capacity(take);
+        for (offset, tx) in self.undo.iter().enumerate().rev().take(take) {
+            let after = state.clone();
+            let rev: Vec<Command> = tx.inverses.iter().rev().cloned().collect();
+            // Inverses of applied commands cannot fail on the state they produced.
+            run_atomic(&mut state, &rev, Origin::User).expect("undo is infallible");
+            out.push(Step { seq: offset + 1, label: tx.label.clone(), origin: tx.origin, commands: tx.forward.clone(), before: state.clone(), after });
+        }
+        out.reverse();
+        out
+    }
+
+    /// Number of committed steps that can still be undone.
+    pub fn undo_depth(&self) -> usize {
+        self.undo.len()
     }
 
     pub fn undo_label(&self) -> Option<&str> {

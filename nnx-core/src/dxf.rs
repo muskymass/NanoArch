@@ -89,8 +89,21 @@ const LAYERS: [(&str, i32, &str); 34] = [
 ];
 const DIMS_LAYER: (&str, i32, &str) = ("A-DIMS", 2, "CONTINUOUS");
 
+/// The line types the file defines in its LTYPE table.
+const LINETYPES: [&str; 3] = ["CONTINUOUS", "DASHED", "HIDDEN"];
+
+/// Every layer the plan, view and dimension export draws, with its colour index and line type.
+pub fn layer_table() -> Vec<(String, i32, &'static str)> {
+    LAYERS.iter().copied().chain(std::iter::once(DIMS_LAYER)).map(|(n, c, l)| (n.to_string(), c, l)).collect()
+}
+
+/// Names of the line types the file defines.
+pub fn linetype_names() -> Vec<&'static str> {
+    LINETYPES.to_vec()
+}
+
 /// DXF number: plain decimal, no exponent.
-fn n(v: f64) -> String {
+pub(crate) fn n(v: f64) -> String {
     let v = if v.abs() < 5e-4 { 0.0 } else { v };
     let s = format!("{v:.3}");
     let s = s.trim_end_matches('0');
@@ -112,41 +125,44 @@ pub fn dxf_text(s: &str) -> String {
     out
 }
 
-struct D {
-    body: String,
-    counts: BTreeMap<String, usize>,
+pub(crate) struct D {
+    pub(crate) body: String,
+    pub(crate) counts: BTreeMap<String, usize>,
     /// Construction phase of the element being drawn. Its entities go on the layer `<base>_<PHASE>`; an element without a phase
     /// stays on the base layer (no phase is written for it).
     phase: Option<String>,
 }
 
 impl D {
+    pub(crate) fn new() -> D {
+        D { body: String::new(), counts: BTreeMap::new(), phase: None }
+    }
     fn lay(&self, layer: &str) -> String {
         match &self.phase {
             Some(p) => format!("{layer}_{p}"),
             None => layer.to_string(),
         }
     }
-    fn pair(&mut self, code: i32, v: &str) {
+    pub(crate) fn pair(&mut self, code: i32, v: &str) {
         self.body.push_str(&format!("{code}\n{v}\n"));
     }
-    fn head(&mut self, kind: &str, layer: &str) {
+    pub(crate) fn head(&mut self, kind: &str, layer: &str) {
         let layer = &self.lay(layer);
         self.pair(0, kind);
         self.pair(8, layer);
         *self.counts.entry(layer.to_string()).or_default() += 1;
     }
-    fn pt(&mut self, base: i32, x: f64, y: f64) {
+    pub(crate) fn pt(&mut self, base: i32, x: f64, y: f64) {
         self.pair(base, &n(x));
         self.pair(base + 10, &n(y));
         self.pair(base + 20, "0.0");
     }
-    fn line(&mut self, layer: &str, a: (f64, f64), b: (f64, f64)) {
+    pub(crate) fn line(&mut self, layer: &str, a: (f64, f64), b: (f64, f64)) {
         self.head("LINE", layer);
         self.pt(10, a.0, a.1);
         self.pt(11, b.0, b.1);
     }
-    fn poly(&mut self, layer: &str, pts: &[(f64, f64)], closed: bool) {
+    pub(crate) fn poly(&mut self, layer: &str, pts: &[(f64, f64)], closed: bool) {
         self.head("POLYLINE", layer);
         let layer = &self.lay(layer);
         self.pair(66, "1");
@@ -159,10 +175,10 @@ impl D {
         self.pair(0, "SEQEND");
         self.pair(8, layer);
     }
-    fn rect(&mut self, layer: &str, x0: f64, y0: f64, x1: f64, y1: f64) {
+    pub(crate) fn rect(&mut self, layer: &str, x0: f64, y0: f64, x1: f64, y1: f64) {
         self.poly(layer, &[(x0, y0), (x1, y0), (x1, y1), (x0, y1)], true);
     }
-    fn solid(&mut self, layer: &str, x0: f64, y0: f64, x1: f64, y1: f64) {
+    pub(crate) fn solid(&mut self, layer: &str, x0: f64, y0: f64, x1: f64, y1: f64) {
         self.head("SOLID", layer);
         // SOLID corners are in "Z" order: 1, 2, 4, 3
         self.pt(10, x0, y0);
@@ -170,12 +186,12 @@ impl D {
         self.pt(12, x0, y1);
         self.pt(13, x1, y1);
     }
-    fn circle(&mut self, layer: &str, c: (f64, f64), r: f64) {
+    pub(crate) fn circle(&mut self, layer: &str, c: (f64, f64), r: f64) {
         self.head("CIRCLE", layer);
         self.pt(10, c.0, c.1);
         self.pair(40, &n(r));
     }
-    fn arc(&mut self, layer: &str, c: (f64, f64), r: f64, a0: f64, a1: f64) {
+    pub(crate) fn arc(&mut self, layer: &str, c: (f64, f64), r: f64, a0: f64, a1: f64) {
         self.head("ARC", layer);
         self.pt(10, c.0, c.1);
         self.pair(40, &n(r));
@@ -183,7 +199,7 @@ impl D {
         self.pair(51, &n(a1));
     }
     /// Centred text.
-    fn text(&mut self, layer: &str, at: (f64, f64), height: f64, s: &str) {
+    pub(crate) fn text(&mut self, layer: &str, at: (f64, f64), height: f64, s: &str) {
         self.head("TEXT", layer);
         self.pt(10, at.0, at.1);
         self.pair(40, &n(height));
@@ -631,6 +647,14 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
     }
 
     // Assemble the file.
+    let out = assemble(&d, layer_table(),(gx0, gy0, gx1, gy1));
+    Ok(DxfOut { text: out, counts: d.counts })
+}
+
+/// The whole R12 file around the entities of `d`: header with the extents `(xmin, ymin, xmax, ymax)`, the three line types, the
+/// declared `layers` (plus one per phase actually used, with the colour and line type of its base layer) and the text style.
+pub(crate) fn assemble(d: &D, mut layers: Vec<(String, i32, &str)>, ext: (f64, f64, f64, f64)) -> String {
+    let (gx0, gy0, gx1, gy1) = ext;
     let mut out = String::new();
     let mut pair = |code: i32, v: &str| out.push_str(&format!("{code}\n{v}\n"));
     pair(0, "SECTION");
@@ -669,7 +693,6 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
     pair(0, "TABLE");
     pair(2, "LAYER");
     // The base layers, then one layer per phase actually used, with the colour and line type of its base layer.
-    let mut layers: Vec<(String, i32, &str)> = LAYERS.iter().copied().chain(std::iter::once(DIMS_LAYER)).map(|(n, c, l)| (n.to_string(), c, l)).collect();
     for used in d.counts.keys() {
         if layers.iter().any(|(n, _, _)| n == used) {
             continue;
@@ -706,5 +729,5 @@ pub fn export_dxf_views(model: &Model, levels: &[Option<Id>], views: &[ViewSpec]
     pair(2, "ENTITIES");
     out.push_str(&d.body);
     out.push_str("0\nENDSEC\n0\nEOF\n");
-    Ok(DxfOut { text: out, counts: d.counts })
+    out
 }

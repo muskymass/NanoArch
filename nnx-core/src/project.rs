@@ -69,6 +69,8 @@ pub struct ProjectMeta {
     pub furniture: Option<crate::furniture::FurnitureInput>,
     /// Elevator shaft, basement levels with a ramp, and a roof annex.
     pub vertical: Option<crate::vertical::VerticalInput>,
+    /// Future expansion kept in the design: extra storeys and/or a reserved wing, with the limits the user entered.
+    pub expansion: Option<crate::expansion::ExpansionInput>,
     /// Inputs of the compliance pack: thermal layers, accessibility limits, ventilation, projections, the Malath checklist.
     pub compliance: crate::compliance::ComplianceInputs,
     /// Wall assemblies (named wall types with explicit layers) and which of them walls fall back to.
@@ -85,6 +87,10 @@ pub struct ProjectMeta {
     pub finishes: crate::finishes::Finishes,
     /// Measured coordinates and dimensions compared with the design.
     pub as_built: crate::asbuilt::AsBuilt,
+    /// Site progress photos (file references) linked to model elements.
+    pub site_photos: crate::sitephotos::SitePhotos,
+    /// Design decision log: what was decided, by whom, when and why.
+    pub decisions: crate::decisions::DecisionLog,
     /// Milestone 6 inputs: the schedule setup, cost tiers, tender pack, payment milestones, long-lead items, QA/QC records and the apartment ROI.
     pub execution: crate::execution::ExecutionInputs,
 }
@@ -197,6 +203,10 @@ pub struct NanoArchProject {
     pub snapshots: Vec<crate::snapshot::Snapshot>,
     /// Municipal and authority rule overlays loaded by the user, in the order they apply.
     pub overlays: Vec<crate::overlay::Overlay>,
+    /// The user's table of municipality regulations (each value with its source).
+    pub municipalities: Vec<crate::municipality::MunicipalityEntry>,
+    /// Office plugins (rule packs and starter templates) installed by the user.
+    pub plugins: Vec<crate::plugins::Plugin>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -243,15 +253,22 @@ impl NanoArchProject {
         if let Some(v) = &self.meta.vertical {
             v.check()?;
         }
+        if let Some(x) = &self.meta.expansion {
+            x.check()?;
+        }
         self.meta.compliance.check()?;
         crate::assembly::check_all(&self.meta.assemblies, &self.meta.assembly_defaults)?;
         self.meta.structural.check()?;
         self.meta.mep_ext.check()?;
         self.meta.finishes.check()?;
         self.meta.as_built.check()?;
+        self.meta.site_photos.check()?;
+        self.meta.decisions.check()?;
         self.meta.execution.check()?;
         crate::snapshot::check_all(&self.snapshots)?;
         crate::overlay::check_all(&self.overlays)?;
+        crate::municipality::check_all(&self.municipalities)?;
+        crate::plugins::check_all(&self.plugins)?;
         if let Some(f) = &self.meta.furniture
             && f.min_clear_mm.is_some_and(|m| !m.is_finite() || m <= 0.0)
         {

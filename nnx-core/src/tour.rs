@@ -13,19 +13,36 @@ fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
+/// Kinds a client presentation keeps: what a visitor sees in the finished building. Structure (columns, beams, footings, tie beams, slabs) and
+/// services (MEP runs and points) are engineering content and are dropped from the data itself, not only hidden by the page.
+const CLIENT_KINDS: [&str; 8] = ["Wall", "Door", "Window", "Space", "Facade", "Site", "Vertical", "Furniture"];
+
+/// The full tour for the design team: x-ray, MEP toggle and the eye-height input are present.
 pub fn tour_html(scene: &Scene, title: &str, arabic: bool, facade: Option<[f64; 3]>, floor: Option<[f64; 3]>) -> Result<String, String> {
+    tour_build(scene, title, arabic, facade, floor, false)
+}
+
+/// The client presentation: the same single offline file, but the structure and services are not in it and the page has no x-ray, MEP or
+/// eye-height controls. Orbit, walk-through, doors, levels, lighting presets and the PNG snapshot remain (the walk eye height stays at the
+/// page's 1.70 m default). Slabs are not included: the full tour only shows them in x-ray, which the client page does not offer.
+pub fn tour_client_html(scene: &Scene, title: &str, arabic: bool, facade: Option<[f64; 3]>, floor: Option<[f64; 3]>) -> Result<String, String> {
+    tour_build(scene, title, arabic, facade, floor, true)
+}
+
+fn tour_build(scene: &Scene, title: &str, arabic: bool, facade: Option<[f64; 3]>, floor: Option<[f64; 3]>, client: bool) -> Result<String, String> {
+    let kinds: &[&str] = if client { &CLIENT_KINDS } else { &KINDS };
     let r3 = |v: f64| (v * 1000.0).round() / 1000.0;
     let boxes: Vec<serde_json::Value> = scene
         .boxes
         .iter()
-        .filter(|b| KINDS.contains(&b.kind))
+        .filter(|b| kinds.contains(&b.kind))
         .map(|b| json!({ "k": b.kind, "c": b.class, "id": b.id, "mn": b.min.map(r3), "mx": b.max.map(r3), "l": b.level }))
         .collect();
     if boxes.is_empty() {
         return Err("nothing to export: the 3D model is empty".into());
     }
     let data = json!({
-        "title": title, "ar": arabic, "boxes": boxes, "min": scene.min.map(r3), "max": scene.max.map(r3),
+        "title": title, "ar": arabic, "client": client, "boxes": boxes, "min": scene.min.map(r3), "max": scene.max.map(r3),
         "levels": scene.levels.iter().map(|l| json!({ "index": l.index, "name": l.name, "z0": r3(l.z0), "storey": r3(l.storey) })).collect::<Vec<_>>(),
         "fin": { "facade": facade, "floor": floor },
     });
@@ -44,9 +61,9 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:
 #help{position:fixed;bottom:8px;inset-inline-start:10px;background:#ffffffd9;padding:6px 10px;border-radius:6px;font-size:12px;z-index:2;max-width:70vw}
 </style></head><body>
 <canvas id="gl"></canvas>
-<div id="bar"><b id="ttl"></b><button id="walk"></button><label><span id="l-eye"></span> <input id="eye" type="number" step="0.05" value="1.70" style="width:64px"></label>
-<label><input type="checkbox" id="xray"> <span id="l-xray"></span></label><select id="light"><option value="day"></option><option value="golden"></option><option value="night"></option></select>
-<select id="lvl"></select><label><input type="checkbox" id="mep" checked> MEP</label><button id="png"></button></div>
+<div id="bar"><b id="ttl"></b><button id="walk"></button><label id="w-eye"><span id="l-eye"></span> <input id="eye" type="number" step="0.05" value="1.70" style="width:64px"></label>
+<label id="w-xray"><input type="checkbox" id="xray"> <span id="l-xray"></span></label><select id="light"><option value="day"></option><option value="golden"></option><option value="night"></option></select>
+<select id="lvl"></select><label id="w-mep"><input type="checkbox" id="mep" checked> MEP</label><button id="png"></button></div>
 <div id="help"></div>
 <script>
 const D=@@DATA@@;
@@ -60,6 +77,7 @@ $("ttl").textContent=D.title;$("walk").textContent=T.walk;$("l-eye").textContent
 [["day",T.day],["golden",T.golden],["night",T.night]].forEach(([v,n],i)=>$("light").options[i].textContent=n);
 $("lvl").innerHTML='<option value="all">'+T.all+'</option>'+D.levels.map(l=>'<option value="'+l.index+'">'+T.level+' '+(l.index+1)+'</option>').join("");
 if(D.levels.length<2)$("lvl").style.display="none";
+if(D.client)["w-xray","w-eye","w-mep"].forEach(i=>$(i).style.display="none");
 const cv=$("gl"),gl=cv.getContext("webgl",{antialias:true,preserveDrawingBuffer:true});
 if(!gl){document.body.innerHTML="<p style='padding:2em'>WebGL is not available in this browser.</p>";return}
 const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);return o};

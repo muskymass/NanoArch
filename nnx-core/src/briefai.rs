@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! From a client's description to the fields of the brief. Two sources, one result:
 //!
 //! - **Keywords** (`from_keywords`): Arabic and English words for the building type, the number of floors, an annex, the city,
@@ -35,7 +36,8 @@ pub struct DraftRoom {
     pub assumed: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct BriefDraft {
     pub title: Option<String>,
     pub building_type: Option<BuildingType>,
@@ -129,6 +131,11 @@ const NUMBER_WORDS: [(&str, u32); 22] = [
     ("single", 1),
 ];
 
+/// A number word (or an exact word with a clitic) as its value: `three`, `ثلاث`, `ثلاثة`.
+pub(crate) fn count_word(token: &str) -> Option<u32> {
+    NUMBER_WORDS.iter().find(|(w, _)| token == *w || (token.starts_with(w) && token.len() <= w.len() + 3)).map(|(_, n)| *n)
+}
+
 /// The count written just before `at` in `text` (digits or a number word): `4 غرف نوم`, `three bedrooms`.
 fn count_before(text: &str, at: usize) -> Option<u32> {
     let head = text[..at].trim_end();
@@ -137,7 +144,7 @@ fn count_before(text: &str, at: usize) -> Option<u32> {
     if let Ok(n) = token.trim_matches(|c: char| !c.is_ascii_digit()).parse::<u32>() {
         return Some(n);
     }
-    NUMBER_WORDS.iter().find(|(w, _)| token == *w || token.strip_prefix('و') == Some(w) || token.starts_with(w) && token.len() <= w.len() + 3).map(|(_, n)| *n)
+    NUMBER_WORDS.iter().find(|(w, _)| token == *w || token.strip_prefix('و') == Some(w) || token.strip_prefix('ب') == Some(w) || token.starts_with(w) && token.len() <= w.len() + 3).map(|(_, n)| *n)
 }
 
 fn find_any(text: &str, keys: &[&str]) -> Option<(usize, usize)> {
@@ -187,7 +194,7 @@ fn plot_area(text: &str) -> Option<f64> {
 }
 
 /// Plot size written as `20×30`, `20x30`, `20 * 30`: `(width, length)` in metres.
-fn plot_size(text: &str) -> Option<(f64, f64)> {
+pub(crate) fn plot_size_in(text: &str) -> Option<(f64, f64)> {
     let ns = numbers(text);
     for w in ns.windows(2) {
         // The text between the end of one number and the start of the next.
@@ -201,7 +208,7 @@ fn plot_size(text: &str) -> Option<(f64, f64)> {
 
 // ------------------------------------------------------------------ the keyword reading
 
-fn type_of(t: &str) -> Option<BuildingType> {
+pub(crate) fn building_type_of(t: &str) -> Option<BuildingType> {
     let at = |k: &[&str]| find_any(t, k).map(|x| x.0);
     [(at(&["فيلا", "villa"]), BuildingType::Villa), (at(&["قصر", "palace"]), BuildingType::Palace), (at(&["عمارة", "apartment building", "residential building", "building of apartments"]), BuildingType::ApartmentBuilding), (at(&["منزل", "بيت", "house", "home"]), BuildingType::House)]
         .into_iter()
@@ -210,7 +217,7 @@ fn type_of(t: &str) -> Option<BuildingType> {
         .map(|(_, b)| b)
 }
 
-fn floors_of(t: &str) -> Option<u32> {
+pub(crate) fn floors_in(t: &str) -> Option<u32> {
     if find_any(t, &["دورين", "طابقين", "two floors", "two-storey", "two storey", "2-storey", "double storey"]).is_some() {
         return Some(2);
     }
@@ -241,6 +248,37 @@ fn bedrooms_of(t: &str) -> Option<u32> {
             return count_before(t, p).or(Some(1));
         }
     }
+    bare_rooms_of(t)
+}
+
+/// "Rooms" with no room type after the count (`بثلاث غرف`, `غرفتين`, `4 rooms`) are bedrooms. A count is required: a room word
+/// alone gives nothing. A room word followed by another room type (`غرف طعام`, `غرفة جلوس`) names that room, not a bedroom.
+fn bare_rooms_of(t: &str) -> Option<u32> {
+    const OTHER_ROOM: [&str; 6] = ["طعام", "جلوس", "معيشه", "ضيوف", "خادمه", "سائق"];
+    let followed_by_other = |end: usize| {
+        let next = t[end..].trim_start();
+        OTHER_ROOM.iter().any(|w| next.starts_with(&norm(w)))
+    };
+    let word_start = |at: usize| t[..at].chars().next_back().is_none_or(|c| !c.is_alphabetic());
+    for key in ["غرفتين", "غرف", "rooms", "room"] {
+        let k = norm(key);
+        let mut from = 0;
+        while let Some(p) = t[from..].find(&k) {
+            let at = from + p;
+            let end = at + k.len();
+            from = end;
+            let starts_word = word_start(at) || (key.starts_with('غ') && t[..at].ends_with('ب'));
+            if !starts_word || followed_by_other(end) {
+                continue;
+            }
+            if key == "غرفتين" {
+                return Some(2);
+            }
+            if let Some(n) = count_before(t, at) {
+                return Some(n);
+            }
+        }
+    }
     None
 }
 
@@ -254,26 +292,8 @@ fn count_of(t: &str, singular: &[&str], dual: &[&str]) -> u32 {
     }
 }
 
-fn room(func: &str, name: &str, floor: u32) -> DraftRoom {
-    DraftRoom { func: func.into(), name: Some(name.into()), area_m2: None, area_suggested: false, floor, assumed: false }
-}
-
-/// What the text states, without any model.
-pub fn from_keywords(text: &str) -> BriefDraft {
-    let t = norm(text);
-    let arabic = text.chars().any(|c| ('\u{0600}'..='\u{06FF}').contains(&c));
-    let mut d = BriefDraft { source: "keywords".into(), ..Default::default() };
-    d.building_type = type_of(&t);
-    d.floors = floors_of(&t);
-    d.annex = find_any(&t, &["ملحق", "annex", "outbuilding", "guest house"]).is_some();
-    d.style = style::parse(text).map(|s| s.key().to_string());
-    d.plot_area_m2 = plot_area(&t);
-    if let Some((w, l)) = plot_size(&t) {
-        d.plot_width_m = Some(w);
-        d.plot_length_m = Some(l);
-        d.plot_area_m2.get_or_insert(w * l);
-    }
-    // The city: the longest name of the map's table found in the text.
+/// The city of the map's table named in the (normalised) text: the longest name found.
+pub(crate) fn city_in(t: &str) -> Option<&'static presets::CityZone> {
     let mut best: Option<(usize, &presets::CityZone)> = None;
     for c in presets::CITIES.iter() {
         for name in [norm(c.en), norm(c.ar)] {
@@ -283,7 +303,29 @@ pub fn from_keywords(text: &str) -> BriefDraft {
             }
         }
     }
-    if let Some((_, c)) = best {
+    best.map(|(_, c)| c)
+}
+
+pub(crate) fn new_room(func: &str, name: &str, floor: u32) -> DraftRoom {
+    DraftRoom { func: func.into(), name: Some(name.into()), area_m2: None, area_suggested: false, floor, assumed: false }
+}
+
+/// What the text states, without any model.
+pub fn from_keywords(text: &str) -> BriefDraft {
+    let t = norm(text);
+    let arabic = text.chars().any(|c| ('\u{0600}'..='\u{06FF}').contains(&c));
+    let mut d = BriefDraft { source: "keywords".into(), ..Default::default() };
+    d.building_type = building_type_of(&t);
+    d.floors = floors_in(&t);
+    d.annex = find_any(&t, &["ملحق", "annex", "outbuilding", "guest house"]).is_some();
+    d.style = style::parse(text).map(|s| s.key().to_string());
+    d.plot_area_m2 = plot_area(&t);
+    if let Some((w, l)) = plot_size_in(&t) {
+        d.plot_width_m = Some(w);
+        d.plot_length_m = Some(l);
+        d.plot_area_m2.get_or_insert(w * l);
+    }
+    if let Some(c) = city_in(&t) {
         d.city = Some(c.en.to_string());
         d.climate_zone = Some(c.zone);
     }
@@ -297,10 +339,23 @@ pub fn from_keywords(text: &str) -> BriefDraft {
     let beds = bedrooms_of(&t);
     if let Some(n) = beds {
         for i in 0..n {
-            let mut r = room("bedroom", &if arabic { format!("غرفة نوم {}", i + 1) } else { format!("Bedroom {}", i + 1) }, if floors > 1 { 2 } else { 1 });
+            let mut r = new_room("bedroom", &if arabic { format!("غرفة نوم {}", i + 1) } else { format!("Bedroom {}", i + 1) }, if floors > 1 { 2 } else { 1 });
             r.assumed = floors > 1;
             rooms.push(r);
         }
+    }
+    // A men's and a women's majlis are two rooms; one of them alone is one named room.
+    let mens = find_any(&t, &["مجلس رجال", "مجلس الرجال", "مجلس للرجال", "men's majlis", "mens majlis", "majlis for men"]).is_some();
+    let womens = find_any(&t, &["مجلس نساء", "مجلس النساء", "مجلس للنساء", "women's majlis", "womens majlis", "majlis for women"]).is_some();
+    let both = find_any(&t, &["مجلس رجال ونساء", "مجلس الرجال والنساء"]).is_some();
+    let gendered: Vec<(&str, &str)> = match (mens || both, womens || both) {
+        (true, true) => vec![("مجلس رجال", "Men's majlis"), ("مجلس نساء", "Women's majlis")],
+        (true, false) => vec![("مجلس رجال", "Men's majlis")],
+        (false, true) => vec![("مجلس نساء", "Women's majlis")],
+        (false, false) => vec![],
+    };
+    for (ar_name, en_name) in &gendered {
+        rooms.push(new_room("majlis", if arabic { ar_name } else { en_name }, 1));
     }
     for (func, ar, en, singular, dual) in [
         ("majlis", "مجلس", "Majlis", vec!["مجلس", "majlis"], vec!["مجلسين", "two majlis"]),
@@ -308,14 +363,14 @@ pub fn from_keywords(text: &str) -> BriefDraft {
         ("dining", "غرفة طعام", "Dining room", vec!["غرفه طعام", "صاله طعام", "dining"], vec![]),
         ("kitchen", "مطبخ", "Kitchen", vec!["مطبخ", "kitchen"], vec!["مطبخين"]),
     ] {
-        let n = count_of(&t, &singular, &dual);
+        let n = if func == "majlis" && !gendered.is_empty() { 0 } else { count_of(&t, &singular, &dual) };
         for i in 0..n {
-            rooms.push(room(func, &if n > 1 { format!("{} {}", if arabic { ar } else { en }, i + 1) } else if arabic { ar.to_string() } else { en.to_string() }, 1));
+            rooms.push(new_room(func, &if n > 1 { format!("{} {}", if arabic { ar } else { en }, i + 1) } else if arabic { ar.to_string() } else { en.to_string() }, 1));
         }
     }
     let baths = count_of(&t, &["حمام", "دورة مياه", "دورات مياه", "bathroom", "toilet", "wc"], &["حمامين", "two bathrooms"]);
     for i in 0..baths {
-        rooms.push(room("bathroom", &if arabic { format!("حمام {}", i + 1) } else { format!("Bathroom {}", i + 1) }, 1));
+        rooms.push(new_room("bathroom", &if arabic { format!("حمام {}", i + 1) } else { format!("Bathroom {}", i + 1) }, 1));
     }
     d.rooms = rooms;
     let suggested = suggest_areas(&mut d.rooms);
