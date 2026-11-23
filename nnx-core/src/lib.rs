@@ -34,6 +34,7 @@ pub mod courtyard;
 pub mod roomshape;
 pub mod roomfinish;
 pub mod wetroom;
+pub mod ceiling;
 pub mod stairdetail;
 pub mod mezzanine;
 pub mod expansion;

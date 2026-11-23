@@ -418,6 +418,7 @@ impl App {
             "permit_documents_check" => self.permit_documents_check(args),
             "room_finishes_schedule" => self.room_finishes_schedule(args),
             "wet_room_detail" => self.wet_room_detail(args),
+            "ceiling_plan" => self.ceiling_plan(args),
             "stair_detail" => self.stair_detail(args),
             "site_fence_plan" => self.site_fence_plan(args),
             "number_audit" => self.number_audit(),
@@ -2948,6 +2949,18 @@ impl App {
         serde_json::to_value(&detail).map_err(|e| e.to_string())
     }
 
+    /// The suspended ceiling plan (read-only): `{ room (requirement key), level?, title?, ceiling_height_mm, soffit_height_mm?,
+    /// tile_w_mm?, tile_d_mm?, devices: [{ key, kind?, x_mm, y_mm (centre), w_mm, d_mm, recess_mm?, source }], min_spacing_mm?,
+    /// spacing_source?, min_ceiling_height_mm?, headroom_source? }`. Heights, devices and limits are the user's entries; returns the
+    /// reflected ceiling plan SVG, the per-device wall gaps, device counts, the tile summary and the fit / overlap / spacing /
+    /// plenum / headroom checks (`unchecked` when their inputs are absent).
+    fn ceiling_plan(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::ceiling::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("ceiling plan: inputs are malformed (room, ceiling_height_mm, soffit_height_mm?, tile_w_mm?, tile_d_mm?, devices [{{ key, x_mm, y_mm, w_mm, d_mm, recess_mm?, source }}], min_spacing_mm?, spacing_source?, min_ceiling_height_mm?, headroom_source?): {e}"))?;
+        let plan = nnx_core::ceiling::build(&self.doc()?.model, &input)?;
+        serde_json::to_value(&plan).map_err(|e| e.to_string())
+    }
+
     /// The stair detail (read-only): `{ rise_mm, riser_count, going_mm, width_mm, nosing_mm?, landing_after_riser?, landing_length_mm?,
     /// room?, level?, run_axis?, limits?: { min_riser_mm?, max_riser_mm?, ..., source }, title? }`. Every figure is the user's;
     /// returns the numbered step table, the flights, the section + plan SVG and the riser / going / width / landing / 2R+G / pitch /
@@ -5369,6 +5382,18 @@ EOF
         assert!(e.contains("fixtures"), "{e}");
         assert!(app.handle("wet_room_detail", &json!({ "fixtures": "x" })).unwrap_err().contains("malformed"));
         assert!(App::default().handle("wet_room_detail", &json!({})).is_err());
+    }
+
+    #[test]
+    fn ceiling_plan_needs_the_users_heights_and_devices_and_a_model_room() {
+        let mut app = started_with_project();
+        let dev = json!({ "key": "L1", "x_mm": 500, "y_mm": 500, "w_mm": 300, "d_mm": 300, "source": "Data sheet" });
+        let e = app.handle("ceiling_plan", &json!({ "room": "no-such-room", "ceiling_height_mm": 2700, "devices": [dev] })).unwrap_err();
+        assert!(e.contains("no room with key"), "{e}");
+        let e = app.handle("ceiling_plan", &json!({ "room": "x" })).unwrap_err();
+        assert!(e.contains("ceiling_height_mm") && e.contains("devices"), "{e}");
+        assert!(app.handle("ceiling_plan", &json!({ "devices": "x" })).unwrap_err().contains("malformed"));
+        assert!(App::default().handle("ceiling_plan", &json!({})).is_err());
     }
 
     #[test]
