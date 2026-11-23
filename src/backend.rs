@@ -367,6 +367,7 @@ impl App {
             "drift_check" => Self::drift_check(args),
             "deep_foundation_check" => Self::deep_foundation_check(args),
             "spalling_check" => Self::spalling_check(args),
+            "lighting_plan" => Self::lighting_plan(args),
             "shear_core_check" => Self::shear_core_check(args),
             "savings_compare" => Self::savings_compare(args),
             "furniture_fit" => Self::furniture_fit(args),
@@ -2108,6 +2109,17 @@ impl App {
             .map_err(|e| format!("spalling check: inputs are malformed (see the field list for elements and limits): {e}"))?;
         let report = nnx_core::spalling::check(&input)?;
         Ok(json!({ "spalling": report }))
+    }
+
+    /// Luminaire count and grid layout for target illuminance (lumen method): `{ rooms: [{ key, x_mm, y_mm, w_mm, h_mm, target_lux,
+    /// target_source, luminaire, mounting_height_mm? }], luminaires: [{ key, lumens, utilisation, maintenance, watts? }],
+    /// max_spacing_to_height?, max_w_per_m2? }`. Targets (with source) and photometric factors are the caller's; none is assumed.
+    /// Preliminary average-illuminance screen, not a lighting design.
+    fn lighting_plan(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::lighting::LightInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("lighting plan: inputs are malformed (see the field list for rooms and luminaires): {e}"))?;
+        let report = nnx_core::lighting::check(&input)?;
+        Ok(json!({ "lighting": report }))
     }
 
     /// Shear-wall core around lifts and stairs:`{ walls: [{ key, x_mm, y_mm, w_mm, h_mm }], shafts?: [{ key, kind: lift|stair,
@@ -4596,6 +4608,22 @@ EOF
         assert!(app.handle("drift_check", &no_e).unwrap_err().contains("e_mpa is required"));
         assert!(app.handle("drift_check", &json!({})).unwrap_err().contains("nothing to check"));
         assert!(app.handle("drift_check", &json!({ "beams": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn lighting_plan_counts_luminaires_and_refuses_missing_targets() {
+        let mut app = App::default();
+        let args = json!({
+            "rooms": [{ "key": "r1", "x_mm": 0, "y_mm": 0, "w_mm": 5000, "h_mm": 4000, "target_lux": 300, "target_source": "client brief", "luminaire": "L1" }],
+            "luminaires": [{ "key": "L1", "lumens": 4000, "utilisation": 0.5, "maintenance": 0.8 }]
+        });
+        let r = app.handle("lighting_plan", &args).unwrap();
+        assert_eq!(r["lighting"]["rooms"][0]["count"], 4);
+        assert_eq!(r["lighting"]["rooms"][0]["status"], "unchecked");
+        let mut no_target = args.clone();
+        no_target["rooms"][0].as_object_mut().unwrap().remove("target_lux");
+        assert!(app.handle("lighting_plan", &no_target).unwrap_err().contains("target_lux is required"));
+        assert!(app.handle("lighting_plan", &json!({ "rooms": 3 })).unwrap_err().contains("malformed"));
     }
 
     #[test]

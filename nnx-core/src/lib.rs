@@ -43,6 +43,7 @@ pub mod ifc;
 pub mod ifc_review;
 pub mod insulation;
 pub mod layout;
+pub mod lighting;
 pub mod mep;
 pub mod privacy;
 pub mod spanalt;
