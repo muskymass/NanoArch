@@ -118,7 +118,7 @@ fn compare_min(value: Option<i64>, min: Option<i64>) -> Check {
 }
 
 /// Smallest distance between two rectangles, rounded up to a whole millimetre; zero when they touch.
-fn rect_gap(a: &Rect, b: &Rect) -> i64 {
+pub(crate) fn rect_gap(a: &Rect, b: &Rect) -> i64 {
     let dx = (b.x - (a.x + a.w)).max(a.x - (b.x + b.w)).max(0);
     let dy = (b.y - (a.y + a.h)).max(a.y - (b.y + b.h)).max(0);
     if dx == 0 || dy == 0 {

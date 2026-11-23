@@ -367,6 +367,7 @@ impl App {
             "room_shape_check" => Self::room_shape_check(args),
             "mezzanine_check" => Self::mezzanine_check(args),
             "rooftop_check" => Self::rooftop_check(args),
+            "basement_check" => Self::basement_check(args),
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
@@ -2052,6 +2053,20 @@ impl App {
             .map_err(|e| format!("rooftop: items need key, kind (room, canopy or tank), x, y, w, h and height_mm in whole millimetres, and limits must be numbers (max_room_share between 0 and 1): {e}"))?;
         let report = nnx_core::rooftop::check_rooftop(&roof, &spec)?;
         Ok(json!({ "rooftop": report }))
+    }
+
+    /// Checks a basement level: `{ envelope: { w, h }, outline: { x, y, w, h }, storey_mm, slab_mm, depth_mm, spaces: [{ key,
+    /// kind: parking|storage|service|ramp|core, x, y, w, h, stalls?, run_along?: x|y }], water_table_depth_mm?, min_clear_mm?,
+    /// max_ramp_slope_pct?, min_ramp_width_mm?, min_area_per_stall_m2?, min_exits?, max_travel_mm? }` (mm). A parking space needs
+    /// `stalls`, a ramp needs `run_along`; each limit left out is reported as `unchecked`.
+    fn basement_check(args: &Value) -> Result<Value, String> {
+        let env = args.get("envelope").ok_or("basement: envelope is required")?;
+        let side = |k: &str| env.get(k).and_then(Value::as_i64).ok_or_else(|| format!("basement: envelope '{k}' must be a whole number of millimetres"));
+        let bounds = Rect { x: 0, y: 0, w: side("w")?, h: side("h")? };
+        let spec: nnx_core::basement::BasementSpec = serde_json::from_value(args.clone())
+            .map_err(|e| format!("basement: give outline (x, y, w, h), storey_mm, slab_mm and depth_mm in whole millimetres; spaces need key, kind (parking, storage, service, ramp or core), x, y, w, h (a ramp also run_along x or y, parking also stalls); limits must be numbers: {e}"))?;
+        let report = nnx_core::basement::check_basement(&bounds, &spec)?;
+        Ok(json!({ "basement": report }))
     }
 
     /// Checks a courtyard of any simple outline: `{ rooms, envelope, outline: [{ x, y }] }` (mm). Reports area, perimeter, a
@@ -4453,6 +4468,32 @@ EOF
         let mut dry = base.clone();
         dry["items"][1].as_object_mut().unwrap().remove("water_depth_mm");
         assert!(app.handle("rooftop_check", &dry).unwrap_err().contains("needs water_depth_mm"));
+    }
+
+    #[test]
+    fn basement_check_measures_the_level_and_names_bad_input() {
+        let mut app = App::default();
+        let base = json!({ "envelope": { "w": 20000, "h": 30000 }, "outline": { "x": 2000, "y": 2000, "w": 16000, "h": 26000 },
+            "storey_mm": 3500, "slab_mm": 300, "depth_mm": 3000, "max_ramp_slope_pct": 20.0,
+            "spaces": [{ "key": "bays", "kind": "parking", "x": 2000, "y": 2000, "w": 16000, "h": 10000, "stalls": 12 },
+                       { "key": "ramp", "kind": "ramp", "x": 2000, "y": 13000, "w": 4000, "h": 15000, "run_along": "y" }] });
+        let r = app.handle("basement_check", &base).unwrap();
+        assert!((r["basement"]["excavation_m3"].as_f64().unwrap() - 1248.0).abs() < 1e-9);
+        assert_eq!(r["basement"]["parking_stalls"], 12);
+        assert_eq!(r["basement"]["ramp_slope_check"], "pass");
+        assert_eq!(r["basement"]["groundwater_check"], "unchecked");
+        let mut no_env = base.clone();
+        no_env.as_object_mut().unwrap().remove("envelope");
+        assert!(app.handle("basement_check", &no_env).unwrap_err().contains("envelope is required"));
+        let mut bad = base.clone();
+        bad["spaces"][0]["kind"] = json!("garage");
+        assert!(app.handle("basement_check", &bad).unwrap_err().contains("kind (parking, storage, service, ramp or core)"));
+        let mut dry = base.clone();
+        dry["spaces"][1].as_object_mut().unwrap().remove("run_along");
+        assert!(app.handle("basement_check", &dry).unwrap_err().contains("needs run_along"));
+        let mut no_depth = base.clone();
+        no_depth.as_object_mut().unwrap().remove("depth_mm");
+        assert!(app.handle("basement_check", &no_depth).unwrap_err().contains("depth_mm"));
     }
 
     #[test]
