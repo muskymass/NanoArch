@@ -417,6 +417,7 @@ impl App {
             "signoff_form" => self.signoff_form(args),
             "permit_documents_check" => self.permit_documents_check(args),
             "room_finishes_schedule" => self.room_finishes_schedule(args),
+            "wet_room_detail" => self.wet_room_detail(args),
             "number_audit" => self.number_audit(),
             "lock" => self.lock(args),
             "regenerate" => self.regenerate(args),
@@ -2934,6 +2935,17 @@ impl App {
         Ok(v)
     }
 
+    /// The bathroom / kitchen detail (read-only): `{ room (requirement key), level?, title?, fixtures: [{ key, kind?, x_mm, y_mm,
+    /// w_mm, d_mm, group?, source }], doors?: [{ wall, offset_mm, width_mm, swing_mm? }], min_clearance_mm?, clearance_source? }`.
+    /// Fixtures are the user's entries; returns the dimensioned SVG, the per-fixture wall gaps and the fit / overlap / door swing /
+    /// clearance checks (`unchecked` when their inputs are absent).
+    fn wet_room_detail(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::wetroom::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("wet room detail: inputs are malformed (room, fixtures [{{ key, x_mm, y_mm, w_mm, d_mm, source }}], doors? [{{ wall, offset_mm, width_mm, swing_mm? }}], min_clearance_mm?, clearance_source?): {e}"))?;
+        let detail = nnx_core::wetroom::build(&self.doc()?.model, &input)?;
+        serde_json::to_value(&detail).map_err(|e| e.to_string())
+    }
+
     /// The number audit file of the open project: every number with the source and date entered beside it, and the list of
     /// numbers that have none. Read-only; returns the entries, the counts and a CSV text (`name`: `number_audit.csv`).
     fn number_audit(&self) -> Result<Value, String> {
@@ -5304,6 +5316,17 @@ EOF
         assert!(e.contains("finishes") && e.contains("assignments"), "{e}");
         assert!(app.handle("room_finishes_schedule", &json!({ "finishes": "x" })).unwrap_err().contains("malformed"));
         assert!(App::default().handle("room_finishes_schedule", &args).is_err());
+    }
+
+    #[test]
+    fn wet_room_detail_needs_the_users_fixtures_and_a_model_room() {
+        let mut app = started_with_project();
+        let e = app.handle("wet_room_detail", &json!({ "room": "no-such-room", "fixtures": [{ "key": "wc", "x_mm": 0, "y_mm": 0, "w_mm": 400, "d_mm": 700, "source": "Data sheet" }] })).unwrap_err();
+        assert!(e.contains("no room with key"), "{e}");
+        let e = app.handle("wet_room_detail", &json!({ "room": "x" })).unwrap_err();
+        assert!(e.contains("fixtures"), "{e}");
+        assert!(app.handle("wet_room_detail", &json!({ "fixtures": "x" })).unwrap_err().contains("malformed"));
+        assert!(App::default().handle("wet_room_detail", &json!({})).is_err());
     }
 
     #[test]
