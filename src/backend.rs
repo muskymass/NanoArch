@@ -363,6 +363,7 @@ impl App {
             "privacy_check" => Self::privacy_check(args),
             "sun_check" => Self::sun_check(args),
             "span_compare" => Self::span_compare(args),
+            "furniture_fit" => Self::furniture_fit(args),
             "wind_check" => Self::wind_check(args),
             "courtyard_check" => Self::courtyard_check(args),
             "room_shape_check" => Self::room_shape_check(args),
@@ -2019,6 +2020,17 @@ impl App {
         let refs: Vec<(String, &nnx_core::layout::Layout)> = layouts.iter().map(|(l, lay)| (l.clone(), lay)).collect();
         let report = nnx_core::spanalt::compare(&refs, limit)?;
         Ok(json!({ "span": report }))
+    }
+
+    /// Arranges furniture of real sizes in one room and reports whether it fits: `{ room: { w, h }, min_walkway_mm, pieces: [{ key,
+    /// name?, w_mm, d_mm, count?, against_wall?, rotatable? }], doors?: [{ wall: south|north|west|east, offset_mm, width_mm }],
+    /// door_clear_mm?, max_occupancy_share? }` (mm). The walkway has no default; doors need `door_clear_mm`. Access from the doors is
+    /// `unchecked` without doors and the occupancy check is `unchecked` without a limit.
+    fn furniture_fit(args: &Value) -> Result<Value, String> {
+        let spec: nnx_core::furnfit::FitSpec = serde_json::from_value(args.clone())
+            .map_err(|e| format!("furniture fit: room needs w and h, pieces need key, w_mm and d_mm (count, against_wall and rotatable are optional), doors need wall, offset_mm and width_mm, and sizes are whole millimetres: {e}"))?;
+        let report = nnx_core::furnfit::arrange(&spec)?;
+        Ok(json!({ "furniture_fit": report }))
     }
 
     /// Classes habitable rooms by cross ventilation against the prevailing wind:
@@ -4527,6 +4539,30 @@ EOF
         let mut deep = base.clone();
         deep["slab_mm"] = json!(3000);
         assert!(app.handle("mezzanine_check", &deep).unwrap_err().contains("thinner"));
+    }
+
+    #[test]
+    fn furniture_fit_arranges_pieces_and_names_bad_input() {
+        let mut app = App::default();
+        let base = json!({ "room": { "w": 4000, "h": 3500 }, "min_walkway_mm": 800,
+            "pieces": [{ "key": "bed", "w_mm": 1600, "d_mm": 2000 }, { "key": "chair", "w_mm": 500, "d_mm": 500, "count": 2 }],
+            "doors": [{ "wall": "south", "offset_mm": 500, "width_mm": 900 }], "door_clear_mm": 900 });
+        let r = app.handle("furniture_fit", &base).unwrap();
+        assert_eq!(r["furniture_fit"]["status"], "fits");
+        assert_eq!(r["furniture_fit"]["placements"].as_array().unwrap().len(), 3);
+        assert_eq!(r["furniture_fit"]["access_check"], "pass");
+        assert_eq!(r["furniture_fit"]["occupancy_check"], "unchecked");
+        let mut no_walk = base.clone();
+        no_walk.as_object_mut().unwrap().remove("min_walkway_mm");
+        assert!(app.handle("furniture_fit", &no_walk).unwrap_err().contains("min_walkway_mm"));
+        let mut bad = base.clone();
+        bad["pieces"][0]["w_mm"] = json!("wide");
+        assert!(app.handle("furniture_fit", &bad).unwrap_err().contains("whole millimetres"));
+        let mut small = base.clone();
+        small["room"] = json!({ "w": 1500, "h": 1500 });
+        small["doors"] = json!([]);
+        let r = app.handle("furniture_fit", &small).unwrap();
+        assert_eq!(r["furniture_fit"]["status"], "no_arrangement_found");
     }
 
     #[test]

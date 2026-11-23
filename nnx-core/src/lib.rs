@@ -68,6 +68,7 @@ pub mod sbc;
 pub mod scoring;
 pub mod finishes;
 pub mod furniture;
+pub mod furnfit;
 pub mod greywater;
 pub mod hydraulics;
 pub mod gridopt;
