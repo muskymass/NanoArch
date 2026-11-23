@@ -3228,6 +3228,31 @@ mod tests {
     }
 
     #[test]
+    fn the_reference_two_floor_project_has_no_integrity_errors_and_generates_the_same_model_twice() {
+        let run = || {
+            let mut app = App::default();
+            app.handle("generate", &json!({ "brief": brief2(), "struct": loads2() })).unwrap();
+            app.handle("select", &json!({ "index": 0, "struct": loads2() })).unwrap();
+            let p = app.handle("precheck", &json!({})).unwrap();
+            let errors: Vec<String> = p["issues"].as_array().unwrap().iter().filter(|i| i["level"] == "error").map(|i| i["code"].to_string()).collect();
+            let mut kinds: std::collections::BTreeMap<String, usize> = Default::default();
+            for e in app.doc.as_ref().unwrap().model.elements.values() {
+                *kinds.entry(e.kind.clone()).or_default() += 1;
+            }
+            let q = app.handle("qto", &json!({})).unwrap();
+            let gross = q["items"].as_array().unwrap().iter().find(|i| i["code"] == "SPACE.GROSS.AREA").map(|i| i["quantity"].as_f64().unwrap());
+            (errors, kinds, gross)
+        };
+        let (errors, kinds, gross) = run();
+        assert!(errors.is_empty(), "a freshly generated reference project has no integrity error: {errors:?}");
+        for k in ["Space", "Wall", "Door", "Window", "Slab"] {
+            assert!(kinds.get(k).copied().unwrap_or(0) > 0, "the reference project has {k} elements: {kinds:?}");
+        }
+        assert!(gross.is_some_and(|g| g > 0.0), "the gross floor area is counted");
+        assert_eq!(run(), (errors, kinds, gross), "the same brief gives the same model");
+    }
+
+    #[test]
     fn a_lift_shaft_is_open_in_the_slab_only_where_an_identical_shaft_stands_above() {
         let mut brief = brief2();
         let r = |key: &str, floor: u32| json!({ "key": key, "name": "مصعد", "func": "lift", "area": 4.0, "zone": "service", "light": false, "floor": floor });
