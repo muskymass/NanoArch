@@ -17,7 +17,7 @@
 
 use crate::model::{Element, Id, Model, Source};
 use crate::model3d;
-use crate::typed::{Column, Door, Feature, Footing, MepPoint, Slab, Space, Typed, Wall, Window};
+use crate::typed::{Beam, Column, Door, Feature, Footing, MepPoint, Slab, Space, Typed, Wall, Window};
 use std::collections::BTreeMap;
 
 pub struct IfcOpts {
@@ -215,7 +215,24 @@ fn aggregate(w: &mut W, seed: &str, parent: usize, kids: &[usize]) {
 
 // ------------------------------------------------------------------ the export
 
+/// The standard coordination export.
 pub fn export_ifc(model: &Model, opts: &IfcOpts) -> Result<IfcOut, String> {
+    build(model, opts, false)
+}
+
+/// The same model written for Revit's IFC importer: every typed product also gets an IFC type object (`IfcWallType`,
+/// `IfcDoorType`, ... related with `IfcRelDefinesByType`, which Revit turns into families and types), the standard
+/// `Pset_*Common` property sets and `Qto_*BaseQuantities` sets, and the instance name is its type name. Only values the
+/// model holds are written: no material, layer, fire rating, load-bearing flag or geo-reference is invented (the model
+/// has none), so Revit receives those as unset. Types are grouped by measured size, never by a catalogue.
+pub fn export_ifc_revit(model: &Model, opts: &IfcOpts) -> Result<IfcOut, String> {
+    build(model, opts, true)
+}
+
+/// The IFC type of a product: the IFC class suffix and the type name (shared by every product of the same size).
+type TypeKey = (&'static str, String);
+
+fn build(model: &Model, opts: &IfcOpts, revit: bool) -> Result<IfcOut, String> {
     if !model.elements.values().any(|e| e.kind == Space::KIND || e.kind == Wall::KIND) {
         return Err("nothing to export: the model has no rooms or walls".into());
     }
@@ -260,6 +277,8 @@ pub fn export_ifc(model: &Model, opts: &IfcOpts) -> Result<IfcOut, String> {
 
     // Walls with their openings; doors and windows fill them.
     let mut opening_of: BTreeMap<String, usize> = BTreeMap::new();
+    let mut type_members: BTreeMap<TypeKey, Vec<usize>> = BTreeMap::new();
+    let mut exterior_wall: BTreeMap<String, bool> = BTreeMap::new();
     for e in model.elements.values().filter(|e| e.kind == Wall::KIND) {
         let Ok(wall) = e.typed::<Wall>() else { continue };
         let lvl = level_of(e);
@@ -268,10 +287,18 @@ pub fn export_ifc(model: &Model, opts: &IfcOpts) -> Result<IfcOut, String> {
         let (x0, y0, dx, dy) = if wall.horizontal() { (wall.start() as f64, wall.centre_line() as f64 - t / 2.0, wall.length as f64, t) } else { (wall.centre_line() as f64 - t / 2.0, wall.start() as f64, t, wall.length as f64) };
         let pl = w.place(Some(st_pl), x0, y0, 0.0);
         let shape = w.body(dx, dy, wall.height as f64);
-        let name = format!("Wall {}", if wall.is_exterior { "exterior" } else { "interior" });
-        let wid = w.add(format!("IFCWALL('{}',$,{},$,$,#{pl},#{shape},$,.NOTDEFINED.)", guid_of_id(&e.id), step_str(&name)));
+        let kind_word = if wall.is_exterior { "exterior" } else { "interior" };
+        let type_name = format!("Wall {} mm {kind_word}", wall.thickness);
+        let name = if revit { type_name.clone() } else { format!("Wall {kind_word}") };
+        let wid = w.add(format!("IFCWALL('{}',$,{},$,$,#{pl},#{shape},$,{})", guid_of_id(&e.id), step_str(&name), if revit { ".STANDARD." } else { ".NOTDEFINED." }));
         *counts.entry("IfcWall".into()).or_default() += 1;
-        w.pset("Pset_WallCommon", &[("IsExternal", Pv::Bool(wall.is_exterior))], wid);
+        exterior_wall.insert(e.id.to_string(), wall.is_exterior);
+        if revit {
+            w.pset("Pset_WallCommon", &[("Reference", Pv::Ident(type_name.clone())), ("IsExternal", Pv::Bool(wall.is_exterior))], wid);
+            type_members.entry(("WALL", type_name)).or_default().push(wid);
+        } else {
+            w.pset("Pset_WallCommon", &[("IsExternal", Pv::Bool(wall.is_exterior))], wid);
+        }
         trace(&mut w, e, wid, vec![("RoomA", Pv::Label(wall.room_a.clone())), ("RoomB", Pv::Label(wall.room_b.clone().unwrap_or_default()))]);
         w.quantity("Qto_WallBaseQuantities", &[("Length", "LENGTH", wall.length as f64), ("Width", "LENGTH", t), ("Height", "LENGTH", wall.height as f64)], wid);
         storeys.get_mut(&lvl).expect("storey").products.push(wid);
@@ -306,15 +333,29 @@ pub fn export_ifc(model: &Model, opts: &IfcOpts) -> Result<IfcOut, String> {
         let (class, id) = match b.kind {
             "Slab" => {
                 let kind = if lvl == top { ".ROOF." } else { ".FLOOR." };
-                let id = w.add(format!("IFCSLAB('{g}',$,'Slab',$,$,#{pl},#{shape},$,{kind})"));
-                let extra = e.typed::<Slab>().map(|s| vec![("ThicknessMm", Pv::Real(s.thickness as f64)), ("Room", Pv::Label(s.room))]).unwrap_or_default();
+                let slab = e.typed::<Slab>().ok();
+                let type_name = slab.as_ref().map(|s| format!("Slab {} mm", s.thickness));
+                let id = w.add(format!("IFCSLAB('{g}',$,{},$,$,#{pl},#{shape},$,{kind})", step_str(type_name.as_deref().filter(|_| revit).unwrap_or("Slab"))));
+                if let (true, Some(t), Some(s)) = (revit, type_name, slab.as_ref()) {
+                    w.pset("Pset_SlabCommon", &[("Reference", Pv::Ident(t.clone())), ("IsExternal", Pv::Bool(false))], id);
+                    w.quantity("Qto_SlabBaseQuantities", &[("Width", "LENGTH", s.thickness as f64), ("GrossArea", "AREA", dx * dy / 1.0e6)], id);
+                    type_members.entry(("SLAB", t)).or_default().push(id);
+                }
+                let extra = slab.map(|s| vec![("ThicknessMm", Pv::Real(s.thickness as f64)), ("Room", Pv::Label(s.room))]).unwrap_or_default();
                 trace(&mut w, e, id, extra);
                 ("IfcSlab", id)
             }
             "Column" => {
-                let id = w.add(format!("IFCCOLUMN('{g}',$,'Column',$,$,#{pl},#{shape},$,.COLUMN.)"));
+                let col = e.typed::<Column>().ok();
+                let type_name = col.as_ref().map(|c| format!("Column {} x {} mm", c.b, c.h));
+                let id = w.add(format!("IFCCOLUMN('{g}',$,{},$,$,#{pl},#{shape},$,.COLUMN.)", step_str(type_name.as_deref().filter(|_| revit).unwrap_or("Column"))));
+                if let (true, Some(t), Some(c)) = (revit, type_name, col.as_ref()) {
+                    w.pset("Pset_ColumnCommon", &[("Reference", Pv::Ident(t.clone()))], id);
+                    w.quantity("Qto_ColumnBaseQuantities", &[("Length", "LENGTH", dz), ("CrossSectionArea", "AREA", (c.b * c.h) as f64 / 1.0e6)], id);
+                    type_members.entry(("COLUMN", t)).or_default().push(id);
+                }
                 let mut extra = Vec::new();
-                if let Ok(c) = e.typed::<Column>() {
+                if let Some(c) = col {
                     extra.push(("GridRef", Pv::Label(c.grid_ref)));
                     if let Some(kn) = c.axial_service_kn {
                         extra.push(("AxialServiceKn", Pv::Real(kn)));
@@ -324,7 +365,14 @@ pub fn export_ifc(model: &Model, opts: &IfcOpts) -> Result<IfcOut, String> {
                 ("IfcColumn", id)
             }
             "Beam" => {
-                let id = w.add(format!("IFCBEAM('{g}',$,'Beam',$,$,#{pl},#{shape},$,.BEAM.)"));
+                let beam = e.typed::<Beam>().ok();
+                let type_name = beam.as_ref().map(|b| format!("Beam {} x {} mm", b.b, b.h));
+                let id = w.add(format!("IFCBEAM('{g}',$,{},$,$,#{pl},#{shape},$,.BEAM.)", step_str(type_name.as_deref().filter(|_| revit).unwrap_or("Beam"))));
+                if let (true, Some(t), Some(bm)) = (revit, type_name, beam.as_ref()) {
+                    w.pset("Pset_BeamCommon", &[("Reference", Pv::Ident(t.clone()))], id);
+                    w.quantity("Qto_BeamBaseQuantities", &[("Length", "LENGTH", bm.length as f64), ("CrossSectionArea", "AREA", (bm.b * bm.h) as f64 / 1.0e6)], id);
+                    type_members.entry(("BEAM", t)).or_default().push(id);
+                }
                 trace(&mut w, e, id, Vec::new());
                 ("IfcBeam", id)
             }
@@ -342,7 +390,23 @@ pub fn export_ifc(model: &Model, opts: &IfcOpts) -> Result<IfcOut, String> {
                 let door = b.kind == "Door";
                 let (h, wd) = if door { e.typed::<Door>().map(|d| (d.height, d.width)).unwrap_or((0, 0)) } else { e.typed::<Window>().map(|d| (d.height, d.width)).unwrap_or((0, 0)) };
                 let (step, name, kind) = if door { ("IFCDOOR", "Door", ".DOOR.") } else { ("IFCWINDOW", "Window", ".WINDOW.") };
-                let id = w.add(format!("{step}('{g}',$,'{name}',$,$,#{pl},#{shape},$,{},{},{kind},.NOTDEFINED.,$)", real(h as f64), real(wd as f64)));
+                let type_name = format!("{name} {wd} x {h} mm");
+                let inst_name = if revit { type_name.as_str() } else { name };
+                let id = w.add(format!("{step}('{g}',$,{},$,$,#{pl},#{shape},$,{},{},{kind},.NOTDEFINED.,$)", step_str(inst_name), real(h as f64), real(wd as f64)));
+                if revit && h > 0 && wd > 0 {
+                    // External only when the host wall is stated exterior in the model; nothing else implies it.
+                    let host_ext = e.host_id.and_then(|hid| exterior_wall.get(&hid.to_string()).copied());
+                    let mut common = vec![("Reference", Pv::Ident(type_name.clone()))];
+                    if let Some(x) = host_ext {
+                        common.push(("IsExternal", Pv::Bool(x)));
+                    }
+                    if door && let Ok(d) = e.typed::<Door>() {
+                        common.push(("FireExit", Pv::Bool(d.is_egress)));
+                    }
+                    w.pset(if door { "Pset_DoorCommon" } else { "Pset_WindowCommon" }, &common, id);
+                    w.quantity(if door { "Qto_DoorBaseQuantities" } else { "Qto_WindowBaseQuantities" }, &[("Height", "LENGTH", h as f64), ("Width", "LENGTH", wd as f64)], id);
+                    type_members.entry((if door { "DOOR" } else { "WINDOW" }, type_name)).or_default().push(id);
+                }
                 trace(&mut w, e, id, Vec::new());
                 if let Some(op) = opening_of.get(&b.id) {
                     w.add(format!("IFCRELFILLSELEMENT('{}',$,$,$,#{op},#{id})", guid_of_seed(&format!("fill:{}", e.id))));
@@ -423,8 +487,30 @@ pub fn export_ifc(model: &Model, opts: &IfcOpts) -> Result<IfcOut, String> {
         let id = w.add(format!("IFCSPACE('{}',$,{},$,$,#{pl},#{shape},{},.ELEMENT.,.INTERNAL.,$)", guid_of_id(&e.id), step_str(&sp.requirement_key), if long.is_empty() { "$".to_string() } else { step_str(&long) }));
         *counts.entry("IfcSpace".into()).or_default() += 1;
         trace(&mut w, e, id, vec![("Function", Pv::Label(sp.func.clone()))]);
-        w.quantity("Qto_SpaceBaseQuantities", &[("NetFloorArea", "AREA", sp.area)], id);
+        if revit {
+            w.pset("Pset_SpaceCommon", &[("Reference", Pv::Ident(sp.requirement_key.clone()))], id);
+            w.quantity("Qto_SpaceBaseQuantities", &[("Height", "LENGTH", height * 1000.0), ("GrossFloorArea", "AREA", (sp.w * sp.h) as f64 / 1.0e6), ("NetFloorArea", "AREA", sp.area)], id);
+        } else {
+            w.quantity("Qto_SpaceBaseQuantities", &[("NetFloorArea", "AREA", sp.area)], id);
+        }
         storeys.get_mut(&lvl).expect("storey").spaces.push(id);
+    }
+
+    // Type objects (Revit profile): one per distinct type name, related to every product that shares it.
+    for ((class, name), members) in &type_members {
+        let g = guid_of_seed(&format!("type:{class}:{name}"));
+        let (step, tail, cname) = match *class {
+            "WALL" => ("IFCWALLTYPE", ".STANDARD.", "IfcWallType"),
+            "DOOR" => ("IFCDOORTYPE", ".DOOR.,.NOTDEFINED.,$,$", "IfcDoorType"),
+            "WINDOW" => ("IFCWINDOWTYPE", ".WINDOW.,.NOTDEFINED.,$,$", "IfcWindowType"),
+            "SLAB" => ("IFCSLABTYPE", ".FLOOR.", "IfcSlabType"),
+            "COLUMN" => ("IFCCOLUMNTYPE", ".COLUMN.", "IfcColumnType"),
+            _ => ("IFCBEAMTYPE", ".BEAM.", "IfcBeamType"),
+        };
+        let t = w.add(format!("{step}('{g}',$,{},$,$,$,$,$,{tail})", step_str(name)));
+        *counts.entry(cname.into()).or_default() += 1;
+        let list = members.iter().map(|m| format!("#{m}")).collect::<Vec<_>>().join(",");
+        w.add(format!("IFCRELDEFINESBYTYPE('{}',$,$,$,({list}),#{t})", guid_of_seed(&format!("reltype:{class}:{name}"))));
     }
 
     // Containment: products in their storey, rooms aggregated under it.

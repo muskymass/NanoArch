@@ -525,7 +525,7 @@ impl App {
             "assemblies_set" => self.assemblies_set(args),
             "assembly_assign" => self.assembly_assign(args),
             "precheck" => Ok(json!(nnx_core::precheck::run(&self.doc()?.model))),
-            "export_ifc" => self.gate(args).and_then(|_| self.export_ifc()),
+            "export_ifc" => self.gate(args).and_then(|_| self.export_ifc(args)),
             "export_dxf" => self.gate(args).and_then(|_| self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false))),
             "report_html" => {
                 let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
@@ -675,15 +675,22 @@ impl App {
         Ok(())
     }
 
-    fn export_ifc(&self) -> Result<Value, String> {
+    /// `{ profile? }`: `"standard"` (default) or `"revit"` (type objects, Pset/Qto sets; see `nnx_core::ifc::export_ifc_revit`).
+    fn export_ifc(&self, args: &Value) -> Result<Value, String> {
+        let revit = match args.get("profile").and_then(Value::as_str).map(str::trim) {
+            None | Some("") | Some("standard") => false,
+            Some("revit") => true,
+            Some(other) => return Err(format!("export ifc: unknown profile '{other}' (standard or revit)")),
+        };
         let opts = nnx_core::ifc::IfcOpts {
             project_name: self.display_title(),
             author: "NanoArch".into(),
             timestamp: utc_now(),
             labels: self.labels(),
         };
-        let out = nnx_core::ifc::export_ifc(&self.doc()?.model, &opts)?;
-        Ok(json!({ "ifc": out.text, "counts": out.counts }))
+        let model = &self.doc()?.model;
+        let out = if revit { nnx_core::ifc::export_ifc_revit(model, &opts)? } else { nnx_core::ifc::export_ifc(model, &opts)? };
+        Ok(json!({ "ifc": out.text, "counts": out.counts, "profile": if revit { "revit" } else { "standard" } }))
     }
 
     /// The printable plan set (one A3 sheet per level) as HTML; the shell prints it to PDF.
@@ -4694,6 +4701,14 @@ mod tests {
         assert!(text.is_ascii() && text.contains("\\X2\\"), "Arabic room names are escaped");
         assert!(text.contains("FILE_NAME('model.ifc','20"), "a UTC timestamp is written");
         assert!(App::default().handle("export_ifc", &json!({})).is_err());
+        assert_eq!(r["profile"], "standard");
+        assert!(!text.contains("IFCWALLTYPE("), "the standard profile writes no type objects");
+        let rv = app.handle("export_ifc", &json!({ "profile": "revit" })).unwrap();
+        let rt = rv["ifc"].as_str().unwrap();
+        assert_eq!(rv["profile"], "revit");
+        assert!(rt.contains("IFCWALLTYPE(") && rt.contains("IFCRELDEFINESBYTYPE(") && rt.contains("'Pset_DoorCommon'"));
+        assert_eq!(rv["counts"]["IfcWall"], r["counts"]["IfcWall"], "the same products in both profiles");
+        assert!(app.handle("export_ifc", &json!({ "profile": "archicad" })).unwrap_err().contains("unknown profile"));
         if let Ok(path) = std::env::var("NANOARCH_IFC_OUT") {
             std::fs::write(path, text).unwrap();
         }
