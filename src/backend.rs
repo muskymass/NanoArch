@@ -526,6 +526,7 @@ impl App {
             "assembly_assign" => self.assembly_assign(args),
             "precheck" => Ok(json!(nnx_core::precheck::run(&self.doc()?.model))),
             "export_ifc" => self.gate(args).and_then(|_| self.export_ifc(args)),
+            "export_bundle" => self.gate(args).and_then(|_| self.export_bundle(args)),
             "export_dxf" => self.gate(args).and_then(|_| self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false), args.get("layer_style"))),
             "report_html" => {
                 let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
@@ -691,6 +692,64 @@ impl App {
         let model = &self.doc()?.model;
         let out = if revit { nnx_core::ifc::export_ifc_revit(model, &opts)? } else { nnx_core::ifc::export_ifc(model, &opts)? };
         Ok(json!({ "ifc": out.text, "counts": out.counts, "profile": if revit { "revit" } else { "standard" } }))
+    }
+
+    /// One delivery ZIP with numbered folders and an index: `{ include: ["ifc", "dxf", "plan_html", "boq"], lang?, profile?, all?, views? }`.
+    /// Nothing is chosen for the user (`include` is required). `boq` needs the BOQ inputs saved in the project, since an unpriced
+    /// quantity workbook would be passed off as a priced one. Returns `{ zip_b64, name, paths, manifest }`.
+    fn export_bundle(&self, args: &Value) -> Result<Value, String> {
+        use nnx_core::bundle::Entry;
+        let include: Vec<&str> = args
+            .get("include")
+            .and_then(Value::as_array)
+            .ok_or("export bundle: `include` is required (a list of ifc, dxf, plan_html, boq)")?
+            .iter()
+            .map(|v| v.as_str().ok_or("export bundle: `include` must hold only names"))
+            .collect::<Result<_, _>>()?;
+        if include.is_empty() {
+            return Err("export bundle: `include` is empty (choose at least one of ifc, dxf, plan_html, boq)".into());
+        }
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        let text = |v: &Value, key: &str| v[key].as_str().map(|s| s.as_bytes().to_vec()).ok_or_else(|| format!("export bundle: the {key} output was empty"));
+        let slug: String = {
+            let s: String = self.display_title().chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' }).collect();
+            s.trim_matches('_').chars().take(60).collect()
+        };
+        let slug = if slug.is_empty() { "project".to_string() } else { slug };
+        let mut entries = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for name in include {
+            if !seen.insert(name) {
+                return Err(format!("export bundle: '{name}' is listed twice"));
+            }
+            match name {
+                "ifc" => {
+                    let r = self.export_ifc(args)?;
+                    entries.push(Entry { folder: "01-models".into(), name: format!("{slug}.ifc"), bytes: text(&r, "ifc")? });
+                }
+                "dxf" => {
+                    let all = args.get("all").and_then(Value::as_bool).unwrap_or(false);
+                    let views = args.get("views").and_then(Value::as_bool).unwrap_or(false);
+                    let r = self.export_dxf(all, views, args.get("layer_style"))?;
+                    entries.push(Entry { folder: "02-drawings".into(), name: format!("{slug}.dxf"), bytes: text(&r, "dxf")? });
+                }
+                "plan_html" => {
+                    let r = self.pdf_html(arabic)?;
+                    entries.push(Entry { folder: "02-drawings".into(), name: format!("{slug}-plans.html"), bytes: text(&r, "html")? });
+                }
+                "boq" => {
+                    if self.project().and_then(|p| p.boq).is_none() {
+                        return Err("export bundle: `boq` needs the BOQ inputs (prices and rates) saved in the project; enter them first".into());
+                    }
+                    let r = self.boq_now()?;
+                    entries.push(Entry { folder: "03-quantities".into(), name: format!("{slug}-boq.xlsx"), bytes: nnx_core::xlsx::boq_workbook(&r, arabic).to_bytes() });
+                }
+                other => return Err(format!("export bundle: unknown item '{other}' (ifc, dxf, plan_html, boq)")),
+            }
+        }
+        let date: String = utc_now().chars().take(10).collect();
+        let b = nnx_core::bundle::build(&self.display_title(), &date, entries)?;
+        Ok(json!({ "zip_b64": nnx_core::xlsx::base64_encode(&b.zip), "name": format!("{slug}-delivery.zip"), "paths": b.paths, "manifest": b.manifest }))
     }
 
     /// The printable plan set (one A3 sheet per level) as HTML; the shell prints it to PDF.
@@ -4725,6 +4784,31 @@ mod tests {
         if let Ok(path) = std::env::var("NANOARCH_IFC_OUT") {
             std::fs::write(path, text).unwrap();
         }
+    }
+
+    #[test]
+    fn export_bundle_packs_chosen_files_into_numbered_folders_and_refuses_bad_requests() {
+        let mut app = started2();
+        app.handle("mep", &json!({ "inputs": mep_inputs(), "apply": true })).unwrap();
+        let r = app.handle("export_bundle", &json!({ "include": ["dxf", "ifc", "plan_html"], "lang": "en" })).unwrap();
+        let paths: Vec<String> = r["paths"].as_array().unwrap().iter().map(|p| p.as_str().unwrap().to_string()).collect();
+        assert_eq!(paths.len(), 4);
+        assert_eq!(paths[0], "00-index/manifest.json");
+        assert!(paths[1].starts_with("01-models/") && paths[1].ends_with(".ifc"), "{paths:?}");
+        assert!(paths[2].starts_with("02-drawings/") && paths[3].starts_with("02-drawings/"), "{paths:?}");
+        let zip = nnx_core::xlsx::base64_decode(r["zip_b64"].as_str().unwrap()).unwrap();
+        assert_eq!(&zip[..4], b"PK");
+        assert!(r["name"].as_str().unwrap().ends_with("-delivery.zip"));
+        let m: Value = serde_json::from_str(r["manifest"].as_str().unwrap()).unwrap();
+        assert_eq!(m["file_count"], 3);
+        // nothing is chosen for the user
+        assert!(app.handle("export_bundle", &json!({})).unwrap_err().contains("include"));
+        assert!(app.handle("export_bundle", &json!({ "include": [] })).unwrap_err().contains("empty"));
+        assert!(app.handle("export_bundle", &json!({ "include": ["dwg"] })).unwrap_err().contains("unknown item"));
+        assert!(app.handle("export_bundle", &json!({ "include": ["ifc", "ifc"] })).unwrap_err().contains("twice"));
+        // no saved BOQ inputs: the priced workbook is refused, not faked
+        assert!(app.handle("export_bundle", &json!({ "include": ["boq"] })).unwrap_err().contains("BOQ inputs"));
+        assert!(App::default().handle("export_bundle", &json!({ "include": ["ifc"] })).is_err());
     }
 
     #[test]
