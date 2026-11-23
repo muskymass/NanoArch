@@ -414,6 +414,7 @@ impl App {
             }
             "certificate_html" => self.certificate(args),
             "permit_pack" => self.permit_pack(args),
+            "number_audit" => self.number_audit(),
             "lock" => self.lock(args),
             "regenerate" => self.regenerate(args),
             "site_layout" => self.site_layout_cmd(),
@@ -2870,6 +2871,18 @@ impl App {
         Ok(json!({ "html": pack.html, "name": "permit_pack.pdf", "sheets": pack.sheets, "notes": pack.notes }))
     }
 
+    /// The number audit file of the open project: every number with the source and date entered beside it, and the list of
+    /// numbers that have none. Read-only; returns the entries, the counts and a CSV text (`name`: `number_audit.csv`).
+    fn number_audit(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let file = nnx_core::numaudit::audit(&p)?;
+        let csv = nnx_core::numaudit::to_csv(&file);
+        let mut v = serde_json::to_value(&file).map_err(|e| e.to_string())?;
+        v["csv"] = json!(csv);
+        v["name"] = json!("number_audit.csv");
+        Ok(v)
+    }
+
     /// Every advanced MEP analysis (solar, smart home, Wi-Fi, CCTV, EV, balancing, greywater, head loss) of the open project.
     fn mepx_report(&self) -> Result<Value, String> {
         let p = self.project().ok_or("choose a layout first")?;
@@ -5102,6 +5115,19 @@ EOF
         assert!(app.handle("shear_core_check", &no_e).unwrap_err().contains("e_mpa is required"));
         assert!(app.handle("shear_core_check", &json!({ "walls": [] })).unwrap_err().contains("no walls"));
         assert!(app.handle("shear_core_check", &json!({ "walls": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn number_audit_lists_every_number_with_its_source_or_flags_it() {
+        let mut app = started_with_project();
+        let r = app.handle("number_audit", &json!({})).unwrap();
+        assert_eq!(r["name"], "number_audit.csv");
+        assert_eq!(r["total"].as_u64().unwrap(), r["sourced"].as_u64().unwrap() + r["unsourced"].as_u64().unwrap());
+        assert_eq!(r["entries"].as_array().unwrap().len() as u64, r["total"].as_u64().unwrap());
+        assert_eq!(r["unsourced_paths"].as_array().unwrap().len() as u64, r["unsourced"].as_u64().unwrap());
+        assert!(r["csv"].as_str().unwrap().starts_with("path,value,status,source,date
+"));
+        assert!(App::default().handle("number_audit", &json!({})).is_err());
     }
 
     #[test]
