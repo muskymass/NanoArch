@@ -223,6 +223,8 @@ pub struct Finding {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Skipped {
     pub rule_id: String,
+    /// The first unset parameter: the one a user must enter, with its source, to make the rule run.
+    pub param: String,
     pub reason: String,
     /// Elements the rule would have been applied to: they were not checked, which is not the same as passing.
     pub elements: Vec<Id>,
@@ -287,6 +289,7 @@ pub fn check(model: &Model, rules: &RuleSet) -> Report {
                 .collect();
             report.skipped.push(Skipped {
                 rule_id: c.def.id.clone(),
+                param: name.clone(),
                 reason: format!("parameter '{name}' is unset; enter it from the official text"),
                 elements,
             });

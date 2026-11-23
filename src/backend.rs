@@ -1090,7 +1090,7 @@ impl App {
             return Err("paste a rule pack (JSON), use the sourced pack, or load and enable a municipal overlay".into());
         }
         // The sourced pack is the bottom layer; a pasted pack and the enabled overlays go on top of it and may replace its rules.
-        let (rs, reports) = if sourced {
+        let (mut rs, mut reports) = if sourced {
             let (mut rs, mut reports) = nnx_core::overlay::rule_set(Some(&nnx_core::sbc::sourced_pack_json()), &[])?;
             if let Some(b) = base.filter(|b| !b.trim().is_empty()) {
                 reports.push(rs.add_layer_reporting(b).map_err(|e| format!("rule pack: {e}"))?);
@@ -1102,6 +1102,20 @@ impl App {
         } else {
             nnx_core::overlay::rule_set(base, &overlays)?
         };
+        // Limits the user entered for rules that were not run: each needs a value and its source; they go on top as one more layer.
+        let limits = args.get("limits").and_then(Value::as_array).cloned().unwrap_or_default();
+        if !limits.is_empty() {
+            let mut overrides = serde_json::Map::new();
+            for l in &limits {
+                let rule = l.get("rule").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or("a limit names no rule")?;
+                let param = l.get("param").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or_else(|| format!("the limit for '{rule}' names no parameter"))?;
+                let value = l.get("value").and_then(Value::as_f64).filter(|v| v.is_finite()).ok_or_else(|| format!("the limit for '{rule}' has no numeric value"))?;
+                let source = l.get("source").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).ok_or_else(|| format!("the limit for '{rule}' has no source: state where the value comes from"))?;
+                overrides.insert(rule.to_string(), json!({ param: { "value": value, "source": source } }));
+            }
+            let pack = json!({ "id": "USER-LIMITS", "edition": "entered in the application", "version": "1", "overrides": overrides });
+            reports.push(rs.add_layer_reporting(&pack.to_string()).map_err(|e| format!("limits: {e}"))?);
+        }
         let r = rules::check(&doc.model, &rs);
         let sev = |s: rules::Severity| match s {
             rules::Severity::Error => "error",
@@ -1113,7 +1127,7 @@ impl App {
             "layers": r.layers,
             "overlays": reports,
             "findings": r.findings.iter().map(|f| json!({ "rule": f.rule_id, "clause": f.clause, "layer": f.layer, "severity": sev(f.severity), "message": f.message, "element": f.element.to_string() })).collect::<Vec<_>>(),
-            "skipped": r.skipped.iter().map(|s| json!({ "rule": s.rule_id, "reason": s.reason, "elements": self.skipped_rooms(&s.elements) })).collect::<Vec<_>>(),
+            "skipped": r.skipped.iter().map(|s| json!({ "rule": s.rule_id, "param": s.param, "reason": s.reason, "elements": self.skipped_rooms(&s.elements) })).collect::<Vec<_>>(),
         }))
     }
 
@@ -2652,6 +2666,27 @@ mod tests {
         let over = r#"{"id":"O","edition":"e","version":"1","rules":[{"id":"sbc.room_area.bedroom","clause":"X","applies_to":{"kind":"Space"},"check":"area >= param.min","params":{"min":{"value":1,"source":"test"}},"severity":"error","message":"m"}]}"#;
         let r2 = app.handle("check_rules", &json!({ "sourced": true, "pack": over })).unwrap();
         assert_eq!(r2["overlays"][1]["replaced"][0][0], "sbc.room_area.bedroom");
+    }
+
+    #[test]
+    fn a_limit_entered_with_its_source_makes_a_not_run_rule_run_and_one_without_a_source_is_refused() {
+        let mut app = started();
+        let base = app.handle("check_rules", &json!({ "sourced": true })).unwrap();
+        let other = base["skipped"].as_array().unwrap().iter().find(|s| s["rule"] == "sbc.daylight.other").expect("the rule is not run without a limit");
+        assert_eq!(other["param"], "min", "the response names the parameter to enter");
+        let unchecked = other["elements"].as_array().unwrap().len();
+        let lim = |source: &str| json!({ "sourced": true, "limits": [{ "rule": "sbc.daylight.other", "param": "min", "value": 0.0, "source": source }] });
+        let r = app.handle("check_rules", &lim("test limit, entered by the user")).unwrap();
+        assert!(!r["skipped"].as_array().unwrap().iter().any(|s| s["rule"] == "sbc.daylight.other"), "the rule runs once its limit is entered");
+        assert!(r["layers"].as_array().unwrap().iter().any(|l| l.as_str().unwrap().starts_with("USER-LIMITS")), "the entered limits are a recorded layer");
+        assert!(r["checked"].as_u64().unwrap() >= base["checked"].as_u64().unwrap() + unchecked as u64, "the spaces the rule left unchecked are now checked");
+        for bad in ["", "   "] {
+            assert!(app.handle("check_rules", &lim(bad)).unwrap_err().contains("no source"), "a limit with no source is refused");
+        }
+        let no_value = json!({ "sourced": true, "limits": [{ "rule": "sbc.daylight.other", "param": "min", "source": "x" }] });
+        assert!(app.handle("check_rules", &no_value).unwrap_err().contains("no numeric value"));
+        let unknown = json!({ "sourced": true, "limits": [{ "rule": "no.such.rule", "param": "min", "value": 1.0, "source": "x" }] });
+        assert!(app.handle("check_rules", &unknown).is_err(), "a limit for a rule that does not exist is refused");
     }
 
     #[test]
