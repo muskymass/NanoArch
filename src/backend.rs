@@ -486,6 +486,7 @@ impl App {
             "municipality_add" => self.municipality_add(args),
             "municipality_remove" => self.municipality_remove(args),
             "municipality_apply" => self.municipality_apply(args),
+            "zoning_check" => self.zoning_check(args),
             "draft_frame" => self.draft_frame(),
             "draft_snap" => self.draft_snap(args),
             "draft_wall" => self.draft_wall(args),
@@ -1585,6 +1586,13 @@ impl App {
         v["stored_only"] = json!(applied.stored_only);
         v["new_violations"] = json!(out.new_violations.iter().map(|x| x.en.clone()).collect::<Vec<_>>());
         Ok(v)
+    }
+
+    /// Read-only: the model against the limits of one municipality entry (`id`), without applying them to the project.
+    fn zoning_check(&self, args: &Value) -> Result<Value, String> {
+        let id = args.get("id").and_then(Value::as_str).ok_or("id is required")?;
+        let d = self.doc.as_ref().ok_or("choose a layout first")?;
+        serde_json::to_value(nnx_core::zoning::run(&d.model, id)?).map_err(|e| e.to_string())
     }
 
     // ------------------------------------------------------------------ Milestone 8: BIM drafting
@@ -6938,6 +6946,32 @@ END-ISO-10303-21;
         app.handle("undo", &json!({})).unwrap();
         assert_eq!(app.handle("municipalities", &json!({})).unwrap()["municipalities"].as_array().unwrap().len(), 1);
         assert!(app.handle("municipality_remove", &json!({ "id": "zz" })).is_err());
+    }
+
+    #[test]
+    fn zoning_check_measures_the_model_against_an_entry_without_applying_it() {
+        let mut app = started();
+        let entry = |zone: &str, height: f64, floors: f64| json!({ "entry": {
+            "municipality": "Synthetic Municipality", "zone": zone, "document": "synthetic circular 9",
+            "maxHeightM": { "value": height, "source": "synthetic circular 9, art. 4" },
+            "maxFloors": { "value": floors, "source": "synthetic circular 9, art. 5" } } });
+        assert!(app.handle("zoning_check", &json!({ "id": "mn1" })).unwrap_err().contains("no municipality entry"));
+        app.handle("municipality_add", &entry("R1", 100.0, 50.0)).unwrap();
+        app.handle("municipality_add", &entry("R2", 0.5, 1.0)).unwrap();
+        let ok = app.handle("zoning_check", &json!({ "id": "mn1" })).unwrap();
+        let rows = ok["rows"].as_array().unwrap();
+        let row = |rule: &str| rows.iter().find(|r| r["rule"] == rule).unwrap().clone();
+        assert!(ok["measured"]["height_m"].as_f64().unwrap() > 0.5, "{ok}");
+        assert!(ok["measured"]["floors"].as_u64().unwrap() >= 1);
+        assert_eq!(row("height")["status"], "passes");
+        assert_eq!(row("floors")["status"], "passes");
+        assert_eq!(row("coverage")["status"], "unchecked", "a limit the entry leaves unset is never passed");
+        assert_ne!(ok["overall"], "passes");
+        let bad = app.handle("zoning_check", &json!({ "id": "mn2" })).unwrap();
+        assert_eq!(bad["overall"], "fails");
+        assert_eq!(bad["rows"].as_array().unwrap().iter().find(|r| r["rule"] == "height").unwrap()["status"], "fails");
+        // Read-only: the project's limits were not touched.
+        assert!(app.handle("municipalities", &json!({})).unwrap()["limits"]["maxCoverageRatio"].is_null());
     }
 
     // ------------------------------------------------------------------ Milestone 8: BIM drafting

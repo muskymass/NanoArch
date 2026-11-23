@@ -221,7 +221,12 @@ fn setbacks(p: &NanoArchProject, pid: Id, r: &mut SbcReport) {
 
 /// Built footprint in m2: the bounding rectangle of the ground level's rooms (the building outline is a rectangle).
 fn footprint_m2(model: &Model) -> Option<f64> {
-    let ground = building::levels(model).first().map(|(_, id)| *id);
+    level_footprint_m2(model, building::levels(model).first().map(|(_, id)| *id))
+}
+
+/// Bounding rectangle, in m2, of the rooms of `level` (every room when `level` is `None`).
+pub(crate) fn level_footprint_m2(model: &Model, level: Option<Id>) -> Option<f64> {
+    let ground = level;
     let mut b: Option<(i64, i64, i64, i64)> = None;
     for e in model.elements.values().filter(|e| e.kind == "Space" && (ground.is_none() || e.level_id == ground)) {
         let s = e.typed::<Space>().ok()?;
