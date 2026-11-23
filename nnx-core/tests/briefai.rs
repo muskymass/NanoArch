@@ -136,3 +136,23 @@ fn an_inconsistent_plot_is_flagged_and_the_schema_lists_the_planners_room_functi
     assert!(schema["required"].as_array().unwrap().iter().any(|r| r == "floors"));
     assert!(briefai::system_prompt().contains("null for anything the text does not state"));
 }
+
+#[test]
+fn the_trackers_free_description_a_villa_with_three_rooms_and_a_mens_majlis_becomes_a_brief() {
+    let d = briefai::from_keywords("فيلا بثلاث غرف ومجلس رجال");
+    assert_eq!(d.building_type, Some(BuildingType::Villa));
+    let count = |f: &str| d.rooms.iter().filter(|r| r.func == f).count();
+    assert_eq!((count("bedroom"), count("majlis")), (3, 1), "{:?}", d.rooms);
+    let majlis = d.rooms.iter().find(|r| r.func == "majlis").unwrap();
+    assert_eq!(majlis.name.as_deref(), Some("مجلس رجال"));
+    assert!(d.rooms.iter().all(|r| !r.assumed && r.area_suggested), "stated rooms are not assumed; areas are marked suggested");
+    // Nothing the text does not state is invented.
+    assert!(d.floors.is_none() && d.plot_area_m2.is_none() && d.city.is_none());
+    // A men's and a women's majlis are two rooms.
+    let both = briefai::from_keywords("فيلا بغرفتين نوم ومجلس رجال ومجلس نساء");
+    assert_eq!(both.rooms.iter().filter(|r| r.func == "majlis").count(), 2, "{:?}", both.rooms);
+    assert_eq!(both.rooms.iter().filter(|r| r.func == "bedroom").count(), 2, "{:?}", both.rooms);
+    // "rooms" alone means bedrooms; a room word without a count is not turned into rooms.
+    assert_eq!(briefai::from_keywords("villa with 4 rooms and a majlis").rooms.iter().filter(|r| r.func == "bedroom").count(), 4);
+    assert!(briefai::from_keywords("فيلا غرف").rooms.iter().all(|r| r.func != "bedroom"), "no count, no bedrooms");
+}

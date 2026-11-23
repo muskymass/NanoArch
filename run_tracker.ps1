@@ -130,7 +130,7 @@ Rules:
 "@
 
     $log = Join-Path $logDir ("round{0:D2}-item{1}.log" -f $round, $n)
-    $prompt | & claude -p --permission-mode acceptEdits --allowedTools @allowed --disallowedTools @denied 2>&1 | Tee-Object -FilePath $log
+    $ErrorActionPreference = 'Continue'; $ErrorActionPreference = 'Continue'; $prompt | & claude -p --permission-mode acceptEdits --allowedTools @allowed --disallowedTools @denied 2>&1 | Tee-Object -FilePath $log; $ErrorActionPreference = 'Stop'; $ErrorActionPreference = 'Stop'
     $claudeExit = $LASTEXITCODE
     if ($claudeExit -ne 0) { Stop-Run "claude exited with code $claudeExit (log: $log)" }
 
