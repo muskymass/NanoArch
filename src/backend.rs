@@ -391,6 +391,7 @@ impl App {
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
+            "sketch_accept" => Self::sketch_accept(args),
             "prefs_learn" => Self::prefs_learn(args),
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
             "analysis" => self.analysis(args),
@@ -2962,6 +2963,29 @@ impl App {
         Ok(json!({ "table": table, "draft": draft, "next": clarify::next_question(&draft), "missing": clarify::missing(&draft), "complete": clarify::is_complete(&draft) }))
     }
 
+    /// The review step of `ai_sketch`: `{ reading, keys, floor, edits?, draft? }`. Only the confirmed `keys` become brief rooms (and a
+    /// `placement` for `generate`); a room with an issue is refused until its box is corrected in `edits`. With a `draft`, the rooms
+    /// replace the draft's rooms of that floor and the clarification state comes back with it.
+    fn sketch_accept(args: &Value) -> Result<Value, String> {
+        use nnx_core::{clarify, sketchread};
+        let reading: sketchread::Reading = serde_json::from_value(args.get("reading").cloned().ok_or("sketch review: the reading is missing")?).map_err(|e| format!("sketch review: the reading is not valid: {e}"))?;
+        let keys: Vec<String> = serde_json::from_value(args.get("keys").cloned().ok_or("sketch review: give the keys of the rooms you confirm")?).map_err(|e| format!("sketch review: keys must be a list of text: {e}"))?;
+        let floor = args.get("floor").and_then(Value::as_u64).filter(|f| *f >= 1 && *f <= u32::MAX as u64).ok_or("sketch review: floor is required (1 is the ground floor)")? as u32;
+        let edits: std::collections::BTreeMap<String, sketchread::Edit> = match args.get("edits").filter(|e| !e.is_null()) {
+            Some(e) => serde_json::from_value(e.clone()).map_err(|e| format!("sketch review: edits are not valid: {e}"))?,
+            None => Default::default(),
+        };
+        let acc = sketchread::accept(&reading, &keys, floor, &edits).map_err(|e| format!("sketch review: {e}"))?;
+        let Some(d) = args.get("draft").filter(|d| !d.is_null()) else {
+            return Ok(json!({ "accepted": acc }));
+        };
+        let mut draft: nnx_core::briefai::BriefDraft = serde_json::from_value(d.clone()).map_err(|e| format!("sketch review: the draft is not valid: {e}"))?;
+        draft.rooms.retain(|r| r.floor != floor);
+        draft.rooms.extend(acc.rooms.iter().cloned());
+        draft.notes.extend(acc.notes.iter().cloned());
+        Ok(json!({ "accepted": acc, "draft": draft, "next": clarify::next_question(&draft), "missing": clarify::missing(&draft), "complete": clarify::is_complete(&draft) }))
+    }
+
     fn plot_import_survey(args: &Value) -> Result<Value, String> {
         let text_arg = args.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty());
         let path_arg = args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty());
@@ -3952,6 +3976,26 @@ mod tests {
         json!({ "title": "t", "width_m": 18.0, "length_m": 22.0, "setback_front_m": 2.0, "setback_back_m": 2.0, "setback_side_m": 2.0, "entry": "south",
                 "rooms": [{ "key": "a", "name": "A", "func": "living", "area": 20.0, "zone": "public", "light": true },
                           { "key": "b", "name": "B", "func": "bedroom", "area": 16.0, "zone": "private", "light": true }] })
+    }
+
+    #[test]
+    fn a_sketch_review_turns_confirmed_rooms_into_brief_rooms() {
+        let mut app = App::default();
+        let rd = |key: &str, x: i64, w: i64| json!({ "key": key, "name": key, "func": "bedroom", "x_mm": x, "y_mm": 0, "w_mm": w, "h_mm": 4000, "area_m2": w as f64 * 4.0 / 1000.0, "bbox_px": [0, 0, 1, 1], "written_width_mm": null, "written_length_mm": null, "dimension_check": "unchecked", "overlaps": [], "status": "unconfirmed", "issues": [] });
+        let reading = json!({ "rooms": [rd("s1", 0, 5000), rd("s2", 5000, 4000)], "notes": [], "source": "ollama:m", "needs_review": true });
+        let draft = json!({ "rooms": [{ "func": "kitchen", "name": "old", "area_m2": 9.0, "floor": 2, "assumed": true }, { "func": "bedroom", "name": "old1", "area_m2": 9.0, "floor": 1, "assumed": true }] });
+        let r = app.handle("sketch_review_missing", &json!({})).unwrap_err();
+        assert!(r.contains("unknown"), "{r}");
+        let r = app.handle("sketch_accept", &json!({ "reading": reading, "keys": ["s2"], "floor": 1, "draft": draft })).unwrap();
+        assert_eq!(r["accepted"]["keys"], json!(["s2"]));
+        assert_eq!(r["accepted"]["placement"]["s2"]["w"], 4000);
+        let rooms = r["draft"]["rooms"].as_array().unwrap();
+        assert_eq!(rooms.len(), 2, "the floor-1 room of the draft is replaced, the floor-2 room stays");
+        assert!(rooms.iter().any(|x| x["name"] == "old") && rooms.iter().any(|x| x["name"] == "s2" && x["assumed"] == false));
+        assert!(r["complete"].is_boolean());
+        assert!(app.handle("sketch_accept", &json!({ "reading": reading, "keys": ["s2"] })).unwrap_err().contains("floor is required"));
+        assert!(app.handle("sketch_accept", &json!({ "reading": reading, "keys": ["zz"], "floor": 1 })).unwrap_err().contains("'zz' is not in the reading"));
+        assert!(app.handle("sketch_accept", &json!({ "keys": ["s1"], "floor": 1 })).unwrap_err().contains("reading is missing"));
     }
 
     #[test]

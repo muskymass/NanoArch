@@ -148,6 +148,7 @@ pub mod siteplan;
 pub mod bundle;
 pub mod plugins;
 pub mod assistant;
+pub mod sketchread;
 
 pub use command::{Command, CommandError, Origin};
 pub use history::{Document, Step, TxError};
