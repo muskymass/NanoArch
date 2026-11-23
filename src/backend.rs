@@ -463,6 +463,7 @@ impl App {
             "rebar_drawings" => self.rebar_drawings(),
             "boq" => self.boq(args),
             "model3d" => self.model3d(),
+            "sun_shadows" => self.sun_shadows(args),
             "finishes" => self.finishes_report(),
             "finishes_set" => self.finishes_set(args),
             "asbuilt" => self.asbuilt_report(),
@@ -3138,6 +3139,27 @@ impl App {
         Ok(v)
     }
 
+    /// Ground shadows through the year: `{ latitude_deg, hours: [..], days: [..] | monthly: true, north_offset_deg, probes?: [[x, y]] }`.
+    /// Latitude, hours, the days (or the explicit `monthly`: the 21st of every month) and the north offset are the user's; none is defaulted.
+    fn sun_shadows(&self, args: &Value) -> Result<Value, String> {
+        let scene = nnx_core::model3d::build_styled(&self.doc()?.model, self.style());
+        let latitude_deg = args.get("latitude_deg").and_then(Value::as_f64).ok_or("sun_shadows: latitude_deg is missing")?;
+        let north_offset_deg = args.get("north_offset_deg").and_then(Value::as_f64).ok_or("sun_shadows: north_offset_deg is missing (0 when the plan's up is true north)")?;
+        let hours: Vec<f64> = serde_json::from_value(args.get("hours").cloned().unwrap_or(Value::Null)).map_err(|e| format!("sun_shadows: hours must be a list of solar hours: {e}"))?;
+        let monthly = args.get("monthly").and_then(Value::as_bool).unwrap_or(false);
+        let days: Vec<u32> = match (monthly, args.get("days")) {
+            (true, Some(d)) if !d.is_null() => return Err("sun_shadows: give either days or monthly, not both".to_string()),
+            (true, _) => nnx_core::shadows::MONTH_21ST.to_vec(),
+            (false, d) => serde_json::from_value(d.cloned().unwrap_or(Value::Null)).map_err(|e| format!("sun_shadows: days must be a list of days of the year (or monthly: true): {e}"))?,
+        };
+        let probes: Vec<[f64; 2]> = match args.get("probes") {
+            Some(p) if !p.is_null() => serde_json::from_value(p.clone()).map_err(|e| format!("sun_shadows: probes must be a list of [x, y] metres: {e}"))?,
+            _ => Vec::new(),
+        };
+        let input = nnx_core::shadows::ShadowInput { latitude_deg, days, hours, north_offset_deg, probes };
+        Ok(json!({ "shadows": nnx_core::shadows::study(&scene, &input)? }))
+    }
+
     /// The finish catalog, the project's choice and the quantities (with prices only where the user entered a rate).
     fn finishes_report(&self) -> Result<Value, String> {
         let p = self.project().ok_or("choose a layout first")?;
@@ -4076,6 +4098,30 @@ mod tests {
         let with_points = app.handle("model3d", &json!({})).unwrap();
         assert_eq!(with_points["boxes"].as_array().unwrap().iter().filter(|b| b["kind"] == "MepPoint").count(), mep_points(&app));
         assert!(App::default().handle("model3d", &json!({})).is_err(), "no plan, no model");
+    }
+
+    #[test]
+    fn sun_shadows_run_over_the_year_and_name_every_missing_input() {
+        let mut app = started();
+        let base = json!({ "latitude_deg": 24.0, "north_offset_deg": 0.0, "hours": [9.0, 12.0, 15.0], "monthly": true });
+        let r = app.handle("sun_shadows", &base).unwrap();
+        let days = r["shadows"]["days"].as_array().unwrap();
+        assert_eq!(days.len(), 12, "the 21st of every month");
+        let longest = |d: usize| days[d]["hours"][1]["longest_shadow_m"].as_f64().unwrap();
+        assert!(longest(11) > longest(5), "the December noon shadow is longer than the June one");
+        assert!(days[5]["hours"][1]["polygons"].as_array().unwrap().len() > 10, "one polygon per wall, slab, column or beam");
+        for key in ["latitude_deg", "north_offset_deg", "hours"] {
+            let mut b = base.clone();
+            b.as_object_mut().unwrap().remove(key);
+            assert!(app.handle("sun_shadows", &b).unwrap_err().contains(key), "{key}");
+        }
+        let mut no_days = base.clone();
+        no_days.as_object_mut().unwrap().remove("monthly");
+        assert!(app.handle("sun_shadows", &no_days).unwrap_err().contains("days"));
+        let mut both = base.clone();
+        both["days"] = json!([80]);
+        assert!(app.handle("sun_shadows", &both).unwrap_err().contains("not both"));
+        assert!(App::default().handle("sun_shadows", &base).is_err(), "no plan, no model");
     }
 
     // ------------------------------------------------------------------ several floors
