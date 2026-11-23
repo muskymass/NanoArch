@@ -6,8 +6,8 @@
 //!   slab soffit inside the ceiling void (between your false-ceiling height and the soffit), where the beams hang: the
 //!   clash check then shows every duct-to-beam intersection.
 //! - **Drainage.** From each wet room's centre a drain runs, straight, to the nearest side of the building and on to a stack
-//!   or manhole outside it, falling by your slope. Only rooms on the lowest level are routed (an upper floor needs a
-//!   vertical stack, which is not generated).
+//!   or manhole outside it, falling by your slope. A wet room above the lowest level gets a branch to a stack inside the room, at the
+//!   point nearest its centre that keeps your clearance from every column; the stack drops through the levels below to the invert.
 //! - **Water supply.** From your tank a trunk and a branch to every room with fixtures, at your supply height, sized by the
 //!   pipe table; a riser joins the tank to that height.
 //! - **Cables.** From each distribution board a cable tray trunk with a branch to the centre of each circuit.
@@ -297,24 +297,189 @@ fn drainage_routes(model: &Model, rooms: &[RoomG], inputs: &MepInputs, r: &Routi
         rep.warnings.push("routing: the drain slope must be positive, the invert depth and stack offset zero or more".into());
         return;
     }
-    let lowest = crate::building::levels(model).first().map(|(_, id)| *id);
+    let levels = crate::building::levels(model);
+    let lowest = levels.first().map(|(_, id)| *id);
     let _ = inputs;
+    let drop = DrainFall { slope, invert: invert.round() as i64, stack: stack.round() as i64 };
+    let mut env: Option<StackEnv> = None;
+    let mut upper_without_clearance: Vec<String> = Vec::new();
     for pr in &pl.rooms {
         let Some(room) = rooms.iter().find(|x| x.key == pr.room) else { continue };
-        if room.level != lowest {
-            rep.warnings.push(format!("drain of room '{}' is on an upper level: a vertical stack is needed and is not generated", room.key));
+        let d = pr.drain_mm.round() as i64;
+        if room.level == lowest {
+            let Some(o) = outline(rooms, room.level) else { continue };
+            outfall(rep, room.level, &room.key, centre(&room.rect), d, o, &drop);
             continue;
         }
-        let Some(o) = outline(rooms, room.level) else { continue };
-        let (cx, cy) = centre(&room.rect);
-        // Nearest side of the building: west, east, south, north.
-        let sides = [(cx - o[0], [o[0] - stack as i64, cy]), (o[2] - cx, [o[2] + stack as i64, cy]), (cy - o[1], [cx, o[1] - stack as i64]), (o[3] - cy, [cx, o[3] + stack as i64])];
-        let (_, end) = sides.iter().min_by_key(|(d, _)| *d).copied().expect("four sides");
-        let length = ((end[0] - cx).abs() + (end[1] - cy).abs()) as f64;
-        let z1 = -(invert.round() as i64);
-        let z2 = z1 - (length * slope / 100.0).round() as i64;
-        let d = pr.drain_mm.round() as i64;
-        push_run(rep, RunSpec { level: room.level, system: "drain".into(), role: "drain".into(), room: Some(room.key.clone()), label: Some(format!("{d} mm drain to the stack at ({}, {})", end[0], end[1])), p1: [cx, cy, z1], p2: [end[0], end[1], z2], width: d, height: d });
+        let Some(pos) = levels.iter().position(|(_, id)| Some(*id) == room.level) else {
+            rep.warnings.push(format!("drain of room '{}' is not routed: the room is on no level of the model", room.key));
+            continue;
+        };
+        let Some(clearance) = r.stack_clearance_mm else {
+            upper_without_clearance.push(room.key.clone());
+            continue;
+        };
+        if clearance < 0.0 {
+            rep.warnings.push("routing: the stack clearance must be zero or more".into());
+            return;
+        }
+        let env = env.get_or_insert_with(|| StackEnv::new(model, &levels));
+        route_stack(rep, rooms, &levels, env, room, pos, d, clearance.round() as i64, &drop);
+    }
+    if !upper_without_clearance.is_empty() {
+        rep.missing.insert(
+            "routing.drainage.stacks".into(),
+            vec![format!("routing.stack_clearance_mm (the gap kept between a vertical stack and a column; needed by the wet rooms above the lowest level: {})", upper_without_clearance.join(", "))],
+        );
+    }
+}
+
+/// The fall, the depth and the stack offset of the drains, millimetres and percent.
+struct DrainFall {
+    slope: f64,
+    invert: i64,
+    stack: i64,
+}
+
+/// A drain from `from` (plan point, at the invert depth) to the nearest side of the building outline `o` and on to the stack or
+/// manhole `drop.stack` outside it, falling by the slope. Returns the point reached and the level of the bottom of the fall.
+fn outfall(rep: &mut MepReport, level: Option<Id>, room: &str, from: (i64, i64), d: i64, o: [i64; 4], drop: &DrainFall) {
+    let (cx, cy) = from;
+    // Nearest side of the building: west, east, south, north.
+    let sides = [(cx - o[0], [o[0] - drop.stack, cy]), (o[2] - cx, [o[2] + drop.stack, cy]), (cy - o[1], [cx, o[1] - drop.stack]), (o[3] - cy, [cx, o[3] + drop.stack])];
+    let (_, end) = sides.iter().min_by_key(|(d, _)| *d).copied().expect("four sides");
+    let length = ((end[0] - cx).abs() + (end[1] - cy).abs()) as f64;
+    let z1 = -drop.invert;
+    let z2 = z1 - (length * drop.slope / 100.0).round() as i64;
+    push_run(rep, RunSpec { level, system: "drain".into(), role: "drain".into(), room: Some(room.to_string()), label: Some(format!("{d} mm drain to the stack at ({}, {})", end[0], end[1])), p1: [cx, cy, z1], p2: [end[0], end[1], z2], width: d, height: d });
+}
+
+// ------------------------------------------------------------------ vertical stacks
+
+/// What a stack must keep clear of: the columns of the levels it passes (plan rectangles in millimetres, with the level
+/// index they belong to), the elevation of each level's floor top, and the stacks already placed.
+struct StackEnv {
+    columns: Vec<(i64, [i64; 4])>,
+    /// Elevation of the floor top of each level above the ground floor, millimetres, in the order of `building::levels`.
+    elevations: Vec<i64>,
+    /// Level index of each level, in the same order.
+    indices: Vec<i64>,
+    placed: Vec<[i64; 4]>,
+}
+
+impl StackEnv {
+    fn new(model: &Model, levels: &[(i64, Id)]) -> StackEnv {
+        let scene = crate::model3d::build(model);
+        let elevations = levels.iter().map(|(i, _)| scene.levels.iter().find(|l| l.index == *i).map_or(0, |l| (l.z0 * 1000.0).round() as i64)).collect();
+        let columns = scene
+            .boxes
+            .iter()
+            .filter(|b| b.kind == "Column")
+            .filter_map(|b| Some((b.level?, [(b.min[0] * 1000.0).round() as i64, (b.min[1] * 1000.0).round() as i64, (b.max[0] * 1000.0).round() as i64, (b.max[1] * 1000.0).round() as i64])))
+            .collect();
+        StackEnv { columns, elevations, indices: levels.iter().map(|(i, _)| *i).collect(), placed: Vec::new() }
+    }
+}
+
+fn overlaps(a: [i64; 4], b: [i64; 4]) -> bool {
+    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+}
+
+/// The plan footprint of a pipe along `a` to `b`, grown by `margin` on every side.
+fn sweep(a: (i64, i64), b: (i64, i64), margin: i64) -> [i64; 4] {
+    [a.0.min(b.0) - margin, a.1.min(b.1) - margin, a.0.max(b.0) + margin, a.1.max(b.1) + margin]
+}
+
+/// The corner of an L-shaped branch from `from` to `to`: along x first (`x_first`) or along y first.
+fn corner(from: (i64, i64), to: (i64, i64), x_first: bool) -> (i64, i64) {
+    if x_first { (to.0, from.1) } else { (from.0, to.1) }
+}
+
+/// A wet room above the lowest level: a branch drain from the room's centre to a stack, the stack down through the levels
+/// below, and the drain from its foot to the outside. The stack stands inside the room, at the point nearest the room's centre
+/// where the stack keeps `clearance` from every column (of this level or of those below) and from other stacks, and its branch
+/// does not run through a column.
+#[allow(clippy::too_many_arguments)]
+fn route_stack(rep: &mut MepReport, rooms: &[RoomG], levels: &[(i64, Id)], env: &mut StackEnv, room: &RoomG, pos: usize, d: i64, clearance: i64, drop: &DrainFall) {
+    let level_idx = env.indices[pos];
+    let margin = (d + 1) / 2 + clearance;
+    let (cx, cy) = centre(&room.rect);
+    let blocked = |r: [i64; 4]| env.columns.iter().any(|(l, c)| *l <= level_idx && overlaps(r, *c));
+    let free = |s: (i64, i64), x_first: bool| -> bool {
+        let stack_box = sweep(s, s, margin);
+        if blocked(stack_box) || env.placed.iter().any(|p| overlaps(stack_box, *p)) {
+            return false;
+        }
+        let k = corner((cx, cy), s, x_first);
+        // The branch is a horizontal pipe under the floor: it must not run through a column, but only the stack keeps the clearance.
+        let body = (d + 1) / 2;
+        !blocked(sweep((cx, cy), k, body)) && !blocked(sweep(k, s, body))
+    };
+    // Candidates inside the room: the centre first, then a 50 mm grid by Manhattan distance from the centre.
+    let inset = (d + 1) / 2 + clearance;
+    let mut cand: Vec<(i64, i64, i64)> = vec![(0, cx, cy)];
+    let (x0, x1, y0, y1) = (room.rect.x + inset, room.rect.x + room.rect.w - inset, room.rect.y + inset, room.rect.y + room.rect.h - inset);
+    let mut x = x0;
+    while x <= x1 {
+        let mut y = y0;
+        while y <= y1 {
+            cand.push(((x - cx).abs() + (y - cy).abs(), x, y));
+            y += 50;
+        }
+        x += 50;
+    }
+    cand.sort();
+    let mut chosen: Option<((i64, i64), bool)> = None;
+    for (_, sx, sy) in cand {
+        if let Some(x_first) = [true, false].into_iter().find(|xf| free((sx, sy), *xf)) {
+            chosen = Some(((sx, sy), x_first));
+            break;
+        }
+    }
+    let Some((s, x_first)) = chosen else {
+        rep.warnings.push(format!("stack of room '{}' is not routed: no point of the room keeps {} mm from every column with the {} mm stack", room.key, clearance, d));
+        return;
+    };
+    // Branch drain at the invert depth, falling by the slope along each leg.
+    let k = corner((cx, cy), s, x_first);
+    let mut z = -drop.invert;
+    for (a, b) in [((cx, cy), k), (k, s)] {
+        let len = ((b.0 - a.0).abs() + (b.1 - a.1).abs()) as f64;
+        if len == 0.0 {
+            continue;
+        }
+        let z2 = z - (len * drop.slope / 100.0).round() as i64;
+        push_run(rep, RunSpec { level: room.level, system: "drain".into(), role: "branch".into(), room: Some(room.key.clone()), label: Some(format!("{d} mm branch drain to the stack at ({}, {})", s.0, s.1)), p1: [a.0, a.1, z], p2: [b.0, b.1, z2], width: d, height: d });
+        z = z2;
+    }
+    // The stack, from the end of the branch down to the invert at the lowest level, one run per level it crosses.
+    let top = env.elevations[pos] + z;
+    let bottom = -drop.invert;
+    if top <= bottom {
+        rep.warnings.push(format!("stack of room '{}' is not routed: its branch ends at {top} mm, not above the lowest invert at {bottom} mm", room.key));
+        return;
+    }
+    for (j, (_, level_id)) in levels.iter().enumerate().take(pos) {
+        let lo = if j == 0 { bottom } else { env.elevations[j] };
+        let hi = top.min(env.elevations[j + 1]);
+        if hi <= lo {
+            continue;
+        }
+        let base = env.elevations[j];
+        push_run(rep, RunSpec { level: Some(*level_id), system: "drain".into(), role: "stack".into(), room: Some(room.key.clone()), label: Some(format!("{d} mm stack of room {} at ({}, {})", room.key, s.0, s.1)), p1: [s.0, s.1, hi - base], p2: [s.0, s.1, lo - base], width: d, height: d });
+    }
+    env.placed.push(sweep(s, s, (d + 1) / 2));
+    // Rooms the stack passes through on the levels below: reported, since a stack in a living room is a design decision.
+    let through: Vec<&str> = rooms.iter().filter(|x| x.level != room.level && levels[..pos].iter().any(|(_, id)| Some(*id) == x.level) && s.0 > x.rect.x && s.0 < x.rect.x + x.rect.w && s.1 > x.rect.y && s.1 < x.rect.y + x.rect.h).map(|x| x.key.as_str()).collect();
+    if !through.is_empty() {
+        rep.warnings.push(format!("the stack of room '{}' at ({}, {}) passes through room(s) on the levels below: {}", room.key, s.0, s.1, through.join(", ")));
+    }
+    // Its foot drains to the outside from the lowest level's invert, like a drain of a room on that level.
+    let (ground, foot) = (Some(levels[0].1), (s.0, s.1));
+    if let Some(o) = outline(rooms, ground) {
+        outfall(rep, ground, &room.key, foot, d, o, drop);
+    } else {
+        rep.warnings.push(format!("the stack of room '{}' has no drain at its foot: the lowest level has no rooms, so the building outline is unknown", room.key));
     }
 }
 
