@@ -104,6 +104,7 @@ pub mod structural;
 pub mod typed;
 pub mod xlsx;
 pub mod walls;
+pub mod wallload;
 
 pub use command::{Command, CommandError, Origin};
 pub use history::{Document, TxError};

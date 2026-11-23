@@ -363,6 +363,7 @@ impl App {
             "privacy_check" => Self::privacy_check(args),
             "sun_check" => Self::sun_check(args),
             "span_compare" => Self::span_compare(args),
+            "wall_load" => Self::wall_load(args),
             "furniture_fit" => Self::furniture_fit(args),
             "wind_check" => Self::wind_check(args),
             "courtyard_check" => Self::courtyard_check(args),
@@ -2029,6 +2030,18 @@ impl App {
         let refs: Vec<(String, &nnx_core::layout::Layout)> = layouts.iter().map(|(l, lay)| (l.clone(), lay)).collect();
         let report = nnx_core::spanalt::compare(&refs, limit)?;
         Ok(json!({ "span": report }))
+    }
+
+    /// Takes wall weights down onto the beams under them: `{ walls: [{ key, a: [x, y], b: [x, y], thickness_mm, height_mm,
+    /// unit_weight_kn_m3, finish_kn_m2_per_face?, finished_faces?, openings?: [{ offset_mm, width_mm }] }], beams: [{ key, a, b }] }`
+    /// (mm). Thickness, height and unit weight have no defaults. Simply supported beams; a take-down, not a design.
+    fn wall_load(args: &Value) -> Result<Value, String> {
+        let walls: Vec<nnx_core::wallload::WallIn> = serde_json::from_value(args.get("walls").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("wall load: walls need key, a, b ([x, y] whole mm), thickness_mm, height_mm and unit_weight_kn_m3: {e}"))?;
+        let beams: Vec<nnx_core::wallload::BeamIn> = serde_json::from_value(args.get("beams").cloned().unwrap_or(Value::Null))
+            .map_err(|e| format!("wall load: beams need key, a and b ([x, y] whole mm): {e}"))?;
+        let report = nnx_core::wallload::take_down(&walls, &beams)?;
+        Ok(json!({ "wall_load": report }))
     }
 
     /// Arranges furniture of real sizes in one room and reports whether it fits: `{ room: { w, h }, min_walkway_mm, pieces: [{ key,
@@ -4466,6 +4479,22 @@ EOF
         no_limit.as_object_mut().unwrap().remove("max_span_mm");
         assert!(app.handle("span_compare", &no_limit).unwrap_err().contains("max_span_mm is required"));
         assert!(app.handle("span_compare", &json!({ "envelope": { "w": 1, "h": 1 }, "max_span_mm": 6000 })).unwrap_err().contains("alternatives are required"));
+    }
+
+    #[test]
+    fn wall_load_takes_walls_down_to_beams_and_names_bad_input() {
+        let mut app = App::default();
+        let args = json!({
+            "walls": [{ "key": "w1", "a": [0, 0], "b": [5000, 0], "thickness_mm": 200, "height_mm": 3000, "unit_weight_kn_m3": 14.0 }],
+            "beams": [{ "key": "b1", "a": [0, 0], "b": [5000, 0] }]
+        });
+        let r = app.handle("wall_load", &args).unwrap();
+        assert_eq!(r["wall_load"]["beams"][0]["total_kn"], 42.0);
+        assert_eq!(r["wall_load"]["beams"][0]["max_moment_knm"], 26.25);
+        let mut no_g = args.clone();
+        no_g["walls"][0].as_object_mut().unwrap().remove("unit_weight_kn_m3");
+        assert!(app.handle("wall_load", &no_g).unwrap_err().contains("unit_weight_kn_m3 is required"));
+        assert!(app.handle("wall_load", &json!({ "beams": args["beams"] })).unwrap_err().contains("walls need"));
     }
 
     #[test]
