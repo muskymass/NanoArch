@@ -413,6 +413,7 @@ impl App {
                 Ok(json!({ "svg": self.render_or_null()? }))
             }
             "certificate_html" => self.certificate(args),
+            "permit_pack" => self.permit_pack(args),
             "lock" => self.lock(args),
             "regenerate" => self.regenerate(args),
             "site_layout" => self.site_layout_cmd(),
@@ -2855,6 +2856,20 @@ impl App {
         Ok(json!({ "html": nnx_core::certificate::certificate_html(&d, arabic), "name": "balady_certificate.pdf" }))
     }
 
+    /// The permit package as numbered A3 sheets with a title-block header and the engineer's stamp box: `{ engineer: { name,
+    /// licence_no, licensing_body, discipline? }, project_no, sheet_prefix, revision, issued_for?, lang? }`. Nothing is defaulted:
+    /// a missing input is named. The stamp has an empty seal and signature area; the package is never marked approved.
+    fn permit_pack(&self, args: &Value) -> Result<Value, String> {
+        let input: nnx_core::permitpack::Input = serde_json::from_value(args.clone())
+            .map_err(|e| format!("permit pack: inputs are malformed (engineer {{ name, licence_no, licensing_body, discipline? }}, project_no, sheet_prefix, revision, issued_for?): {e}"))?;
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        let date: String = utc_now().chars().take(10).collect();
+        let title = self.display_title();
+        let ctx = nnx_core::permitpack::Context { model: &self.doc()?.model, title: &title, labels: self.labels(), arabic, show_structure: self.show_structure, show_mep: self.show_mep, date: &date };
+        let pack = nnx_core::permitpack::build(&ctx, &input)?;
+        Ok(json!({ "html": pack.html, "name": "permit_pack.pdf", "sheets": pack.sheets, "notes": pack.notes }))
+    }
+
     /// Every advanced MEP analysis (solar, smart home, Wi-Fi, CCTV, EV, balancing, greywater, head loss) of the open project.
     fn mepx_report(&self) -> Result<Value, String> {
         let p = self.project().ok_or("choose a layout first")?;
@@ -5087,6 +5102,35 @@ EOF
         assert!(app.handle("shear_core_check", &no_e).unwrap_err().contains("e_mpa is required"));
         assert!(app.handle("shear_core_check", &json!({ "walls": [] })).unwrap_err().contains("no walls"));
         assert!(app.handle("shear_core_check", &json!({ "walls": 3 })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn permit_pack_numbers_sheets_stamps_the_engineer_and_names_missing_inputs() {
+        let mut app = started_with_project();
+        let args = json!({
+            "engineer": { "name": "Eng <A>", "licence_no": "L-123", "licensing_body": "Test council", "discipline": "Architectural" },
+            "project_no": "P-7", "sheet_prefix": "A", "revision": "Rev B", "issued_for": "Review", "lang": "en"
+        });
+        let r = app.handle("permit_pack", &args).unwrap();
+        let h = r["html"].as_str().unwrap();
+        assert_eq!(r["name"], "permit_pack.pdf");
+        let sheets = r["sheets"].as_array().unwrap();
+        assert_eq!(sheets[0]["number"], "A-01");
+        assert_eq!(sheets[0]["kind"], "index");
+        assert!(sheets.len() >= 2 && sheets[1]["number"] == "A-02" && sheets[1]["kind"] == "plan");
+        assert_eq!(h.matches("<section class=\"sheet\">").count(), sheets.len());
+        assert!(h.contains("Eng &lt;A&gt;") && !h.contains("Eng <A>") && h.contains("L-123") && h.contains("Test council") && h.contains("Rev B") && h.contains("P-7"));
+        assert!(h.contains("Not valid until stamped and signed") && h.contains("class=\"seal\"") && !h.to_lowercase().contains("approved by"));
+        let n = sheets.len();
+        assert!(h.contains(&format!("{} / {n}", n)), "page x / total");
+        // Nothing is defaulted: every missing input is named at once.
+        let mut bad = args.clone();
+        bad.as_object_mut().unwrap().remove("project_no");
+        bad["engineer"]["licence_no"] = json!("  ");
+        let e = app.handle("permit_pack", &bad).unwrap_err();
+        assert!(e.contains("engineer.licence_no") && e.contains("project_no") && !e.contains("revision"), "{e}");
+        assert!(app.handle("permit_pack", &json!({ "engineer": "x" })).unwrap_err().contains("malformed"));
+        assert!(App::default().handle("permit_pack", &args).is_err());
     }
 
     #[test]
