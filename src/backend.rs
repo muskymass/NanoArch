@@ -376,6 +376,7 @@ impl App {
             "energy_certificate" => Self::energy_certificate(args),
             "fire_protection_check" => Self::fire_protection_check(args),
             "egress_check" => Self::egress_check(args),
+            "access_check" => Self::access_check(args),
             "shear_core_check" => Self::shear_core_check(args),
             "savings_compare" => Self::savings_compare(args),
             "furniture_fit" => Self::furniture_fit(args),
@@ -2298,6 +2299,18 @@ impl App {
             .map_err(|e| format!("egress check: inputs are malformed (see the field list for rooms, exits, corridors and limits): {e}"))?;
         let report = nnx_core::egress::check(&input)?;
         Ok(json!({ "egress": report }))
+    }
+
+    /// Accessibility for persons with disabilities: `{ doors?: [{ key, clear_width_mm?, threshold_height_mm? }],
+    /// corridors?: [{ key, w_mm, h_mm, min_width_mm? }], rooms?: [{ key, w_mm, h_mm, accessible? }],
+    /// ramps?: [{ key, rise_mm, run_mm, width_mm? }], min_door_clear_width_mm?, max_threshold_height_mm?, min_corridor_width_mm?,
+    /// min_turning_diameter_mm?, max_ramp_slope?, min_ramp_width_mm?, source }`. Every limit is the caller's and `source` is
+    /// required with any limit; a missing limit leaves its check `unchecked`. Preliminary, not an accessibility audit.
+    fn access_check(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::access::AccessInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("accessibility check: inputs are malformed (see the field list for doors, corridors, rooms, ramps and limits): {e}"))?;
+        let report = nnx_core::access::check(&input)?;
+        Ok(json!({ "access": report }))
     }
 
     /// Shear-wall core around lifts and stairs:`{ walls: [{ key, x_mm, y_mm, w_mm, h_mm }], shafts?: [{ key, kind: lift|stair,
@@ -4936,6 +4949,34 @@ EOF
         no_src.as_object_mut().unwrap().remove("source");
         assert!(app.handle("egress_check", &no_src).unwrap_err().contains("source is required"));
         assert!(app.handle("egress_check", &json!({ "rooms": "x" })).unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn access_check_measures_doors_and_ramps_and_refuses_missing_source() {
+        let mut app = App::default();
+        let args = json!({
+            "doors": [{ "key": "D1", "clear_width_mm": 750, "threshold_height_mm": 0 }],
+            "rooms": [{ "key": "WC", "w_mm": 1600, "h_mm": 2000 }],
+            "ramps": [{ "key": "R1", "rise_mm": 150, "run_mm": 1800 }],
+            "min_door_clear_width_mm": 800,
+            "min_turning_diameter_mm": 1500,
+            "max_ramp_slope": 0.0834,
+            "min_ramp_width_mm": 1000,
+            "source": "test clause"
+        });
+        let r = app.handle("access_check", &args).unwrap();
+        assert_eq!(r["access"]["overall"], "fails");
+        let checks = r["access"]["checks"].as_array().unwrap();
+        let by = |rule: &str| checks.iter().find(|c| c["rule"] == rule).unwrap().clone();
+        assert_eq!(by("door_width")["status"], "fails");
+        assert_eq!(by("threshold")["status"], "unchecked");
+        assert_eq!(by("turning_space")["status"], "passes");
+        assert_eq!(by("ramp_slope")["status"], "passes");
+        assert_eq!(by("ramp_width")["status"], "unchecked");
+        let mut no_src = args.clone();
+        no_src.as_object_mut().unwrap().remove("source");
+        assert!(app.handle("access_check", &no_src).unwrap_err().contains("source is required"));
+        assert!(app.handle("access_check", &json!({ "doors": "x" })).unwrap_err().contains("malformed"));
     }
 
     #[test]

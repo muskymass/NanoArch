@@ -53,6 +53,7 @@ pub mod panels;
 pub mod pumps;
 pub mod firesys;
 pub mod egress;
+pub mod access;
 pub mod privacy;
 pub mod spanalt;
 pub mod sun;
