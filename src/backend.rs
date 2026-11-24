@@ -37,6 +37,8 @@ pub struct App {
     show_mep: bool,
     /// Draw revision clouds around what changed since the baseline.
     show_clouds: bool,
+    /// The running tour link (`share_tour`), if any. It serves a snapshot and closes with the app.
+    share: Option<nnx_core::share::ShareServer>,
 }
 
 /// The buildable rectangle (plot minus setbacks) and the entrance side.
@@ -480,6 +482,9 @@ impl App {
             "asbuilt_svg" => self.asbuilt_svg(),
             "tour_export" => self.tour_export(args),
             "client_view_export" => self.client_view_export(args),
+            "share_tour" => self.share_tour(args),
+            "share_status" => Ok(self.share_status()),
+            "share_stop" => Ok(self.share_stop()),
             "facade_render" => self.facade_render(args),
             "stl_export" => self.stl_export(args),
             "exec" => self.exec_state(),
@@ -3735,6 +3740,56 @@ impl App {
         let finish = nnx_core::finishes::find("facade", &id).ok_or_else(|| format!("facade_render: unknown facade finish '{id}'"))?;
         let page = nnx_core::facade_render::render_html(&scene, &self.display_title(), arabic, finish, &input)?;
         serde_json::to_value(page).map_err(|e| e.to_string())
+    }
+
+    /// Start a link to the tour page: `{ view: "client" | "full", scope: "local" | "lan", expires_minutes (1..=10080), port?, lang? }`.
+    /// The page is the snapshot of the model at this moment (later edits are not shown; share again). Nothing is chosen for the user:
+    /// who may see it, how much of the model it carries and how long it lasts are all required.
+    fn share_tour(&mut self, args: &Value) -> Result<Value, String> {
+        let client = match args.get("view").and_then(Value::as_str) {
+            Some("client") => true,
+            Some("full") => false,
+            _ => return Err("share_tour: view is missing ('client' hides structure and services, 'full' is the design-team tour)".into()),
+        };
+        let scope = match args.get("scope").and_then(Value::as_str) {
+            Some("local") => nnx_core::share::Scope::Local,
+            Some("lan") => nnx_core::share::Scope::Lan,
+            _ => return Err("share_tour: scope is missing ('local' is this machine only, 'lan' is every device on the network)".into()),
+        };
+        let minutes = args.get("expires_minutes").and_then(Value::as_u64).ok_or("share_tour: expires_minutes is missing (1 to 10080)")?;
+        if !(1..=10080).contains(&minutes) {
+            return Err("share_tour: expires_minutes must be between 1 and 10080 (seven days)".into());
+        }
+        let port = match args.get("port") {
+            None | Some(Value::Null) => 0,
+            Some(v) => v.as_u64().and_then(|p| u16::try_from(p).ok()).ok_or("share_tour: port must be a number from 0 to 65535")?,
+        };
+        let page = self.tour_file(args, client)?;
+        let html = page["html"].as_str().ok_or("share_tour: the tour page was not produced")?.to_string();
+        // A previous link is closed first so two snapshots are never live at once.
+        self.share = None;
+        let server = nnx_core::share::ShareServer::start(html, scope, port, std::time::Duration::from_secs(minutes * 60))?;
+        let url = server.url()?;
+        self.share = Some(server);
+        let mut out = self.share_status();
+        out["url"] = json!(url);
+        Ok(out)
+    }
+
+    fn share_status(&self) -> Value {
+        match &self.share {
+            Some(s) => json!({
+                "running": s.is_live(), "url": if s.is_live() { s.url().ok() } else { None }, "scope": if s.scope() == nnx_core::share::Scope::Lan { "lan" } else { "local" },
+                "port": s.port(), "seconds_left": s.seconds_left(), "views": s.views(),
+                "notes": ["the page is a snapshot taken when sharing started; later model edits are not shown", "anyone who has the link can open it until it expires or is stopped; there is no login", "a lan link needs the firewall to allow the app's incoming connections and works only on the same network"],
+            }),
+            None => json!({ "running": false }),
+        }
+    }
+
+    fn share_stop(&mut self) -> Value {
+        let was = self.share.take().is_some();
+        json!({ "running": false, "was_running": was })
     }
 
     fn tour_file(&self, args: &Value, client: bool) -> Result<Value, String> {
@@ -8117,6 +8172,58 @@ END-ISO-10303-21;
         assert!(ch.contains("\"client\":true") && !ch.contains("\"k\":\"Column\"") && ch.contains("\"k\":\"Wall\""));
         assert!(App::default().handle("client_view_export", &json!({})).is_err());
         assert!(App::default().handle("tour_export", &json!({})).is_err() && App::default().handle("stl_export", &json!({ "scale": 100.0 })).is_err());
+    }
+
+    #[test]
+    fn share_tour_serves_the_snapshot_at_a_link_and_needs_every_choice_named() {
+        use std::io::{Read, Write};
+        fn fetch(url: &str) -> String {
+            let (hostport, path) = url.trim_start_matches("http://").split_once('/').unwrap();
+            let mut s = std::net::TcpStream::connect(hostport).unwrap();
+            s.write_all(format!("GET /{path} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes()).unwrap();
+            let mut out = String::new();
+            s.read_to_string(&mut out).unwrap();
+            out
+        }
+        let mut app = started();
+        let ok = json!({ "view": "client", "scope": "local", "expires_minutes": 5, "lang": "en" });
+        for k in ["view", "scope", "expires_minutes"] {
+            let mut a = ok.clone();
+            a.as_object_mut().unwrap().remove(k);
+            assert!(app.handle("share_tour", &a).unwrap_err().contains(k), "{k}");
+        }
+        for bad in [json!({ "view": "all" }), json!({ "scope": "world" }), json!({ "expires_minutes": 0 }), json!({ "expires_minutes": 10081 }), json!({ "port": 70000 })] {
+            let mut a = ok.clone();
+            a.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+            assert!(app.handle("share_tour", &a).is_err(), "{bad}");
+        }
+        assert!(App::default().handle("share_tour", &ok).is_err());
+        assert_eq!(app.handle("share_status", &json!({})).unwrap()["running"], false);
+
+        let r = app.handle("share_tour", &ok).unwrap();
+        assert_eq!(r["running"], true);
+        let url = r["url"].as_str().unwrap().to_string();
+        let body = fetch(&url);
+        assert!(body.starts_with("HTTP/1.1 200") && body.contains("\"client\":true") && body.contains("\"k\":\"Wall\"") && !body.contains("\"k\":\"Column\""));
+        let wrong = format!("{}x", url);
+        assert!(fetch(&wrong).starts_with("HTTP/1.1 404"));
+        assert_eq!(app.handle("share_status", &json!({})).unwrap()["views"], 1);
+
+        // The full tour keeps the structure, and a second share replaces the first link.
+        let full = app.handle("share_tour", &json!({ "view": "full", "scope": "local", "expires_minutes": 5, "lang": "en" })).unwrap();
+        let new_url = full["url"].as_str().unwrap().to_string();
+        assert_ne!(new_url, url);
+        let old_hostport = url.trim_start_matches("http://").split_once('/').unwrap().0;
+        let new_hostport = new_url.trim_start_matches("http://").split_once('/').unwrap().0;
+        if old_hostport != new_hostport {
+            assert!(std::net::TcpStream::connect(old_hostport).is_err());
+        }
+        assert!(fetch(&new_url).contains("\"client\":false"));
+
+        let st = app.handle("share_stop", &json!({})).unwrap();
+        assert_eq!(st["was_running"], true);
+        assert!(std::net::TcpStream::connect(new_hostport).is_err());
+        assert_eq!(app.handle("share_stop", &json!({})).unwrap()["was_running"], false);
     }
 
     #[test]

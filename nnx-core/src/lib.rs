@@ -67,6 +67,7 @@ pub mod privacy;
 pub mod spanalt;
 pub mod sun;
 pub mod shadows;
+pub mod share;
 pub mod wind;
 pub mod model;
 pub mod layerstyle;
