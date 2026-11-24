@@ -486,6 +486,7 @@ impl App {
             "share_status" => Ok(self.share_status()),
             "share_stop" => Ok(self.share_stop()),
             "facade_render" => self.facade_render(args),
+            "ar_preview" => self.ar_preview(args),
             "stl_export" => self.stl_export(args),
             "exec" => self.exec_state(),
             "cost" => self.cost_report(),
@@ -3739,6 +3740,32 @@ impl App {
         let id = self.project().and_then(|p| p.meta.finishes.facade).ok_or("facade_render: choose a facade finish first (finishes_set)")?;
         let finish = nnx_core::finishes::find("facade", &id).ok_or_else(|| format!("facade_render: unknown facade finish '{id}'"))?;
         let page = nnx_core::facade_render::render_html(&scene, &self.display_title(), arabic, finish, &input)?;
+        serde_json::to_value(page).map_err(|e| e.to_string())
+    }
+
+    /// The offline augmented-reality preview on the user's photo of the plot:
+    /// `{ photo_path | photo_b64, camera_x_m, camera_y_m, camera_z_m, heading_deg, pitch_deg, h_fov_deg, marks?: [{ x, y, z, u, v }], lang? }`.
+    /// Every camera value is the user's and a missing one is named; nothing is defaulted.
+    fn ar_preview(&self, args: &Value) -> Result<Value, String> {
+        let num = |k: &str| args.get(k).and_then(Value::as_f64).ok_or_else(|| format!("ar_preview: {k} is missing"));
+        let photo = match (args.get("photo_path").and_then(Value::as_str), args.get("photo_b64").and_then(Value::as_str)) {
+            (Some(_), Some(_)) => return Err("ar_preview: give photo_path or photo_b64, not both".into()),
+            (Some(p), None) => std::fs::read(p).map_err(|e| format!("ar_preview: cannot read {p}: {e}"))?,
+            (None, Some(b)) => nnx_core::xlsx::base64_decode(b).map_err(|e| format!("ar_preview: photo_b64: {e}"))?,
+            (None, None) => return Err("ar_preview: the photo of the plot is missing (photo_path or photo_b64)".into()),
+        };
+        let mut marks = Vec::new();
+        if let Some(list) = args.get("marks") {
+            let list = list.as_array().ok_or("ar_preview: marks must be a list of { x, y, z, u, v }")?;
+            for (i, m) in list.iter().enumerate() {
+                let f = |k: &str| m.get(k).and_then(Value::as_f64).ok_or_else(|| format!("ar_preview: mark {} is missing {k}", i + 1));
+                marks.push(nnx_core::arpreview::Mark { p: [f("x")?, f("y")?, f("z")?], u: f("u")?, v: f("v")? });
+            }
+        }
+        let input = nnx_core::arpreview::ArInput { camera_x_m: num("camera_x_m")?, camera_y_m: num("camera_y_m")?, camera_z_m: num("camera_z_m")?, heading_deg: num("heading_deg")?, pitch_deg: num("pitch_deg")?, h_fov_deg: num("h_fov_deg")?, marks };
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        let scene = nnx_core::model3d::build_styled(&self.doc()?.model, self.style());
+        let page = nnx_core::arpreview::render_html(&scene, &self.display_title(), arabic, &photo, &input).map_err(|e| format!("ar_preview: {e}"))?;
         serde_json::to_value(page).map_err(|e| e.to_string())
     }
 
@@ -8248,6 +8275,42 @@ END-ISO-10303-21;
         assert!(html.contains("<canvas id=\"gl\">") && html.contains("\"type\":1") && !html.contains("src=\"http"));
         assert!(r["sun"]["altitude_deg"].as_f64().unwrap() > 0.0 && r["boxes"].as_u64().unwrap() > 0);
         assert!(App::default().handle("facade_render", &sun).is_err());
+    }
+
+    #[test]
+    fn the_ar_preview_needs_the_photo_and_every_camera_value_and_is_one_offline_page() {
+        let mut app = started();
+        let mut png = vec![0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0, 3, 232, 0, 0, 1, 244];
+        png.extend([8, 2, 0, 0, 0, 0, 0, 0, 0]);
+        let b64 = nnx_core::xlsx::base64_encode(&png);
+        let args = json!({ "photo_b64": b64, "camera_x_m": 3.0, "camera_y_m": -20.0, "camera_z_m": 1.5, "heading_deg": 0.0, "pitch_deg": 0.0, "h_fov_deg": 90.0, "lang": "en" });
+        for missing in ["photo_b64", "camera_x_m", "camera_y_m", "camera_z_m", "heading_deg", "pitch_deg", "h_fov_deg"] {
+            let mut a = args.clone();
+            a.as_object_mut().unwrap().remove(missing);
+            assert!(app.handle("ar_preview", &a).unwrap_err().contains(if missing == "photo_b64" { "photo" } else { missing }), "{missing}");
+        }
+        let mut both = args.clone();
+        both["photo_path"] = json!("x.png");
+        assert!(app.handle("ar_preview", &both).unwrap_err().contains("not both"));
+        let mut bad = args.clone();
+        bad["photo_b64"] = json!(nnx_core::xlsx::base64_encode(b"GIF89a not an image at all...."));
+        assert!(app.handle("ar_preview", &bad).unwrap_err().contains("JPEG or a PNG"));
+        let mut mark = args.clone();
+        mark["marks"] = json!([{ "x": 0.0, "y": 0.0, "z": 0.0, "u": 100.0 }]);
+        assert!(app.handle("ar_preview", &mark).unwrap_err().contains("mark 1 is missing v"));
+        let mut fov = args.clone();
+        fov["h_fov_deg"] = json!(2.0);
+        assert!(app.handle("ar_preview", &fov).unwrap_err().contains("h_fov_deg"));
+        let r = app.handle("ar_preview", &args).unwrap();
+        assert_eq!(r["name"], "ar-preview.html");
+        assert_eq!(r["photo"]["width"], 1000);
+        assert_eq!(r["photo"]["height"], 500);
+        assert!(r["boxes_in_frame"].as_u64().unwrap() > 0);
+        assert!(r["html"].as_str().unwrap().contains("data:image/png;base64,"));
+        let mut with_mark = args.clone();
+        with_mark["marks"] = json!([{ "x": 6.0, "y": 0.0, "z": 0.0, "u": 500.0, "v": 250.0 }]);
+        assert!(app.handle("ar_preview", &with_mark).unwrap()["marks"][0]["error_px"].as_f64().is_some());
+        assert!(App::default().handle("ar_preview", &args).is_err());
     }
 
     // ------------------------------------------------------------------ Milestone 6: execution commands
