@@ -122,9 +122,37 @@ pub fn chat_json_images(endpoint: &str, model: &str, system: &str, user: &str, i
     if !images_b64.is_empty() {
         user_msg["images"] = json!(images_b64);
     }
+    // Temperature 0 is the first try. Some vision models fall into a repetition loop under a structured format and the server aborts
+    // with "token repeat limit reached": that one failure is retried once with a little randomness and a repeat penalty.
+    let attempts = [json!({ "temperature": 0 }), json!({ "temperature": 0.3, "repeat_penalty": 1.1 })];
+    let mut last = String::new();
+    for (i, options) in attempts.iter().enumerate() {
+        let body = json!({
+            "model": model, "stream": false, "format": schema, "options": options,
+            "messages": [{ "role": "system", "content": system }, user_msg.clone()]
+        })
+        .to_string();
+        let (status, resp) = request(&host, port, "POST", "/api/chat", Some(&body), Duration::from_secs(timeout_s.max(1)))?;
+        let v: Value = serde_json::from_str(&resp).map_err(|_| format!("the server's answer is not JSON ({status})"))?;
+        if status != 200 {
+            last = format!("the server answered {status}: {}", v["error"].as_str().unwrap_or("no message"));
+            if i == 0 && last.contains("repeat limit") {
+                continue;
+            }
+            return Err(last);
+        }
+        let content = v["message"]["content"].as_str().ok_or("the model's answer has no content")?;
+        return serde_json::from_str(content.trim()).map_err(|_| "the model did not return JSON".to_string());
+    }
+    Err(last)
+}
+
+/// A plain (not structured) answer of a vision model: used to transcribe the text of a drawing when the structured reading fails.
+fn chat_text_images(endpoint: &str, model: &str, system: &str, user: &str, images_b64: &[String], timeout_s: u64) -> Result<String, String> {
+    let (host, port) = parse_endpoint(endpoint)?;
     let body = json!({
-        "model": model, "stream": false, "format": schema, "options": { "temperature": 0 },
-        "messages": [{ "role": "system", "content": system }, user_msg]
+        "model": model, "stream": false, "options": { "temperature": 0, "repeat_penalty": 1.1 },
+        "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user, "images": images_b64 }]
     })
     .to_string();
     let (status, resp) = request(&host, port, "POST", "/api/chat", Some(&body), Duration::from_secs(timeout_s.max(1)))?;
@@ -132,8 +160,29 @@ pub fn chat_json_images(endpoint: &str, model: &str, system: &str, user: &str, i
     if status != 200 {
         return Err(format!("the server answered {status}: {}", v["error"].as_str().unwrap_or("no message")));
     }
-    let content = v["message"]["content"].as_str().ok_or("the model's answer has no content")?;
-    serde_json::from_str(content.trim()).map_err(|_| "the model did not return JSON".to_string())
+    v["message"]["content"].as_str().map(str::to_string).ok_or_else(|| "the model's answer has no content".to_string())
+}
+
+/// `ai_ocr`: the text written on a drawing, a deed or a scanned page (PNG, JPEG, BMP or a scanned PDF), transcribed by a vision model on
+/// this computer. Arguments: `file_b64`, optional `model`, `endpoint`, `timeout_s`. The text is returned as it is; the page reads it for
+/// the brief's facts and proposes them, so nothing here is applied.
+fn ai_ocr(endpoint: &str, args: &Value) -> Result<Value, String> {
+    use nnx_core::{deedread, sketchread};
+    let b64 = args.get("file_b64").and_then(Value::as_str).filter(|t| !t.trim().is_empty()).ok_or("ocr: give the file's content as file_b64")?;
+    let bytes = nnx_core::xlsx::base64_decode(b64).map_err(|e| format!("ocr: {e}"))?;
+    let (images, notes) = if bytes.starts_with(b"%PDF") {
+        deedread::images_from_pdf(&bytes).map_err(|e| format!("ocr: {e}"))?
+    } else {
+        sketchread::image_size(&bytes).map_err(|e| format!("ocr: {e}"))?;
+        (vec![bytes], Vec::new())
+    };
+    parse_endpoint(endpoint)?;
+    let installed = models(endpoint).map_err(|e| format!("ocr: the local model server is not reachable at {endpoint}: {e}"))?;
+    let model = vision_model(&installed, args, "ocr")?;
+    let timeout = args.get("timeout_s").and_then(Value::as_u64).unwrap_or(DEFAULT_READ_TIMEOUT_S * 3);
+    let b64s: Vec<String> = images.iter().map(|i| nnx_core::xlsx::base64_encode(i)).collect();
+    let text = chat_text_images(endpoint, &model, "You transcribe the text, numbers and dimensions written on a drawing, plan or document. Copy them exactly, one item per line. Do not explain, translate or add anything.", "Transcribe all the text on this image.", &b64s, timeout).map_err(|e| format!("ocr: {model}: {e}"))?;
+    Ok(json!({ "text": text, "model": model, "images_sent": images.len(), "notes": notes }))
 }
 
 fn endpoint_of(args: &Value) -> String {
@@ -183,6 +232,7 @@ pub fn handle(cmd: &str, args: &Value) -> Result<Value, String> {
             }
         }
         "ai_sketch" => ai_sketch(&endpoint, args),
+        "ai_ocr" => ai_ocr(&endpoint, args),
         "ai_deed" => ai_deed(&endpoint, args),
         other => Err(format!("unknown command '{other}'")),
     }

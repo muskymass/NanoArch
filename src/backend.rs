@@ -3188,6 +3188,8 @@ impl App {
         found.sort();
         let mut draft = BriefDraft { title: Some(name.to_string()), source: "folder".into(), ..Default::default() };
         let (mut files, mut inputs, mut plot) = (Vec::new(), Vec::<ProjectInput>::new(), None::<Value>);
+        // The text of each text-bearing file (the first 12000 characters), so the page can give it to a local model to read in full.
+        let mut texts_read = serde_json::Map::new();
         let mut have_rooms = false;
         let fact = |field: &str, value: String| InputFact { field: field.into(), value };
         // Keeps only what the draft does not have yet (the first file to state a value wins) and returns the facts that were taken.
@@ -3280,11 +3282,13 @@ impl App {
                 (Ok(_), "dwg") => ("plot", "unsupported", "a binary DWG cannot be read here: save it as DXF (or convert it with the DWG converter)".into()),
                 (Ok(b), "txt" | "md" | "csv" | "tsv" | "json" | "xml" | "html" | "htm" | "rtf" | "svg") => {
                     let text = String::from_utf8_lossy(b).into_owned();
+                    texts_read.insert(rel.clone(), Value::String(text.chars().take(12_000).collect()));
                     facts = take_text(&mut draft, &text, &mut have_rooms);
                     if facts.is_empty() { ("text", "read", "read; it states none of the brief's facts that are still open".into()) } else { ("text", "read", format!("{} fact(s) for the brief", facts.len())) }
                 }
                 (Ok(_), "pdf" | "docx") if texts.contains_key(&rel) => {
                     let text = texts[&rel].clone();
+                    texts_read.insert(rel.clone(), Value::String(text.chars().take(12_000).collect()));
                     facts = take_text(&mut draft, &text, &mut have_rooms);
                     let d = format!("text of {} characters read{}", text.chars().count(), if facts.is_empty() { "; it states none of the brief's facts that are still open" } else { "" });
                     (if ext == "pdf" { "pdf_text" } else { "document" }, "read", if facts.is_empty() { d } else { format!("{d}; {} fact(s) for the brief", facts.len()) })
@@ -3301,7 +3305,7 @@ impl App {
             draft.notes.push("the folder holds more than 500 files: only the first 500 were looked at".into());
         }
         let missing = clarify::missing(&draft);
-        Ok(json!({ "name": name, "folder": root.display().to_string(), "files": files, "inputs": inputs, "plot": plot, "next": clarify::next_question(&draft), "missing": missing, "complete": clarify::is_complete(&draft), "draft": draft }))
+        Ok(json!({ "name": name, "folder": root.display().to_string(), "files": files, "inputs": inputs, "texts_read": texts_read, "plot": plot, "next": clarify::next_question(&draft), "missing": missing, "complete": clarify::is_complete(&draft), "draft": draft }))
     }
 
     /// The review step of `ai_sketch`: `{ reading, keys, floor, edits?, draft? }`. Only the confirmed `keys` become brief rooms (and a
