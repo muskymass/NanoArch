@@ -27,7 +27,8 @@ input[type=checkbox]{width:auto}
 textarea{min-height:110px;font-family:Consolas,monospace;font-size:12px}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-button{padding:7px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);cursor:pointer}
+/* Every button has its own clearly drawn border (a stronger line than the panel's separators) and a faint lift, so one control never blends into the next. */
+button{padding:7px 12px;border:1px solid color-mix(in srgb,var(--ink) 38%,var(--panel));border-radius:6px;background:var(--panel);cursor:pointer;box-shadow:0 1px 0 color-mix(in srgb,var(--ink) 14%,transparent)}
 button:hover{border-color:var(--accent)}
 button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
 button:disabled{opacity:.5;cursor:not-allowed}
@@ -123,9 +124,10 @@ header{position:relative;z-index:20}
 .rooms input[type=number]{width:100%!important}
 .rooms button{padding:2px 6px}
 .empty{color:var(--mute);padding:32px;text-align:center}
-.tabs{display:flex;border-bottom:1px solid var(--line)}
-.tab{flex:1;padding:9px 6px;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;color:var(--mute)}
-.tab.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+/* The tabs are separate bordered buttons that wrap onto as many rows as they need, so none is cut off or squeezed into a word per line. */
+.tabs{display:flex;flex-wrap:wrap;gap:6px;padding:8px;border-bottom:1px solid var(--line)}
+.tab{flex:0 1 auto;padding:6px 10px;border:1px solid color-mix(in srgb,var(--ink) 38%,var(--panel));border-radius:6px;background:var(--panel);color:var(--ink);white-space:nowrap}
+.tab.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
 .pane{display:none;min-width:0}.pane.on{display:block}
 /* A table wider than its panel scrolls inside itself: it must not widen the panel, which would push the panel's own text out of view. */
 .pane table{display:block;max-width:100%;overflow-x:auto}
