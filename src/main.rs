@@ -75,6 +75,9 @@ fn respond(app: &Shared, body: &str) -> String {
         "open_project" => open_project(app),
         "pick_sketch" => pick_sketch(),
         "sketch_pdfjs" => Ok(json!({ "lib": PDFJS, "worker": PDFJS_WORKER })),
+        // The code library (the Saudi Building Code PDFs): the page reads a file only to look a clause up while the user works.
+        "code_library_list" => code_library_list(),
+        "code_library_file" => code_library_file(&args),
         // The local model assistant talks to a server and may take a while: it runs outside the lock.
         "ai_status" | "ai_brief" | "ai_sketch" | "ai_deed" => ollama::handle(cmd, &args),
         // A recording is transcribed by a program on this computer; it may take a while, so it runs outside the lock.
@@ -131,6 +134,8 @@ fn export(args: &Value) -> Result<Value, String> {
 const PDFJS: &str = include_str!("../assets/vendor/pdf.min.js");
 const PDFJS_WORKER: &str = include_str!("../assets/vendor/pdf.worker.min.js");
 const SKETCH_MAX_BYTES: u64 = 40 * 1024 * 1024;
+/// The largest code PDF served to the page (the full code volumes are about 18 MB).
+const CODE_LIBRARY_MAX_BYTES: u64 = 60 * 1024 * 1024;
 
 /// (kind, mime) of a sketch file by extension, or None if it is not a supported type.
 fn sketch_kind(path: &Path) -> Option<(&'static str, &'static str)> {
@@ -146,6 +151,44 @@ fn sketch_kind(path: &Path) -> Option<(&'static str, &'static str)> {
 
 /// Lets the user pick a draft drawing (image or PDF) and returns its bytes for the page to draw. The sketch is only
 /// a reference to trace over, so nothing is stored in the project. `NANOARCH_SKETCH_FILE` skips the dialog (test seam).
+/// Folder of the code library: `NANOARCH_CODE_LIBRARY` (the seam of the tests), otherwise the workspace folder named in the project rules.
+fn code_library_dir() -> PathBuf {
+    std::env::var_os("NANOARCH_CODE_LIBRARY").map_or_else(|| PathBuf::from(r"C:\Projects\البناء\الكود السعودي"), PathBuf::from)
+}
+
+/// The PDF files of a library folder with their sizes, sorted by name.
+fn library_files(dir: &Path) -> Result<Vec<(String, u64)>, String> {
+    let rd = std::fs::read_dir(dir).map_err(|e| format!("the code library folder {} cannot be read: {e}", dir.display()))?;
+    let mut out: Vec<(String, u64)> = rd
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("pdf")))
+        .filter_map(|e| Some((e.file_name().to_string_lossy().into_owned(), e.metadata().ok()?.len())))
+        .collect();
+    out.sort();
+    Ok(out)
+}
+
+fn code_library_list() -> Result<Value, String> {
+    let dir = code_library_dir();
+    let files = library_files(&dir)?;
+    Ok(json!({ "dir": dir.display().to_string(), "files": files.iter().map(|(n, s)| json!({ "name": n, "bytes": s })).collect::<Vec<_>>() }))
+}
+
+/// One library file as base64. Only a name that the folder listing itself contains is served, so no path can leave the folder.
+fn code_library_file(args: &Value) -> Result<Value, String> {
+    let name = args.get("name").and_then(Value::as_str).ok_or("code_library_file: 'name' is required")?;
+    serve_library_file(&code_library_dir(), name)
+}
+
+fn serve_library_file(dir: &Path, name: &str) -> Result<Value, String> {
+    let (found, size) = library_files(dir)?.into_iter().find(|(n, _)| n == name).ok_or_else(|| format!("'{name}' is not a PDF of the code library"))?;
+    if size > CODE_LIBRARY_MAX_BYTES {
+        return Err(format!("'{found}' is {} MB; the limit is {} MB", size / 1_048_576, CODE_LIBRARY_MAX_BYTES / 1_048_576));
+    }
+    let bytes = std::fs::read(dir.join(&found)).map_err(|e| format!("{found}: {e}"))?;
+    Ok(json!({ "name": found, "b64": nnx_core::xlsx::base64_encode(&bytes) }))
+}
+
 fn pick_sketch() -> Result<Value, String> {
     let path = match std::env::var_os("NANOARCH_SKETCH_FILE") {
         Some(p) => Some(PathBuf::from(p)),
@@ -392,6 +435,24 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_code_library_serves_only_pdfs_listed_in_its_own_folder() {
+        let dir = std::env::temp_dir().join(format!("nanoarch_lib_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.pdf"), b"%PDF-1.4 test").unwrap();
+        std::fs::write(dir.join("notes.txt"), b"not a pdf").unwrap();
+        let names: Vec<String> = library_files(&dir).unwrap().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, vec!["a.pdf".to_string()], "only PDFs are listed");
+        let served = serve_library_file(&dir, "a.pdf").unwrap();
+        assert_eq!(served["name"], "a.pdf");
+        assert_eq!(served["b64"], nnx_core::xlsx::base64_encode(b"%PDF-1.4 test"));
+        for bad in ["notes.txt", "../a.pdf", "..\\a.pdf", "missing.pdf"] {
+            assert!(serve_library_file(&dir, bad).unwrap_err().contains("not a PDF of the code library"), "{bad} is refused");
+        }
+        assert!(library_files(&dir.join("absent")).unwrap_err().contains("cannot be read"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn sketch_types_are_recognised_by_extension_only_when_supported() {
