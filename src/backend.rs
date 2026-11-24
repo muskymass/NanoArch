@@ -502,6 +502,10 @@ impl App {
             "collab_review" => self.collab_merge(args, false),
             "collab_merge" => self.collab_merge(args, true),
             "collab_end" => Ok(self.collab_end()),
+            "backup_create" => self.backup_create(args),
+            "backup_restore" => self.backup_restore(args),
+            "backup_s3_put" => Self::backup_s3_put(args),
+            "backup_s3_get" => Self::backup_s3_get(args),
             "share_tour" => self.share_tour(args),
             "share_status" => Ok(self.share_status()),
             "share_stop" => Ok(self.share_stop()),
@@ -3946,6 +3950,53 @@ impl App {
         out["commands"] = json!(n);
         out["notes"] = json!(["compare merged_hash with your partner: equal hashes mean both computers hold the same model", "the merge is one undoable step; the merged state is the new base for the next exchange", "your partner must apply the merge with the same choices on their computer"]);
         Ok(out)
+    }
+
+    /// Encrypted backup of the open project: `{ path, passphrase, iterations? }`. The file is XChaCha20-Poly1305 sealed under a
+    /// PBKDF2 key; the passphrase is the user's (12+ characters, no default) and is never stored or returned. It is a copy: the
+    /// document stays as it is (still dirty if it was).
+    fn backup_create(&self, args: &Value) -> Result<Value, String> {
+        use nnx_core::backup;
+        let path = args.get("path").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).ok_or("path is required (where to write the .nnxbak file)")?;
+        let pass = args.get("passphrase").and_then(Value::as_str).ok_or("passphrase is required (there is no default and no recovery)")?;
+        let iterations = match args.get("iterations") {
+            None | Some(Value::Null) => backup::DEFAULT_ITERATIONS,
+            Some(v) => v.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or("iterations must be a whole number")?,
+        };
+        let (hash, size) = backup::write_backup(self.model()?, &self.settings(), pass, iterations, std::path::Path::new(path)).map_err(|e| e.to_string())?;
+        Ok(json!({ "path": path, "bytes": size, "sha256": hash, "iterations": iterations, "cipher": "XChaCha20-Poly1305", "kdf": "PBKDF2-HMAC-SHA256",
+            "note": "Keep the passphrase: without it the backup cannot be opened." }))
+    }
+
+    /// Opens an encrypted backup as the current project: `{ path, passphrase, confirm? }`. Replaces the open document, so unsaved
+    /// changes need `confirm: true`. A wrong passphrase and a changed file give the same refusal and change nothing.
+    fn backup_restore(&mut self, args: &Value) -> Result<Value, String> {
+        let path = args.get("path").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).ok_or("path is required (the .nnxbak file)")?;
+        let pass = args.get("passphrase").and_then(Value::as_str).ok_or("passphrase is required")?;
+        if self.is_dirty() && args.get("confirm").and_then(Value::as_bool) != Some(true) {
+            return Err("the open project has unsaved changes that restoring would discard: save it first or pass confirm: true".into());
+        }
+        let (model, settings) = nnx_core::backup::read_backup(std::path::Path::new(path), pass).map_err(|e| e.to_string())?;
+        self.open(model, &settings)
+    }
+
+    /// Uploads a sealed backup file to the S3-compatible store the user names. Nothing leaves the computer without
+    /// `confirm_upload: true`; credentials are used for this call only.
+    fn backup_s3_put(args: &Value) -> Result<Value, String> {
+        if args.get("confirm_upload").and_then(Value::as_bool) != Some(true) {
+            return Err("confirm_upload: true is required: this sends the encrypted backup to the server you named".into());
+        }
+        let file = args.get("path").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).ok_or("path is required (the .nnxbak file to upload)")?;
+        let target = crate::s3::parse_target(args)?;
+        crate::s3::put_backup(&target, std::path::Path::new(file), &crate::s3::amz_now()?)
+    }
+
+    /// Downloads a sealed backup from the S3-compatible store the user names into `path` (`overwrite` must be explicit).
+    fn backup_s3_get(args: &Value) -> Result<Value, String> {
+        let dest = args.get("path").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).ok_or("path is required (where to save the .nnxbak file)")?;
+        let target = crate::s3::parse_target(args)?;
+        let overwrite = args.get("overwrite").and_then(Value::as_bool) == Some(true);
+        crate::s3::get_backup(&target, std::path::Path::new(dest), overwrite, &crate::s3::amz_now()?)
     }
 
     fn collab_end(&mut self) -> Value {
@@ -9657,5 +9708,66 @@ END-ISO-10303-21;
         let hash1 = hash(&app);
         app.handle("undo", &json!({})).unwrap();
         assert_ne!(hash(&app), hash1);
+    }
+
+    #[test]
+    fn encrypted_backup_round_trips_the_whole_project_and_guards_every_step() {
+        let mut app = started_with_project();
+        app.handle("project_set", &json!({ "meta": { "title": "backup villa" } })).unwrap();
+        let project = serde_json::to_value(app.project().unwrap()).unwrap();
+        let hash = app.model().unwrap().state_hash();
+        let dir = std::env::temp_dir().join(format!("nanoarch-bak-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("villa.nnxbak");
+        let path = file.to_str().unwrap();
+        let pass = "a long enough passphrase";
+
+        assert!(app.handle("backup_create", &json!({ "path": path })).unwrap_err().contains("passphrase is required"));
+        assert!(app.handle("backup_create", &json!({ "path": path, "passphrase": "short" })).unwrap_err().contains("at least 12"));
+        assert!(app.handle("backup_create", &json!({ "path": path, "passphrase": pass, "iterations": 50 })).unwrap_err().contains("iterations"));
+        assert!(app.handle("backup_create", &json!({ "passphrase": pass })).unwrap_err().contains("path is required"));
+        assert!(App::default().handle("backup_create", &json!({ "path": path, "passphrase": pass })).is_err());
+        assert!(!file.exists(), "a refused backup writes nothing");
+
+        let made = app.handle("backup_create", &json!({ "path": path, "passphrase": pass, "iterations": 100_000 })).unwrap();
+        assert_eq!(made["iterations"], 100_000);
+        let bytes = std::fs::read(&file).unwrap();
+        assert_eq!(made["bytes"], bytes.len());
+        assert_eq!(made["sha256"], nnx_core::backup::sha256_hex(&bytes));
+        assert!(!made.to_string().contains(pass), "the passphrase is never returned");
+        assert!(!bytes.windows(6).any(|w| w == b"SQLite"), "the file holds no readable project");
+        assert!(!app.is_dirty() || app.model().unwrap().state_hash() == hash, "a backup does not change the project");
+
+        // A different open project is replaced only with confirmation when it has unsaved changes.
+        let mut other = started_with_project();
+        other.handle("project_set", &json!({ "meta": { "title": "something else" } })).unwrap();
+        assert!(other.is_dirty());
+        assert!(other.handle("backup_restore", &json!({ "path": path, "passphrase": pass })).unwrap_err().contains("unsaved changes"));
+        assert!(other.handle("backup_restore", &json!({ "path": path, "passphrase": "wrong passphrase!!", "confirm": true })).unwrap_err().contains("wrong passphrase"));
+        assert_eq!(other.project().unwrap().meta.title, "something else", "a refused restore changes nothing");
+        let opened = other.handle("backup_restore", &json!({ "path": path, "passphrase": pass, "confirm": true })).unwrap();
+        assert!(opened["warnings"].as_array().unwrap().is_empty(), "{}", opened["warnings"]);
+        assert_eq!(serde_json::to_value(other.project().unwrap()).unwrap(), project);
+        assert_eq!(other.model().unwrap().state_hash(), hash);
+        assert!(!other.is_dirty());
+
+        // Clean project: no confirmation needed. A changed file is refused like a wrong passphrase.
+        other.handle("backup_restore", &json!({ "path": path, "passphrase": pass })).unwrap();
+        let mut bad = bytes.clone();
+        let last = bad.len() - 1;
+        bad[last] ^= 1;
+        std::fs::write(&file, &bad).unwrap();
+        assert!(other.handle("backup_restore", &json!({ "path": path, "passphrase": pass })).unwrap_err().contains("changed"));
+        assert!(other.handle("backup_restore", &json!({ "path": dir.join("none.nnxbak").to_str().unwrap(), "passphrase": pass })).is_err());
+
+        // Nothing is uploaded without an explicit confirmation, and plain http to a public host is refused before any connection.
+        let s3 = json!({ "path": path, "endpoint": "https://s3.example.com", "bucket": "my-backups", "key": "a.nnxbak", "region": "eu-west-1", "access_key": "AK", "secret_key": "SK" });
+        assert!(app.handle("backup_s3_put", &s3).unwrap_err().contains("confirm_upload"));
+        let mut http = s3.clone();
+        http["confirm_upload"] = json!(true);
+        http["endpoint"] = json!("http://s3.example.com");
+        assert!(app.handle("backup_s3_put", &http).unwrap_err().contains("use https"));
+        assert!(app.handle("backup_s3_get", &json!({ "path": path, "endpoint": "https://s3.example.com", "bucket": "my-backups", "key": "a.nnxbak", "region": "eu-west-1", "access_key": "AK" })).unwrap_err().contains("secret_key"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -7,6 +7,7 @@
 mod backend;
 mod editing;
 mod levels;
+mod s3;
 mod ollama;
 mod dwg;
 mod voice;

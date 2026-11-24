@@ -12,6 +12,8 @@ pub mod csi;
 pub mod areatable;
 pub mod audits;
 pub mod bbs;
+pub mod backup;
+pub mod s3sign;
 pub mod calcreport;
 pub mod certificate;
 pub mod changelog;
