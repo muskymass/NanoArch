@@ -9,7 +9,7 @@ use serde_json::json;
 
 const KINDS: [&str; 15] = ["Wall", "Slab", "Column", "Beam", "Footing", "TieBeam", "Door", "Window", "Space", "MepRun", "MepPoint", "Facade", "Site", "Vertical", "Furniture"];
 
-fn esc(s: &str) -> String {
+pub(crate) fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 

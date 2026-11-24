@@ -480,6 +480,7 @@ impl App {
             "asbuilt_svg" => self.asbuilt_svg(),
             "tour_export" => self.tour_export(args),
             "client_view_export" => self.client_view_export(args),
+            "facade_render" => self.facade_render(args),
             "stl_export" => self.stl_export(args),
             "exec" => self.exec_state(),
             "cost" => self.cost_report(),
@@ -3716,6 +3717,24 @@ impl App {
     /// The client presentation page: the same single offline file without the structure, the services or any engineering control.
     fn client_view_export(&self, args: &Value) -> Result<Value, String> {
         self.tour_file(args, true)
+    }
+
+    /// The offline photoreal-style facade render page, lit by the sun the user enters:
+    /// `{ latitude_deg, day, solar_hour, north_offset_deg, lang? }`. The facade finish must have been chosen in the project.
+    fn facade_render(&self, args: &Value) -> Result<Value, String> {
+        let num = |k: &str| args.get(k).and_then(Value::as_f64).ok_or_else(|| format!("facade_render: {k} is missing"));
+        let input = nnx_core::facade_render::RenderInput {
+            latitude_deg: num("latitude_deg")?,
+            day: args.get("day").and_then(Value::as_u64).and_then(|d| u32::try_from(d).ok()).ok_or("facade_render: day is missing (day of the year, 1 to 366)")?,
+            solar_hour: num("solar_hour")?,
+            north_offset_deg: args.get("north_offset_deg").and_then(Value::as_f64).ok_or("facade_render: north_offset_deg is missing (0 when the plan's up is true north)")?,
+        };
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        let scene = nnx_core::model3d::build_styled(&self.doc()?.model, self.style());
+        let id = self.project().and_then(|p| p.meta.finishes.facade).ok_or("facade_render: choose a facade finish first (finishes_set)")?;
+        let finish = nnx_core::finishes::find("facade", &id).ok_or_else(|| format!("facade_render: unknown facade finish '{id}'"))?;
+        let page = nnx_core::facade_render::render_html(&scene, &self.display_title(), arabic, finish, &input)?;
+        serde_json::to_value(page).map_err(|e| e.to_string())
     }
 
     fn tour_file(&self, args: &Value, client: bool) -> Result<Value, String> {
@@ -8098,6 +8117,30 @@ END-ISO-10303-21;
         assert!(ch.contains("\"client\":true") && !ch.contains("\"k\":\"Column\"") && ch.contains("\"k\":\"Wall\""));
         assert!(App::default().handle("client_view_export", &json!({})).is_err());
         assert!(App::default().handle("tour_export", &json!({})).is_err() && App::default().handle("stl_export", &json!({ "scale": 100.0 })).is_err());
+    }
+
+    #[test]
+    fn the_facade_render_needs_a_finish_and_the_sun_you_enter_and_is_one_offline_page() {
+        let mut app = started();
+        let sun = json!({ "latitude_deg": 24.7, "day": 172, "solar_hour": 10.0, "north_offset_deg": 0.0, "lang": "en" });
+        // No facade finish chosen yet: refused by name.
+        assert!(app.handle("facade_render", &sun).unwrap_err().contains("facade finish"));
+        app.handle("finishes_set", &json!({ "finishes": { "facade": "travertine" } })).unwrap();
+        for missing in ["latitude_deg", "day", "solar_hour", "north_offset_deg"] {
+            let mut a = sun.clone();
+            a.as_object_mut().unwrap().remove(missing);
+            assert!(app.handle("facade_render", &a).unwrap_err().contains(missing), "{missing}");
+        }
+        let mut night = sun.clone();
+        night["solar_hour"] = json!(1.0);
+        assert!(app.handle("facade_render", &night).unwrap_err().contains("below the horizon"));
+        let r = app.handle("facade_render", &sun).unwrap();
+        assert_eq!(r["name"], "facade-render.html");
+        assert_eq!(r["facade"], "travertine");
+        let html = r["html"].as_str().unwrap();
+        assert!(html.contains("<canvas id=\"gl\">") && html.contains("\"type\":1") && !html.contains("src=\"http"));
+        assert!(r["sun"]["altitude_deg"].as_f64().unwrap() > 0.0 && r["boxes"].as_u64().unwrap() > 0);
+        assert!(App::default().handle("facade_render", &sun).is_err());
     }
 
     // ------------------------------------------------------------------ Milestone 6: execution commands

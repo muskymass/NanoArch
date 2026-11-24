@@ -111,6 +111,7 @@ pub mod style;
 pub mod tanks;
 pub mod templates;
 pub mod thermal;
+pub mod facade_render;
 pub mod tour;
 pub mod vertical;
 pub mod wireless;
