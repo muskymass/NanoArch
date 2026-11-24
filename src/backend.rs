@@ -429,6 +429,7 @@ impl App {
             "plot_import_survey" => Self::plot_import_survey(args),
             "brief_clarify" => Self::brief_clarify(args),
             "areas_import" => Self::areas_import(args),
+            "folder_import" => Self::folder_import(args),
             "sketch_accept" => Self::sketch_accept(args),
             "deed_accept" => Self::deed_accept(args),
             "prefs_learn" => Self::prefs_learn(args),
@@ -3124,6 +3125,98 @@ impl App {
         draft.rooms = table.rooms.clone();
         draft.notes.push(format!("rooms read from the sheet '{}' of the workbook: {} room(s), {:.1} m² with an area", table.sheet, table.rooms.len(), table.total_area_m2));
         Ok(json!({ "table": table, "draft": draft, "next": clarify::next_question(&draft), "missing": clarify::missing(&draft), "complete": clarify::is_complete(&draft) }))
+    }
+
+    /// `folder_import`: `{ path, name }`. Reads every file of a project folder (subfolders too) with the importer that fits it and
+    /// returns what was found as a brief draft, with each file's outcome and what is still missing. Per file: a spreadsheet of room
+    /// areas gives the rooms; a DXF gives the plot boundary when its units are stated and it holds one usable boundary; an IFC is
+    /// reviewed (its spaces are listed, not copied into the brief); a PDF or an image is listed as needing a scale and a reading by
+    /// the user (the draft sketch tab or `ai_sketch`); anything else is listed as not supported. Nothing is invented: a value no
+    /// file gave stays missing and `missing` names it.
+    fn folder_import(args: &Value) -> Result<Value, String> {
+        use nnx_core::{briefai::BriefDraft, clarify};
+        let root = args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty()).ok_or("folder import: the folder's path is missing")?;
+        let name = args.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()).ok_or("folder import: the project name is missing")?;
+        let root = std::path::Path::new(root);
+        if !root.is_dir() {
+            return Err(format!("folder import: {} is not a folder", root.display()));
+        }
+        let mut found: Vec<std::path::PathBuf> = Vec::new();
+        let mut stack = vec![(root.to_path_buf(), 0usize)];
+        let mut truncated = false;
+        while let Some((dir, depth)) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for e in rd.filter_map(Result::ok) {
+                let p = e.path();
+                if p.is_dir() {
+                    if depth < 4 {
+                        stack.push((p, depth + 1));
+                    }
+                } else if found.len() < 500 {
+                    found.push(p);
+                } else {
+                    truncated = true;
+                }
+            }
+        }
+        found.sort();
+        let mut draft = BriefDraft { title: Some(name.to_string()), source: "folder".into(), ..Default::default() };
+        let (mut files, mut plot) = (Vec::new(), None::<Value>);
+        let mut have_rooms = false;
+        for p in &found {
+            let rel = p.strip_prefix(root).unwrap_or(p).display().to_string();
+            let ext = p.extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let path = p.display().to_string();
+            let mut add = |kind: &str, status: &str, detail: String| files.push(json!({ "path": path, "rel": rel, "kind": kind, "status": status, "detail": detail }));
+            match ext.as_str() {
+                "xlsx" => match std::fs::read(p).map_err(|e| e.to_string()).and_then(|b| nnx_core::areatable::import(&b, None).map_err(|e| e.to_string())) {
+                    Ok(t) if !have_rooms && !t.rooms.is_empty() => {
+                        have_rooms = true;
+                        draft.notes.push(format!("rooms read from '{rel}', sheet '{}': {} room(s), {:.1} m²", t.sheet, t.rooms.len(), t.total_area_m2));
+                        add("areas", "read", format!("{} rooms, {:.1} m²", t.rooms.len(), t.total_area_m2));
+                        draft.rooms = t.rooms;
+                    }
+                    Ok(t) => add("areas", "skipped", format!("{} rooms, not used: {}", t.rooms.len(), if have_rooms { "another workbook already gave the rooms" } else { "no rooms in it" })),
+                    Err(e) => add("areas", "needs_you", e),
+                },
+                "dxf" => match std::fs::read(p).map_err(|e| e.to_string()).and_then(|b| nnx_core::plot_import::import_dxf(&b, None, None)) {
+                    Ok(r) => match r.selected.and_then(|i| r.candidates.get(i)) {
+                        Some(c) if plot.is_none() => {
+                            let (xs, ys): (Vec<f64>, Vec<f64>) = (c.polygon_m.iter().map(|q| q[0]).collect(), c.polygon_m.iter().map(|q| q[1]).collect());
+                            let span = |v: &[f64]| v.iter().cloned().fold(f64::MIN, f64::max) - v.iter().cloned().fold(f64::MAX, f64::min);
+                            let (w, l) = (span(&xs), span(&ys));
+                            let rect = (w * l - c.area_m2).abs() <= 0.01 * (w * l).max(1.0);
+                            draft.plot_area_m2 = Some((c.area_m2 * 100.0).round() / 100.0);
+                            if rect {
+                                draft.plot_width_m = Some((w * 100.0).round() / 100.0);
+                                draft.plot_length_m = Some((l * 100.0).round() / 100.0);
+                            } else {
+                                draft.notes.push(format!("the plot boundary in '{rel}' is not a rectangle ({:.1} m², bounding box {w:.1} x {l:.1} m): enter its shape on the plot tab", c.area_m2));
+                            }
+                            plot = Some(json!({ "polygon_m": c.polygon_m, "area_m2": c.area_m2, "from": rel }));
+                            add("plot", "read", format!("boundary {:.1} m² ({w:.1} x {l:.1} m){}", c.area_m2, if rect { "" } else { ", not a rectangle" }));
+                        }
+                        Some(_) => add("plot", "skipped", "another file already gave the plot".into()),
+                        None => add("plot", "needs_you", format!("{} closed shapes and none was chosen: open it with the plot DXF import and pick one", r.candidates.len())),
+                    },
+                    Err(e) => add("plot", "needs_you", e),
+                },
+                "ifc" => match std::fs::read(p).map_err(|e| e.to_string()).and_then(|b| nnx_core::ifc_review::review_ifc(&b)) {
+                    Ok(r) => add("ifc", "read", format!("{} {} entities, {} storey(s), {} space(s); reviewed, not copied into the brief", r.schema.clone().unwrap_or_default(), r.entity_count, r.storeys.len(), r.spaces.len())),
+                    Err(e) => add("ifc", "needs_you", e),
+                },
+                "rvt" | "rfa" => add("revit", "unsupported", "a Revit file cannot be read: export it to IFC".into()),
+                "dwg" => add("plot", "unsupported", "a binary DWG cannot be read here: save it as DXF (or convert it with the DWG converter)".into()),
+                "pdf" => add("sketch", "needs_you", "a drawing: it needs a scale reference and a reading (draft sketch tab)".into()),
+                "png" | "jpg" | "jpeg" | "bmp" | "webp" => add("sketch", "needs_you", "an image: it needs a scale reference and a reading (draft sketch tab)".into()),
+                _ => add("other", "unsupported", format!("'.{ext}' is not a type the importer reads")),
+            }
+        }
+        if truncated {
+            draft.notes.push("the folder holds more than 500 files: only the first 500 were looked at".into());
+        }
+        let missing = clarify::missing(&draft);
+        Ok(json!({ "name": name, "folder": root.display().to_string(), "files": files, "plot": plot, "next": clarify::next_question(&draft), "missing": missing, "complete": clarify::is_complete(&draft), "draft": draft }))
     }
 
     /// The review step of `ai_sketch`: `{ reading, keys, floor, edits?, draft? }`. Only the confirmed `keys` become brief rooms (and a
@@ -7202,6 +7295,40 @@ END-ISO-10303-21;
         assert_eq!((r["complete"].as_bool(), r["next"].is_null()), (Some(true), true));
         assert!(app.handle("brief_clarify", &json!({ "draft": r["draft"], "field": "floors", "answer": "many" })).unwrap_err().contains(" | "));
         assert!(app.handle("brief_clarify", &json!({})).unwrap_err().contains("draft is required"));
+    }
+
+    #[test]
+    fn a_project_folder_is_read_file_by_file_and_what_no_file_gave_stays_missing() {
+        let dir = std::env::temp_dir().join(format!("nnx_folder_{}", std::process::id()));
+        let sub = dir.join("drawings");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(dir.join("areas.xlsx"), include_bytes!("../nnx-core/tests/data/areas_deflated.xlsx")).unwrap();
+        // A 18 x 22 m rectangle in metres.
+        std::fs::write(dir.join("plot.dxf"), "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n6\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\nP\n90\n4\n70\n1\n10\n0\n20\n0\n10\n18\n20\n0\n10\n18\n20\n22\n10\n0\n20\n22\n0\nENDSEC\n0\nEOF\n").unwrap();
+        std::fs::write(sub.join("ground.pdf"), b"%PDF-1.4").unwrap();
+        std::fs::write(sub.join("front.JPG"), [0xFFu8, 0xD8]).unwrap();
+        std::fs::write(sub.join("model.rvt"), [0u8; 4]).unwrap();
+        std::fs::write(sub.join("note.txt"), "hello").unwrap();
+        let r = App::default().handle("folder_import", &json!({ "path": dir.to_str().unwrap(), "name": "Villa Test" })).unwrap();
+        let status = |rel_end: &str| {
+            let f = r["files"].as_array().unwrap().iter().find(|f| f["rel"].as_str().unwrap().ends_with(rel_end)).unwrap_or_else(|| panic!("{rel_end} listed"));
+            (f["kind"].as_str().unwrap().to_string(), f["status"].as_str().unwrap().to_string())
+        };
+        assert_eq!(status("areas.xlsx"), ("areas".into(), "read".into()));
+        assert_eq!(status("plot.dxf"), ("plot".into(), "read".into()));
+        assert_eq!(status("ground.pdf"), ("sketch".into(), "needs_you".into()));
+        assert_eq!(status("front.JPG"), ("sketch".into(), "needs_you".into()));
+        assert_eq!(status("model.rvt"), ("revit".into(), "unsupported".into()));
+        assert_eq!(status("note.txt"), ("other".into(), "unsupported".into()));
+        assert_eq!(r["draft"]["title"], "Villa Test");
+        assert_eq!((r["draft"]["plot_width_m"].as_f64(), r["draft"]["plot_length_m"].as_f64()), (Some(18.0), Some(22.0)));
+        assert!(!r["draft"]["rooms"].as_array().unwrap().is_empty(), "the workbook gave the rooms");
+        let missing: Vec<String> = r["missing"].as_array().unwrap().iter().map(|q| q["field"].as_str().unwrap().to_string()).collect();
+        assert!(!missing.contains(&"plot_size".to_string()) && !missing.contains(&"rooms".to_string()), "{missing:?}");
+        assert!(missing.contains(&"city".to_string()), "no file named the city, so it stays missing: {missing:?}");
+        assert!(App::default().handle("folder_import", &json!({ "path": dir.to_str().unwrap() })).unwrap_err().contains("name"));
+        assert!(App::default().handle("folder_import", &json!({ "path": dir.join("nope").to_str().unwrap(), "name": "x" })).unwrap_err().contains("not a folder"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

@@ -364,6 +364,10 @@ main.hl{grid-template-columns:1fr 420px}main.hr{grid-template-columns:400px 1fr}
     </div>
     <div class="scroll">
       <div class="pane" id="p-sketch">
+        <h2 data-i="fi_h"></h2>
+        <div class="note" data-i="fi_note"></div>
+        <div class="bar" style="padding:6px 0;border:0;gap:6px;flex-wrap:wrap"><input id="fi-name" data-ph="fi_name" style="flex:1;min-width:200px"><button id="fi-pick" class="primary" data-i="fi_pick"></button></div>
+        <div id="fi-out"></div>
         <div class="note" data-i="sk_note"></div>
         <div class="bar" style="padding:6px 0;border:0"><button id="sk-import" data-i="sk_import"></button><button id="sk-clear" disabled data-i="sk_clear"></button>
           <span id="sk-pager" style="display:none"><button id="sk-prev">&lsaquo;</button> <span id="sk-pg"></span> <button id="sk-next">&rsaquo;</button></span></div>
@@ -512,6 +516,7 @@ ar: {
   activity:"النشاط", rate:"المعدل / الأيام", crews:"طواقم", source:"المصدر", run_sched:"احسب الجدول", export_csv:"تصدير CSV", rules_note:"الصق حزمة قواعد بصيغة JSON (قيم الكود من النص المعتمد). تُفحص على النموذج الحالي.", run_rules:"افحص", use_sourced:"استعمل الحزمة المصدرية (قيم مقروءة من ملفات الكود، لكل قيمة مصدرها)",
   working:"جارٍ العمل…", cheapest:"الأفضل", cost:"التكلفة", reserve:"ممرات", warnings:"تنبيهات", none:"لا شيء", rooms:"الفراغات", target:"المستهدف", actual:"الفعلي",
   qty:"الكمية", unit:"الوحدة", el:"عناصر", code:"البند", missing:"معدلات ناقصة", days:"يوم عمل", finish:"الانتهاء", saved:"تم الحفظ", cancelled:"أُلغي", error:"خطأ",
+  fi_h:"استيراد مجلد مشروع", fi_note:"اكتب اسم المشروع واختر المجلد الذي فيه الرسومات. يقرأ البرنامج كل ملف بما يناسبه (جداول المساحات Excel، وحدود الأرض DXF، ونماذج IFC) ويملأ الموجز بما وجده فقط. الصور وملفات PDF تحتاج مقياساً وقراءة منك في الرسم الأولي، وما لا يوجد في أي ملف يبقى ناقصاً ويُذكر.", fi_name:"اسم المشروع", fi_pick:"اختر المجلد واستورد", fi_open:"افتح في الرسم الأولي", fi_missing:"ما ينقص الموجز", fi_files:"الملفات", fi_none:"لا ينقص شيء من أسئلة الموجز", fi_need_name:"اكتب اسم المشروع أولاً", fi_st:{ read: "قُرئ", needs_you: "يحتاج منك", skipped: "تُخطّي", unsupported: "غير مدعوم" },
   lib_h:"مكتبة الكود", lib_note:"يبحث في ملفات الكود السعودي PDF ويعرض البند والصفحة ونصّها لتتحقق منها بنفسك. لا يُملأ أي رقم تلقائياً.", lib_ph:"كلمات البحث (مثل: مساحة غرفة النوم)", lib_go:"ابحث في الكود", lib_use:"استخدم كمصدر", lib_none:"لا نتائج في ملفات المكتبة", lib_busy:"جارٍ قراءة الملف", lib_page:"ص", lib_find:"ابحث في الكود",
   checked:"فُحص", findings:"مخالفات", skipped:"قواعد لم تُفحص", lim_value:"القيمة", lim_source:"المصدر (بند وطبعة ورقم صفحة)", lim_run:"شغّل بهذه القيمة", lim_need:"أدخل القيمة ومصدرها معاً", lim_clear:"أزل القيم المدخلة", func:{majlis:"مجلس",living:"صالة",dining:"طعام",kitchen:"مطبخ",bedroom:"نوم",bathroom:"حمام",lift:"مصعد",courtyard:"فناء",other:"أخرى"},
   zone:{public:"عام",private:"خاص",service:"خدمات"}, days7:["اثنين","ثلاثاء","أربعاء","خميس","جمعة","سبت","أحد"], pick_days:"اختر أيام العمل", sync_done:"المزامنة: جديد {c}، محذوف {r}، بلا تغيير {u}",
@@ -562,6 +567,7 @@ en: {
   activity:"Activity", rate:"Rate / days", crews:"Crews", source:"Source", run_sched:"Compute schedule", export_csv:"Export CSV", rules_note:"Paste a rule pack (JSON; code values from the official text). It runs on the current model.", run_rules:"Check", use_sourced:"Use the sourced pack (values read from the code files, each with its source)",
   working:"Working…", cheapest:"Best", cost:"Cost", reserve:"Hall", warnings:"Warnings", none:"None", rooms:"Rooms", target:"Target", actual:"Actual",
   qty:"Quantity", unit:"Unit", el:"Elements", code:"Item", missing:"Missing rates", days:"working days", finish:"Finish", saved:"Saved", cancelled:"Cancelled", error:"Error",
+  fi_h:"Import a project folder", fi_note:"Type the project name and pick the folder that holds the drawings. Each file is read with the importer that fits it (Excel area schedules, DXF plot boundaries, IFC models) and the brief is filled with what was found only. Images and PDFs need a scale and a reading from you in the draft sketch, and anything no file holds stays missing and is listed.", fi_name:"Project name", fi_pick:"Pick the folder and import", fi_open:"Open in the draft sketch", fi_missing:"What the brief still lacks", fi_files:"Files", fi_none:"No brief question is left open", fi_need_name:"Type the project name first", fi_st:{ read: "Read", needs_you: "Needs you", skipped: "Skipped", unsupported: "Not supported" },
   lib_h:"Code library", lib_note:"Searches the Saudi Building Code PDFs and shows the clause, page and its text for you to check. No number is ever filled in automatically.", lib_ph:"Search words (e.g. bedroom minimum area)", lib_go:"Search the code", lib_use:"Use as source", lib_none:"No results in the library files", lib_busy:"Reading file", lib_page:"p.", lib_find:"Search the code",
   checked:"Checked", findings:"Findings", skipped:"Rules not run", lim_value:"Value", lim_source:"Source (clause, edition, page)", lim_run:"Run with this value", lim_need:"Enter the value and its source together", lim_clear:"Clear entered values", func:{majlis:"Majlis",living:"Living",dining:"Dining",kitchen:"Kitchen",bedroom:"Bedroom",bathroom:"Bathroom",lift:"Lift",courtyard:"Courtyard",other:"Other"},
   zone:{public:"Public",private:"Private",service:"Service"}, days7:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], pick_days:"Choose the working days", sync_done:"Sync: created {c}, removed {r}, unchanged {u}",
@@ -1428,6 +1434,28 @@ $("zone-apply").onclick = () => busy(async () => {
   applyProject(r.settings); renderSbc(r.sbc);
   $("mepin").value = r.settings.mep && Object.keys(r.settings.mep).length ? JSON.stringify(r.settings.mep, null, 2) : ""; refreshStatus();
   toast(t("zone_applied").replace("{z}", r.zone));
+});
+// ---------------------------------------------------------------- project folder
+// One folder in, one filled brief out: the engine reads each file with the importer that fits it; the page applies only what the files gave.
+$("fi-pick").onclick = () => busy(async () => {
+  const name = $("fi-name").value.trim() || $("title").value.trim(); if (!name) throw new Error(t("fi_need_name"));
+  const folder = (await call("pick_folder")).picked; if (!folder) return;
+  const r = await call("folder_import", { path: folder, name }), d = r.draft;
+  $("title").value = name;
+  if (d.plot_width_m && d.plot_length_m) { $("plot-shape").value = "rect"; polyApplyShape(); $("width").value = d.plot_width_m; $("length").value = d.plot_length_m; }
+  if (d.rooms && d.rooms.length) {
+    state.rooms = state.rooms.filter(x => !x.imported);
+    d.rooms.forEach((x, i) => state.rooms.push({ key: "fi" + (Date.now() % 100000) + i, name: x.name || "", func: x.func, area: x.area_m2, suggested: !!x.area_suggested, zone: ZONE_OF[x.func] || "service", light: NEEDS_LIGHT(x.func), floor: x.floor || 1, imported: true }));
+    renderRooms();
+  }
+  const st = t("fi_st");
+  $("fi-out").innerHTML = `<h2>${t("fi_files")} (${r.files.length})</h2><ul class="clean">${r.files.map((f, i) => `<li class="${f.status === "read" ? "ok" : f.status === "needs_you" ? "warn" : "hint"}"><b dir="ltr">${esc(f.rel)}</b> · ${esc(st[f.status] || f.status)}<div>${esc(f.detail)}</div>${f.kind === "sketch" ? `<button class="fi-open" data-i="${i}">${t("fi_open")}</button>` : ""}</li>`).join("")}</ul>
+    <h2>${t("fi_missing")}</h2>${(r.missing || []).length ? `<ul class="clean">${r.missing.map(q => `<li class="warn">${esc(lang === "ar" ? q.ar : q.en)}</li>`).join("")}</ul>` : `<div class="ok">${t("fi_none")}</div>`}
+    ${(d.notes || []).length ? `<ul class="clean">${d.notes.map(n => `<li class="hint">${esc(n)}</li>`).join("")}</ul>` : ""}`;
+  document.querySelectorAll("#fi-out .fi-open").forEach(b => b.onclick = () => busy(async () => {
+    const p = (await call("folder_file", { path: r.files[+b.dataset.i].path })).picked;
+    if (p.kind === "pdf") await skLoadPdf(p); else await skLoadImage(p);
+  }));
 });
 // ---------------------------------------------------------------- code rules
 // Limits entered for rules that were not run, kept for this session only: rule id -> { param, value, source }.

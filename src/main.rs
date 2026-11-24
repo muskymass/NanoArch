@@ -74,6 +74,16 @@ fn respond(app: &Shared, body: &str) -> String {
         "save_project" => save_project(app),
         "open_project" => open_project(app),
         "pick_sketch" => pick_sketch(),
+        // A project folder: the user picks it, the engine reads its files, and the page may then open the drawings inside that folder only.
+        "pick_folder" => pick_folder(),
+        "folder_import" => {
+            let r = lock(app).handle(cmd, &args);
+            if r.is_ok() && let Some(p) = args.get("path").and_then(Value::as_str) {
+                *IMPORT_FOLDER.lock().unwrap_or_else(|e| e.into_inner()) = std::fs::canonicalize(p).ok();
+            }
+            r
+        }
+        "folder_file" => folder_file(&args),
         "sketch_pdfjs" => Ok(json!({ "lib": PDFJS, "worker": PDFJS_WORKER })),
         // The code library (the Saudi Building Code PDFs): the page reads a file only to look a clause up while the user works.
         "code_library_list" => code_library_list(),
@@ -189,12 +199,40 @@ fn serve_library_file(dir: &Path, name: &str) -> Result<Value, String> {
     Ok(json!({ "name": found, "b64": nnx_core::xlsx::base64_encode(&bytes) }))
 }
 
+/// The folder the last successful `folder_import` read: the only place `folder_file` serves drawings from.
+static IMPORT_FOLDER: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// `pick_folder`: the user's choice of a project folder (`NANOARCH_IMPORT_FOLDER` skips the dialog: the seam of the end-to-end test).
+fn pick_folder() -> Result<Value, String> {
+    let dir = match std::env::var_os("NANOARCH_IMPORT_FOLDER") {
+        Some(p) => Some(PathBuf::from(p)),
+        None => rfd::FileDialog::new().pick_folder(),
+    };
+    Ok(json!({ "picked": dir.map(|d| d.display().to_string()) }))
+}
+
+/// One drawing (image or PDF) of the imported folder, in the same shape `pick_sketch` returns, so the sketch tab can open it.
+fn folder_file(args: &Value) -> Result<Value, String> {
+    let wanted = args.get("path").and_then(Value::as_str).ok_or("folder file: the path is missing")?;
+    let root = IMPORT_FOLDER.lock().unwrap_or_else(|e| e.into_inner()).clone().ok_or("folder file: no folder has been imported")?;
+    let path = std::fs::canonicalize(wanted).map_err(|e| format!("folder file: cannot read {wanted}: {e}"))?;
+    if !path.starts_with(&root) {
+        return Err("folder file: that file is outside the imported folder".into());
+    }
+    Ok(json!({ "picked": read_sketch(&path)? }))
+}
+
 fn pick_sketch() -> Result<Value, String> {
     let path = match std::env::var_os("NANOARCH_SKETCH_FILE") {
         Some(p) => Some(PathBuf::from(p)),
         None => rfd::FileDialog::new().add_filter("Sketch (png, jpg, bmp, webp, pdf)", &["png", "jpg", "jpeg", "bmp", "webp", "pdf"]).pick_file(),
     };
     let Some(path) = path else { return Ok(json!({ "picked": null })) };
+    Ok(json!({ "picked": read_sketch(&path)? }))
+}
+
+fn read_sketch(path: &Path) -> Result<Value, String> {
+    let path = path.to_path_buf();
     let (kind, mime) = sketch_kind(&path).ok_or("unsupported file type: use png, jpg, bmp, webp or pdf")?;
     let size = std::fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?.len();
     if size > SKETCH_MAX_BYTES {
@@ -202,7 +240,7 @@ fn pick_sketch() -> Result<Value, String> {
     }
     let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    Ok(json!({ "picked": { "name": name, "kind": kind, "mime": mime, "b64": nnx_core::xlsx::base64_encode(&bytes) } }))
+    Ok(json!({ "name": name, "kind": kind, "mime": mime, "b64": nnx_core::xlsx::base64_encode(&bytes) }))
 }
 
 /// Where a project file is saved or opened. The user picks it in a dialog; `NANOARCH_EXPORT_DIR` (the seam of `pick_save_path`) makes it
