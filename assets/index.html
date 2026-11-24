@@ -6,6 +6,7 @@
 <title>NanoArch</title>
 <style>
 :root{--bg:#f4f5f7;--panel:#fff;--ink:#1c1f24;--mute:#5d6572;--line:#dfe2e7;--accent:#1f5fae;--accent-ink:#fff;--warn:#a65b00;--bad:#b3261e;--ok:#1b7a43;--radius:8px}
+#p-dv #dv-body{overflow-x:auto} #p-dv th{white-space:nowrap} #p-dv td textarea{font:inherit}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#14171b;--panel:#1d2127;--ink:#e8eaee;--mute:#9aa3b0;--line:#2e343c;--accent:#5b9cf0;--accent-ink:#0b1320;--warn:#e0a24a;--bad:#f2837c;--ok:#5fcf8c}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",Tahoma,Arial,sans-serif;height:100vh;display:flex;flex-direction:column}
@@ -360,7 +361,7 @@ main.hl{grid-template-columns:1fr 420px}main.hr{grid-template-columns:400px 1fr}
   <section class="col">
     <div class="tabs">
       <button class="tab on" data-tab="notes" data-i="t_notes"></button><button class="tab" data-tab="qto" data-i="t_qto"></button>
-      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="an" id="tab-an"></button><button class="tab" data-tab="cp" id="tab-cp"></button><button class="tab" data-tab="mx" id="tab-mx"></button><button class="tab" data-tab="pr" id="tab-pr"></button><button class="tab" data-tab="ol" id="tab-ol"></button><button class="tab" data-tab="vr" id="tab-vr"></button><button class="tab" data-tab="ov" id="tab-ov"></button><button class="tab" data-tab="ex" id="tab-ex"></button>
+      <button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="an" id="tab-an"></button><button class="tab" data-tab="cp" id="tab-cp"></button><button class="tab" data-tab="mx" id="tab-mx"></button><button class="tab" data-tab="pr" id="tab-pr"></button><button class="tab" data-tab="ol" id="tab-ol"></button><button class="tab" data-tab="vr" id="tab-vr"></button><button class="tab" data-tab="ov" id="tab-ov"></button><button class="tab" data-tab="ex" id="tab-ex"></button><button class="tab" data-tab="dv" id="tab-dv"></button>
     </div>
     <div class="scroll">
       <div class="pane" id="p-sketch">
@@ -466,6 +467,7 @@ main.hl{grid-template-columns:1fr 420px}main.hr{grid-template-columns:400px 1fr}
       <div class="pane" id="p-mx"></div>
       <div class="pane" id="p-pr"></div>
       <div class="pane" id="p-ex"></div>
+      <div class="pane" id="p-dv"></div>
       <div class="pane" id="p-ol"></div>
       <div class="pane" id="p-vr"></div>
       <div class="pane" id="p-ov"></div>
@@ -2873,6 +2875,253 @@ function exRoiWire() {
 
 $("tab-ex").textContent = L("التنفيذ والتكلفة", "Execution & cost");
 document.querySelector('[data-tab="ex"]').addEventListener("click", () => busy(exLoad));
+
+// ---------------------------------------------------------------- the Deliverables tab (pre-construction and supervision)
+// Supervision registers, quantity-based payment certificates, the soil report, the draft contract, the AS-BUILT sheets and the full
+// dossier. The page only collects inputs and draws what the backend returns: every verdict, total, date and readiness flag is computed
+// by nnx-core. A field left blank is stored as unset; the backend names what is missing and refuses an inconsistent record.
+const DV = { sec: "overview", d: null, ipc: null, geo: null, draft: {} };
+const DV_SECS = [
+  ["overview", "نظرة عامة", "Overview"], ["pre", "ما قبل التنفيذ", "Pre-construction"], ["geo", "التربة", "Geotechnical"], ["handover", "تسليم الموقع", "Site handover"],
+  ["mar", "اعتماد المواد MAR", "Materials MAR"], ["shopDrawings", "المخططات التنفيذية", "Shop drawings"], ["wir", "فحص الأعمال WIR", "Inspections WIR"], ["mir", "فحص المواد MIR", "Deliveries MIR"],
+  ["lab", "المختبر", "Lab tests"], ["ncr", "عدم المطابقة NCR", "NCR"], ["rfi", "طلبات المعلومات RFI", "RFI"], ["mom", "المحاضر MOM", "Meetings MOM"],
+  ["variations", "أوامر التغيير VO", "Variations VO"], ["progress", "التقدم", "Progress"], ["ipc", "المستخلصات IPC", "Payment certificates"], ["snags", "الملاحظات", "Snags"],
+  ["closeout", "الإغلاق", "Close-out"], ["contract", "العقد", "Contract"],
+];
+const DV_REVIEW = [["submitted", "مقدَّم", "Submitted"], ["approved", "معتمد", "Approved"], ["approved_with_comments", "معتمد مع ملاحظات", "Approved with comments"], ["rejected", "مرفوض", "Rejected"]];
+// Column: [field, kind, ar, en, extra]. Kinds: s required text, o optional text, n optional number, b checkbox, sel select, ta textarea of lines.
+const DV_REG = {
+  mar: { table: "mar", cols: [["id", "s", "الرقم", "No."], ["category", "sel", "الفئة", "Category", "marCat"], ["description", "s", "الوصف", "Description"], ["reference", "o", "المورد", "Supplier"], ["submitted", "o", "التقديم", "Submitted", "date"], ["status", "sel", "الحالة", "Status", DV_REVIEW], ["reviewedBy", "o", "المراجع", "Reviewer"], ["reviewedDate", "o", "تاريخ المراجعة", "Reviewed", "date"], ["comment", "o", "ملاحظة", "Comment"]] },
+  shopDrawings: { table: "shop", cols: [["id", "s", "الرقم", "No."], ["category", "s", "التخصص", "Discipline"], ["description", "s", "الوصف", "Description"], ["reference", "o", "رقم اللوحة", "Drawing no."], ["submitted", "o", "التقديم", "Submitted", "date"], ["status", "sel", "الحالة", "Status", DV_REVIEW], ["reviewedBy", "o", "المراجع", "Reviewer"], ["reviewedDate", "o", "تاريخ المراجعة", "Reviewed", "date"], ["comment", "o", "ملاحظة", "Comment"]] },
+  wir: { table: "wir", tpl: true, cols: [["id", "s", "الرقم", "No."], ["stage", "sel", "المرحلة", "Stage", "wirStage"], ["element", "s", "العنصر", "Element"], ["requested", "o", "الطلب", "Requested", "date"], ["status", "sel", "الحالة", "Status", DV_REVIEW], ["inspector", "o", "المفتش", "Inspector"], ["decidedDate", "o", "تاريخ القرار", "Decided", "date"], ["comment", "o", "ملاحظة", "Comment"], ["holdPoints", "ta", "نقاط التوقف (نص ; موقّع ; تاريخ)", "Hold points (text ; signed by ; date)", ["text:s", "signedBy:o", "signedDate:o"]]] },
+  mir: { table: "mir", cols: [["id", "s", "الرقم", "No."], ["mar", "s", "رقم MAR", "MAR no."], ["delivered", "o", "التوريد", "Delivered", "date"], ["quantity", "n", "الكمية", "Quantity"], ["unit", "o", "الوحدة", "Unit"], ["deliveryNote", "o", "إشعار التسليم", "Delivery note"], ["status", "sel", "الحالة", "Status", DV_REVIEW], ["checkedBy", "o", "الفاحص", "Checked by"], ["comment", "o", "ملاحظة", "Comment"]] },
+  lab: { table: "lab", cols: [["id", "s", "الرقم", "No."], ["kind", "sel", "النوع", "Type", [["cube", "مكعب خرسانة", "Concrete cube"], ["proctor", "دمك بروكتور", "Proctor"], ["pressure", "اختبار ضغط", "Pressure test"], ["other", "أخرى", "Other"]]], ["subject", "s", "موضوع الاختبار", "Subject"], ["sampled", "o", "أخذ العينة", "Sampled", "date"], ["tested", "o", "الاختبار", "Tested", "date"], ["measured", "n", "المقاس", "Measured"], ["unit", "o", "الوحدة", "Unit"], ["required", "n", "قيمة القبول", "Acceptance"], ["rule", "sel", "القاعدة", "Rule", [["at_least", "لا يقل عن", "At least"], ["at_most", "لا يزيد عن", "At most"]]], ["requiredSource", "o", "مصدر القبول", "Acceptance source"], ["designFcMpa", "n", "f'c التصميمية MPa", "Design f'c MPa"], ["lab", "o", "المختبر", "Laboratory"], ["reportRef", "o", "مرجع التقرير", "Report ref"]] },
+  ncr: { table: "ncr", cols: [["id", "s", "الرقم", "No."], ["date", "o", "التاريخ", "Date", "date"], ["element", "o", "العنصر", "Element"], ["description", "s", "الوصف", "Description"], ["severity", "o", "الشدة", "Severity"], ["raisedBy", "o", "أصدره", "Raised by"], ["correctiveAction", "o", "الإجراء التصحيحي", "Corrective action"], ["due", "o", "الموعد", "Due", "date"], ["closedDate", "o", "الإغلاق", "Closed", "date"], ["closedBy", "o", "أغلقه", "Closed by"]] },
+  rfi: { table: "rfi", cols: [["id", "s", "الرقم", "No."], ["subject", "s", "الموضوع", "Subject"], ["bimRef", "o", "اللوحة / العنصر", "Sheet / element"], ["raised", "o", "التاريخ", "Raised", "date"], ["due", "o", "الموعد", "Due", "date"], ["answered", "o", "تاريخ الرد", "Answered", "date"], ["answer", "o", "الرد", "Answer"]] },
+  mom: { table: "mom", cols: [["id", "s", "الرقم", "No."], ["date", "o", "التاريخ", "Date", "date"], ["title", "s", "العنوان", "Title"], ["attendees", "ta", "الحضور (واحد في كل سطر)", "Attendees (one per line)", ["#"]], ["items", "ta", "الإجراءات (نص ; مسؤول ; موعد ; منجز 0/1)", "Actions (text ; owner ; due ; done 0/1)", ["text:s", "owner:o", "due:o", "done:b"]]] },
+  variations: { table: "vo", cols: [["id", "s", "الرقم", "No."], ["description", "s", "الوصف", "Description"], ["costDelta", "n", "أثر التكلفة (±)", "Cost impact (±)"], ["daysDelta", "n", "أثر المدة بالأيام (±)", "Time impact days (±)"], ["status", "sel", "الحالة", "Status", [["proposed", "مقترح", "Proposed"], ["approved", "معتمد", "Approved"], ["rejected", "مرفوض", "Rejected"]]], ["approvedDate", "o", "تاريخ الاعتماد", "Approved", "date"], ["source", "o", "مرجع المالك", "Owner reference"]] },
+  progress: { table: "progress", cols: [["periodEnd", "s", "نهاية الفترة", "Period end", "date"], ["plannedPct", "n", "المخطط %", "Planned %"], ["actualPct", "n", "الفعلي %", "Actual %"], ["manpower", "n", "العمالة", "Manpower"], ["equipment", "n", "المعدات", "Equipment"], ["blockers", "o", "المعوقات", "Blockers"], ["photos", "ta", "الصور (مسار في كل سطر)", "Photos (one path per line)", ["#"]]] },
+  snags: { table: "snags", cols: [["id", "s", "الرقم", "No."], ["room", "s", "الغرفة (مفتاح)", "Room key"], ["description", "s", "الوصف", "Description"], ["found", "o", "الاكتشاف", "Found", "date"], ["status", "sel", "الحالة", "Status", [["open", "مفتوح", "Open"], ["fixed", "تم الإصلاح", "Fixed"], ["verified", "تم التحقق", "Verified"]]], ["fixedDate", "o", "تاريخ الإصلاح", "Fixed", "date"], ["verifiedBy", "o", "تحقق", "Verified by"]] },
+};
+const dvOpts = (x) => (x === "marCat" ? DV.d.mar_categories.map(c => [c.id, c.ar, c.en]) : x === "wirStage" ? DV.d.wir_stages.map(c => [c.id, c.ar, c.en]) : x);
+const dvCell = (c, v) => {
+  const [f, k, , , x] = c;
+  if (k === "b") return `<input data-f="${f}" type="checkbox" ${v ? "checked" : ""}>`;
+  if (k === "sel") return `<select data-f="${f}">${dvOpts(x).map(([o, a, e]) => `<option value="${esc(o)}" ${o === v ? "selected" : ""}>${esc(L(a, e))}</option>`).join("")}</select>`;
+  if (k === "ta") return `<textarea data-f="${f}" rows="3" style="width:200px">${esc(dvLinesOut(x, v))}</textarea>`;
+  if (k === "n") return exIn(f, v, 80, "number");
+  return `<input data-f="${f}" type="text" ${x === "date" ? 'placeholder="YYYY-MM-DD" dir="ltr"' : ""} value="${esc(v ?? "")}" style="width:${x === "date" ? 96 : 120}px">`;
+};
+// "lines" codec: one record per line, fields separated by " ; ".
+function dvLinesOut(spec, arr) {
+  if (typeof arr === "string") return arr;
+  return (arr || []).map(o => (spec[0] === "#" ? String(o) : spec.map(s => { const [f, k] = s.split(":"); return k === "b" ? (o[f] ? "1" : "0") : (o[f] ?? ""); }).join(" ; "))).join("\n");
+}
+function dvLinesIn(spec, text) {
+  return String(text || "").split("\n").map(l => l.trim()).filter(Boolean).map(l => {
+    if (spec[0] === "#") return l;
+    const parts = l.split(";").map(p => p.trim()); const o = {};
+    spec.forEach((s, i) => { const [f, k] = s.split(":"); const p = parts[i] ?? ""; o[f] = k === "b" ? p === "1" : k === "s" ? p : (p === "" ? null : p); });
+    return o;
+  });
+}
+function dvRowIn(cols, o) {
+  const r = {};
+  for (const [f, k, , , x] of cols) {
+    const v = o[f];
+    r[f] = k === "s" ? String(v ?? "").trim() : k === "o" ? exS(v) : k === "n" ? exN(v, f) : k === "b" ? !!v : k === "ta" ? dvLinesIn(x, v) : v;
+  }
+  return r;
+}
+async function dvLoad() { DV.d = await call("supervision", { lang: exLang() }); DV.ipc = await call("ipc", { lang: exLang() }); DV.geo = await call("geotech", { lang: exLang() }); dvBuild(); }
+async function dvSave(section, value) { const r = await call("supervision_set", { section, value, lang: exLang() }); DV.d = r; DV.ipc = await call("ipc", { lang: exLang() }); DV.geo = await call("geotech", { lang: exLang() }); delete DV.draft[section]; dvBuild(); exSaved(r); }
+const dvTable = id => (DV.d.report.tables.find(x => x.id === id) || { headers: [], rows: [] });
+const dvPlain = tb => `<table class="rooms"><thead><tr>${tb.headers.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${tb.rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="${tb.headers.length || 1}" class="hint">${L("لا سجلات", "No records")}</td></tr>`}</tbody></table>`;
+const dvSvg = pts => {
+  if (pts.length < 2) return ""; const w = 560, h = 200, p = 28, x = i => p + (w - 2 * p) * i / (pts.length - 1), y = v => h - p - (h - 2 * p) * v / 100;
+  const line = (k, c) => `<polyline fill="none" stroke="${c}" stroke-width="2" points="${pts.map((s, i) => (s[k] == null ? "" : `${x(i).toFixed(1)},${y(s[k]).toFixed(1)}`)).filter(Boolean).join(" ")}"/>`;
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="max-width:100%"><rect x="${p}" y="${p}" width="${w - 2 * p}" height="${h - 2 * p}" fill="none" stroke="currentColor" opacity=".3"/>${line("planned_pct", "currentColor")}${line("actual_pct", "var(--accent)")}<text x="${p}" y="14" font-size="11" fill="currentColor">${L("المخطط (رمادي) · الفعلي (أزرق)", "planned (grey) · actual (blue)")}</text></svg>`;
+};
+function dvExportBtns(prefix, html, xlsx) {
+  return `<span class="bar" style="gap:6px;border:0;padding:0">${html ? `<button data-dvpdf="${prefix}">PDF</button>` : ""}${xlsx ? `<button data-dvxlsx="${prefix}">XLSX</button>` : ""}</span>`;
+}
+function dvBuild() {
+  const box = $("p-dv"); if (!box || !DV.d) return;
+  $("tab-dv").textContent = L("المخرجات والإشراف", "Deliverables");
+  const nav = `<div class="bar" style="padding:0 0 8px;border:0;gap:6px;flex-wrap:wrap">${DV_SECS.map(([k, a, e]) => `<button data-dvsec="${k}" class="${k === DV.sec ? "primary" : ""}">${L(a, e)}</button>`).join("")}</div>`;
+  const body = (DV_REG[DV.sec] ? dvRegister : ({ overview: dvOverview, pre: dvPre, geo: dvGeo, handover: dvHandover, ipc: dvIpc, closeout: dvCloseout, contract: dvContract })[DV.sec])();
+  box.innerHTML = nav + `<div id="dv-body">${body}</div>`;
+  box.querySelectorAll("[data-dvsec]").forEach(b => b.onclick = () => { DV.sec = b.dataset.dvsec; dvBuild(); });
+  const w = { overview: dvOverviewWire, pre: dvPreWire, handover: dvHandoverWire, ipc: dvIpcWire, closeout: dvCloseoutWire, contract: dvContractWire, geo: dvGeoWire }[DV.sec]; if (w) w();
+  if (DV_REG[DV.sec]) dvRegisterWire();
+}
+const dvDownload = async (name, b64) => exExport(name, "xlsx", b64, "b64");
+function dvWireExports(src) {
+  document.querySelectorAll("[data-dvpdf]").forEach(b => b.onclick = () => busy(async () => { const s = src[b.dataset.dvpdf]; await exPdf(s.html, b.dataset.dvpdf + ".pdf"); }));
+  document.querySelectorAll("[data-dvxlsx]").forEach(b => b.onclick = () => busy(async () => { const s = src[b.dataset.dvxlsx]; await dvDownload(b.dataset.dvxlsx + ".xlsx", s.xlsx_b64); }));
+}
+// ---- generic register editor
+function dvRegister() {
+  const reg = DV_REG[DV.sec], inp = DV.d.inputs[DV.sec];
+  const rows = DV.draft[DV.sec] || inp.map(o => ({ ...o }));
+  DV.draft[DV.sec] = rows;
+  const tpl = reg.tpl ? `<select id="dv-tplstage">${DV.d.wir_stages.map(s => `<option value="${s.id}">${esc(L(s.ar, s.en))}</option>`).join("")}</select> <button id="dv-tpl">＋ ${L("طلب بنقاط التوقف الإجرائية", "Request with the stage's hold points")}</button>` : "";
+  const extra = DV.sec === "progress" ? dvSvg(DV.d.report.s_curve) : "";
+  return `<div class="note">${L("كل سجل يُحفظ في المشروع (تراجع وإعادة). القرار يتطلب المراجع والتاريخ؛ الاعتماد يتطلب توقيع كل نقاط التوقف.", "Every register is stored in the project (undo/redo). A decision needs the reviewer and the date; an approval needs every hold point signed.")}</div>
+  ${exTable("dv-rows", reg.cols.map(c => esc(L(c[2], c[3]))), rows.map(r => reg.cols.map(c => dvCell(c, r[c[0]]))))}
+  <div class="bar" style="border:0;padding:6px 0;gap:6px">${exAddBtn("dv-rows", L("سجل", "Record"))} ${tpl} <button id="dv-save" class="primary">${L("حفظ", "Save")}</button></div>
+  ${extra}<h4>${L("الحالة المحسوبة", "Computed state")}</h4>${dvPlain(dvTable(reg.table))}`;
+}
+function dvRegisterWire() {
+  const reg = DV_REG[DV.sec], sec = DV.sec, sync = () => { DV.draft[sec] = exRows("dv-rows"); };
+  const blank = {}; reg.cols.forEach(c => { blank[c[0]] = c[1] === "sel" ? dvOpts(c[4])[0][0] : ""; });
+  const add = document.querySelector('[data-add="dv-rows"]'); if (add) add.onclick = () => { sync(); DV.draft[sec].push({ ...blank }); dvBuild(); };
+  document.querySelectorAll("#dv-rows [data-del]").forEach(b => b.onclick = () => { sync(); DV.draft[sec].splice(Number(b.dataset.del), 1); dvBuild(); });
+  $("dv-save").onclick = () => busy(() => dvSave(sec, exRows("dv-rows").map(o => dvRowIn(reg.cols, o))));
+  const tpl = $("dv-tpl"); if (tpl) tpl.onclick = () => busy(async () => {
+    sync(); const stage = $("dv-tplstage").value, r = await call("wir_hold_points", { stage, lang: exLang() });
+    const rows = DV.draft[sec]; rows.push({ ...blank, id: "WIR-" + (rows.length + 1), stage, status: "submitted", holdPoints: r.hold_points }); dvBuild();
+  });
+}
+// ---- overview
+function dvOverview() {
+  const r = DV.d.report;
+  const kpis = r.kpis.map(k => `<div style="border:1px solid var(--line);border-radius:var(--radius);padding:8px 12px;min-width:150px"><div class="hint">${esc(k.label)}</div><b style="font-size:20px">${esc(k.value)}</b></div>`).join("");
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap">${kpis}</div>
+  <h4>${L("جاهزية الإغلاق", "Close-out readiness")}: ${exBadge(r.closeout_ready ? L("جاهز", "Ready") : L("غير جاهز", "Not ready"), r.closeout_ready ? "ok" : "bad")}</h4>
+  ${r.blockers.length ? `<ul class="clean">${r.blockers.map(b => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}
+  ${r.issues.length ? `<h4>${L("تنبيهات", "Attention")}</h4>${exNotes(r.issues)}` : ""}
+  <div class="bar" style="border:0;padding:8px 0;gap:6px">${dvExportBtns("supervision", true, true)}</div>`;
+}
+function dvOverviewWire() { dvWireExports({ supervision: DV.d }); }
+// ---- pre-construction: one place for the tender/permit/contract/as-built/dossier outputs
+function dvPre() {
+  return `<div class="note">${L("كل مخرج يُبنى مما في المشروع فقط؛ ما ينقصه يُسمّى ويُذكر في «المتخطَّى» ولا يُسكت عنه.", "Every output is built from what the project holds only; whatever it lacks is named under 'skipped', never dropped silently.")}</div>
+  <div class="bar" style="border:0;padding:6px 0;gap:6px;flex-wrap:wrap">
+    <button id="dv-tender">${L("حزمة المناقصة (BOQ + المواصفات)", "Tender pack (BOQ + specifications)")}</button>
+    <button id="dv-contract">${L("مسودة العقد", "Draft contract")}</button>
+    <button id="dv-geo">${L("بيانات التربة", "Geotechnical data")}</button>
+    <button id="dv-asb">${L("مخططات AS-BUILT", "AS-BUILT sheets")}</button></div>
+  <h4>${L("ملف المشروع الكامل (ZIP بالمجلدات 01–08)", "Full project dossier (ZIP, folders 01–08)")}</h4>
+  <div class="note">${L("لتضمين حزمة التراخيص المختومة أدخل بيانات المهندس والتقديم:", "To include the stamped permit sheets, enter the engineer and submission details:")}</div>
+  <table class="rooms"><tr><td>${L("اسم المهندس", "Engineer")}</td><td><input id="dv-pe" style="width:160px"></td><td>${L("رقم الترخيص", "Licence no.")}</td><td><input id="dv-pl" dir="ltr" style="width:120px"></td><td>${L("جهة الترخيص", "Licensing body")}</td><td><input id="dv-pb" style="width:140px"></td></tr>
+  <tr><td>${L("رقم المشروع", "Project no.")}</td><td><input id="dv-pn" dir="ltr" style="width:120px"></td><td>${L("بادئة اللوحات", "Sheet prefix")}</td><td><input id="dv-pp" dir="ltr" style="width:60px" value="A"></td><td>${L("المراجعة", "Revision")}</td><td><input id="dv-pr" dir="ltr" style="width:80px"></td></tr></table>
+  <div class="bar" style="border:0;padding:6px 0"><button id="dv-dossier" class="primary">${L("تصدير الملف الكامل", "Export full dossier")}</button></div><div id="dv-dossier-out"></div>`;
+}
+function dvPreWire() {
+  $("dv-tender").onclick = () => busy(async () => { const r = await call("tender", { lang: exLang() }); await exPdf(r.html, "tender-pack.pdf"); });
+  $("dv-contract").onclick = () => busy(async () => { const r = await call("contract_draft", { lang: exLang() }); if (r.missing.length) toast(L("ينقص: ", "Missing: ") + r.missing.join("، ")); await exPdf(r.html, "contract-draft.pdf"); });
+  $("dv-geo").onclick = () => { DV.sec = "geo"; dvBuild(); };
+  $("dv-asb").onclick = () => busy(async () => { const r = await call("asbuilt_sheets", { lang: exLang() }); await exPdf(r.html, "as-built.pdf"); });
+  $("dv-dossier").onclick = () => busy(async () => {
+    const e = $("dv-pe").value.trim(), args = { lang: exLang() };
+    if (e) args.permit = { engineer: { name: e, licence_no: $("dv-pl").value.trim(), licensing_body: $("dv-pb").value.trim() }, project_no: $("dv-pn").value.trim(), sheet_prefix: $("dv-pp").value.trim(), revision: $("dv-pr").value.trim() };
+    const r = await call("dossier_export", args);
+    await exExport(r.name, "zip", r.zip_b64, "b64");
+    $("dv-dossier-out").innerHTML = `<div class="hint">${r.paths.length - 1} ${L("ملفاً", "files")}</div>` + (r.skipped.length ? `<h4>${L("متخطّى", "Skipped")}</h4><ul class="clean">${r.skipped.map(s => `<li class="warn"><b dir="ltr">${esc(s.file)}</b>: ${esc(s.reason)}</li>`).join("")}</ul>` : "");
+  });
+}
+// ---- soil report
+function dvGeo() {
+  const g = DV.d.inputs.geotech, rep = DV.geo.report, cell = (id, v, w = 110, ph = "") => `<input id="${id}" value="${esc(v ?? "")}" style="width:${w}px" placeholder="${ph}">`;
+  return `<table class="rooms"><tr><td>${L("مرجع التقرير", "Report ref")}</td><td>${cell("dv-g-ref", g.reportRef)}</td><td>${L("تاريخه", "Date")}</td><td>${cell("dv-g-date", g.reportDate, 96, "YYYY-MM-DD")}</td><td>${L("الجهة", "Issued by")}</td><td>${cell("dv-g-firm", g.firm, 140)}</td></tr>
+  <tr><td>q_all (kPa)</td><td>${cell("dv-g-q", g.bearingKpa, 80)}</td><td>${L("عند عمق (م)", "At depth (m)")}</td><td>${cell("dv-g-qd", g.bearingDepthM, 80)}</td><td>${L("الماء الجوفي (م)", "Groundwater (m)")}</td><td>${cell("dv-g-gw", g.groundwaterDepthM, 80)}</td></tr>
+  <tr><td>${L("الأساس الموصى به", "Recommended")}</td><td colspan="5">${cell("dv-g-rec", (g.recommended || []).join(", "), 320, "isolated, strip, raft, piles")}</td></tr></table>
+  <div class="hint">${L("الطبقات (من ; إلى ; الوصف ; ملاحظات) سطر لكل طبقة", "Layers (from ; to ; description ; notes), one per line")}</div>
+  <textarea id="dv-g-layers" rows="5" style="width:100%">${esc((g.layers || []).map(l => [l.fromM, l.toM, l.description, l.notes ?? ""].join(" ; ")).join("\n"))}</textarea>
+  <div class="bar" style="border:0;padding:6px 0;gap:6px"><button id="dv-g-save" class="primary">${L("حفظ", "Save")}</button>${dvExportBtns("geotech", true, true)}</div>
+  ${exNotes(rep.issues)}${dvPlain({ headers: [L("البند", "Item"), L("القيمة", "Value")], rows: rep.rows.map(r => [r[0], r[1]]) })}`;
+}
+function dvGeoWire() {
+  dvWireExports({ geotech: DV.geo });
+  $("dv-g-save").onclick = () => busy(() => dvSave("geotech", {
+    reportRef: exS($("dv-g-ref").value), reportDate: exS($("dv-g-date").value), firm: exS($("dv-g-firm").value), bearingKpa: exN($("dv-g-q").value, "q_all"), bearingDepthM: exN($("dv-g-qd").value, "depth"), groundwaterDepthM: exN($("dv-g-gw").value, "groundwater"),
+    recommended: $("dv-g-rec").value.split(",").map(s => s.trim()).filter(Boolean),
+    layers: $("dv-g-layers").value.split("\n").map(l => l.trim()).filter(Boolean).map(l => { const p = l.split(";").map(x => x.trim()); return { fromM: exReq(p[0], "from"), toM: exReq(p[1], "to"), description: p[2] || "", notes: p[3] || null }; }),
+  }));
+}
+// ---- handover
+function dvHandover() {
+  const h = DV.d.inputs.handover || {}, c = (id, v, w = 120, ph = "") => `<input id="${id}" value="${esc(v ?? "")}" style="width:${w}px" placeholder="${ph}">`;
+  return `<table class="rooms"><tr><td>${L("تاريخ التسليم", "Handover date")}</td><td>${c("dv-h-date", h.date, 96, "YYYY-MM-DD")}</td><td>${L("مرجع الموقع", "Site ref")}</td><td>${c("dv-h-site", h.siteRef)}</td><td>${L("تاريخ البدء", "Start date")}</td><td>${c("dv-h-start", h.startDate, 96, "YYYY-MM-DD")}</td></tr>
+  <tr><td>${L("الإحداثي الشرقي (م)", "Easting (m)")}</td><td>${c("dv-h-e", h.eastingM, 110)}</td><td>${L("الإحداثي الشمالي (م)", "Northing (m)")}</td><td>${c("dv-h-n", h.northingM, 110)}</td><td>${L("نظام الإحداثيات", "Coordinate system")}</td><td>${c("dv-h-crs", h.crs, 160)}</td></tr>
+  <tr><td>${L("نقطة المنسوب", "Benchmark")}</td><td>${c("dv-h-bm", h.benchmarkDescription, 160)}</td><td>${L("المنسوب (م)", "Level (m)")}</td><td>${c("dv-h-bl", h.benchmarkLevelM, 90)}</td><td>${L("المرجع", "Datum")}</td><td>${c("dv-h-bd", h.benchmarkDatum, 140)}</td></tr></table>
+  <div class="hint">${L("الموقّعون (الدور ; الاسم ; تاريخ التوقيع)", "Signatories (role ; name ; signed date)")}</div>
+  <textarea id="dv-h-sig" rows="4" style="width:100%">${esc(dvLinesOut(["role:s", "name:s", "signedDate:o"], h.signatories))}</textarea>
+  <div class="bar" style="border:0;padding:6px 0"><button id="dv-h-save" class="primary">${L("حفظ", "Save")}</button></div>${dvPlain(dvTable("handover"))}`;
+}
+function dvHandoverWire() {
+  $("dv-h-save").onclick = () => busy(() => dvSave("handover", {
+    date: exS($("dv-h-date").value), siteRef: exS($("dv-h-site").value), startDate: exS($("dv-h-start").value), eastingM: exN($("dv-h-e").value, "easting"), northingM: exN($("dv-h-n").value, "northing"), crs: exS($("dv-h-crs").value),
+    benchmarkDescription: exS($("dv-h-bm").value), benchmarkLevelM: exN($("dv-h-bl").value, "level"), benchmarkDatum: exS($("dv-h-bd").value), signatories: dvLinesIn(["role:s", "name:s", "signedDate:o"], $("dv-h-sig").value),
+  }));
+}
+// ---- IPC
+const DV_IPC_SPEC = { lines: ["code:s", "cumQty:n"], vos: ["id:s", "cumPct:n"], ded: ["label:s", "amount:n"] };
+function dvIpc() {
+  const i = DV.d.inputs.ipc, rep = DV.ipc.report, cur = exLang() === "ar" ? "ar" : "en";
+  const rows = DV.draft.ipc || (i.certificates || []).map(c => ({ id: c.id, date: c.date, lines: dvLinesOut(DV_IPC_SPEC.lines, c.lines), vos: dvLinesOut(DV_IPC_SPEC.vos, c.variations), ded: dvLinesOut(DV_IPC_SPEC.ded, c.deductions) }));
+  DV.draft.ipc = rows;
+  const certs = rep.certificates.map(c => `<h4>${L("مستخلص", "Certificate")} ${esc(c.id)} · ${esc(c.date)}</h4>${dvPlain({ headers: [L("البند", "Item"), L("الوصف", "Description"), L("السابق", "Previous"), L("التراكمي", "Cumulative"), L("الفترة", "Period"), L("قيمة الفترة", "Period value")], rows: c.lines.map(l => [l.code, l.description, exF(l.previous_qty), exF(l.cum_qty), exF(l.period_qty), exF(l.period_value)]) })}
+    <div class="hint" dir="ltr">${L("التراكمي", "Cumulative")} ${exF(c.cum_value)} · ${L("استقطاع", "Retention")} ${exF(c.retention)} · ${L("خصومات", "Deductions")} ${exF(c.deductions)} · <b>${L("المستحق", "Net payable")} ${exF(c.payable)}</b>${c.complete ? "" : " · " + L("غير مكتمل", "incomplete")}</div>`).join("");
+  return `<div class="note">${L("الكميات تراكمية من جدول الكميات. نسبة الاستقطاع مطلوبة؛ بدونها لا يُحسب الصافي. بند بلا سعر لا يُقيَّم.", "Quantities are cumulative on the BOQ. The retention percentage is required: without it no net is computed. An unpriced item is not valued.")}</div>
+  <table class="rooms"><tr><td>${L("العملة", "Currency")}</td><td><input id="dv-i-cur" value="${esc(i.currency ?? "")}" style="width:70px"></td><td>${L("الاستقطاع %", "Retention %")}</td><td><input id="dv-i-ret" dir="ltr" value="${esc(i.retentionPct ?? "")}" style="width:70px"></td><td>${L("ضريبة القيمة المضافة %", "VAT %")}</td><td><input id="dv-i-vat" dir="ltr" value="${esc(i.vatPct ?? "")}" style="width:70px"></td></tr></table>
+  <div class="hint">${L("بنود الجدول المتاحة:", "BOQ items:")} <span dir="ltr">${DV.ipc.boq_items.map(b => esc(b.code)).join(", ") || "—"}</span> · ${L("أوامر التغيير المعتمدة:", "Approved VOs:")} <span dir="ltr">${DV.ipc.approved_variations.map(v => esc(v.id)).join(", ") || "—"}</span></div>
+  <table class="rooms" id="dv-ipc"><thead><tr><th>${L("الرقم", "No.")}</th><th>${L("التاريخ", "Date")}</th><th>${L("الكميات (بند ; كمية تراكمية)", "Quantities (code ; cumulative qty)")}</th><th>${L("أوامر التغيير (رقم ; نسبة %)", "Variations (id ; cumulative %)")}</th><th>${L("خصومات (بيان ; مبلغ)", "Deductions (label ; amount)")}</th><th></th></tr></thead><tbody>
+  ${rows.map((r, n) => `<tr data-r="${n}"><td><input data-f="id" value="${esc(r.id)}" style="width:50px"></td><td><input data-f="date" value="${esc(r.date)}" style="width:96px" dir="ltr"></td><td><textarea data-f="lines" rows="3" style="width:180px">${esc(r.lines)}</textarea></td><td><textarea data-f="vos" rows="3" style="width:140px">${esc(r.vos)}</textarea></td><td><textarea data-f="ded" rows="3" style="width:150px">${esc(r.ded)}</textarea></td><td><button data-del="${n}">✕</button></td></tr>`).join("")}</tbody></table>
+  <div class="bar" style="border:0;padding:6px 0;gap:6px"><button id="dv-ipc-add">＋ ${L("مستخلص", "Certificate")}</button><button id="dv-i-save" class="primary">${L("حفظ", "Save")}</button>${dvExportBtns("ipc", true, true)}</div>
+  ${exNotes(rep.issues)}${certs}`;
+}
+function dvIpcWire() {
+  dvWireExports({ ipc: DV.ipc });
+  const sync = () => { DV.draft.ipc = exRows("dv-ipc"); };
+  $("dv-ipc-add").onclick = () => { sync(); DV.draft.ipc.push({ id: String(DV.draft.ipc.length + 1), date: "", lines: "", vos: "", ded: "" }); dvBuild(); };
+  document.querySelectorAll("#dv-ipc [data-del]").forEach(b => b.onclick = () => { sync(); DV.draft.ipc.splice(Number(b.dataset.del), 1); dvBuild(); });
+  $("dv-i-save").onclick = () => busy(() => dvSave("ipc", {
+    currency: exS($("dv-i-cur").value), retentionPct: exN($("dv-i-ret").value, "retention"), vatPct: exN($("dv-i-vat").value, "VAT"),
+    certificates: exRows("dv-ipc").map(r => ({ id: String(r.id).trim(), date: String(r.date).trim(), lines: dvLinesIn(DV_IPC_SPEC.lines, r.lines).map(x => ({ code: x.code, cumQty: exReq(x.cumQty, x.code) })), variations: dvLinesIn(DV_IPC_SPEC.vos, r.vos).map(x => ({ id: x.id, cumPct: exReq(x.cumPct, x.id) })), deductions: dvLinesIn(DV_IPC_SPEC.ded, r.ded).map(x => ({ label: x.label, amount: exReq(x.amount, x.label) })) })),
+  }));
+}
+// ---- close-out
+function dvCloseout() {
+  const co = DV.d.inputs.closeout, rec = id => (co.records || []).find(r => r.item === id) || {};
+  const items = DV.d.closeout_items.map(c => { const r = rec(c.id); return `<tr data-r="${c.id}"><td>${esc(L(c.ar, c.en))}</td><td><input data-f="done" type="checkbox" ${r.done ? "checked" : ""}></td><td><input data-f="by" value="${esc(r.by ?? "")}" style="width:110px"></td><td><input data-f="date" value="${esc(r.date ?? "")}" style="width:96px" dir="ltr" placeholder="YYYY-MM-DD"></td><td><input data-f="note" value="${esc(r.note ?? "")}" style="width:160px"></td></tr>`; }).join("");
+  const wspec = ["item:s", "supplier:o", "start:o", "months:n", "docRef:o"], mspec = ["title:s", "docRef:o", "received:b"];
+  return `<table class="rooms" id="dv-co"><thead><tr><th>${L("البند", "Item")}</th><th>${L("تم", "Done")}</th><th>${L("المؤكِّد", "Confirmed by")}</th><th>${L("التاريخ", "Date")}</th><th>${L("ملاحظة", "Note")}</th></tr></thead><tbody>${items}</tbody></table>
+  <div class="hint">${L("الضمانات (البند ; المورد ; البداية ; الأشهر ; المستند)", "Warranties (item ; supplier ; start ; months ; document)")}</div><textarea id="dv-co-w" rows="3" style="width:100%">${esc(dvLinesOut(wspec, co.warranties))}</textarea>
+  <div class="hint">${L("أدلة التشغيل والصيانة (العنوان ; المستند ; مستلم 0/1)", "O&M manuals (title ; document ; received 0/1)")}</div><textarea id="dv-co-m" rows="3" style="width:100%">${esc(dvLinesOut(mspec, co.manuals))}</textarea>
+  <div class="bar" style="border:0;padding:6px 0"><button id="dv-co-save" class="primary">${L("حفظ", "Save")}</button></div>${dvPlain(dvTable("closeout"))}${dvPlain(dvTable("warranties"))}`;
+}
+function dvCloseoutWire() {
+  $("dv-co-save").onclick = () => busy(() => dvSave("closeout", {
+    records: [...document.querySelectorAll("#dv-co tr[data-r]")].map(tr => ({ item: tr.dataset.r, done: tr.querySelector('[data-f="done"]').checked, by: exS(tr.querySelector('[data-f="by"]').value), date: exS(tr.querySelector('[data-f="date"]').value), note: exS(tr.querySelector('[data-f="note"]').value) })).filter(r => r.done || r.by || r.date || r.note),
+    warranties: dvLinesIn(["item:s", "supplier:o", "start:o", "months:n", "docRef:o"], $("dv-co-w").value).map(w => ({ ...w, months: exN(w.months, "months") })),
+    manuals: dvLinesIn(["title:s", "docRef:o", "received:b"], $("dv-co-m").value),
+  }));
+}
+// ---- contract
+function dvContract() {
+  const c = DV.d.inputs.contract, v = (id, x, w = 100) => `<input id="${id}" value="${esc(x ?? "")}" style="width:${w}px">`;
+  return `<div class="note">${L("مسودة فقط: تُكتب من القيم المدخلة ولا تُضاف بنود قانونية؛ يراجعها محامٍ مرخّص قبل التوقيع.", "Draft only: written from the entered values; no legal clauses are added. A licensed lawyer must review it before signing.")}</div>
+  <table class="rooms"><tr><td>${L("القيمة", "Value")}</td><td>${v("dv-c-val", c.contractValue)}</td><td>${L("العملة", "Currency")}</td><td>${v("dv-c-cur", c.currency, 60)}</td><td>${L("تاريخ البدء", "Start")}</td><td>${v("dv-c-start", c.startDate, 96)}</td><td>${L("المدة (يوم)", "Days")}</td><td>${v("dv-c-days", c.durationDays, 60)}</td></tr>
+  <tr><td>${L("الاستقطاع %", "Retention %")}</td><td>${v("dv-c-ret", c.retentionPct, 60)}</td><td>${L("غرامة/يوم", "Penalty/day")}</td><td>${v("dv-c-pen", c.delayPenaltyPerDay, 80)}</td><td>${L("سقف الغرامة %", "Cap %")}</td><td>${v("dv-c-cap", c.penaltyCapPct, 60)}</td><td>${L("فترة الصيانة (شهر)", "DLP months")}</td><td>${v("dv-c-dlp", c.defectsLiabilityMonths, 60)}</td></tr>
+  <tr><td>${L("الضمان (شهر)", "Warranty months")}</td><td>${v("dv-c-war", c.warrantyMonths, 60)}</td><td colspan="2">${L("النظام الحاكم", "Governing law")}</td><td colspan="4">${v("dv-c-law", c.governingLaw, 300)}</td></tr></table>
+  <div class="hint">${L("الأطراف (الدور ; الاسم ; الهوية/السجل ; العنوان)", "Parties (role ; name ; id ; address)")}</div><textarea id="dv-c-parties" rows="3" style="width:100%">${esc(dvLinesOut(["role:s", "name:s", "idRef:o", "address:o"], c.parties))}</textarea>
+  <div class="hint">${L("البنود (العنوان :: النص) سطر لكل بند", "Clauses (title :: text), one per line")}</div><textarea id="dv-c-clauses" rows="5" style="width:100%">${esc((c.clauses || []).map(x => x.title + " :: " + x.text.replace(/\n/g, " ")).join("\n"))}</textarea>
+  <div class="bar" style="border:0;padding:6px 0;gap:6px"><button id="dv-c-save" class="primary">${L("حفظ", "Save")}</button><button id="dv-c-pdf">${L("مسودة PDF", "Draft PDF")}</button></div>`;
+}
+function dvContractWire() {
+  $("dv-c-pdf").onclick = () => busy(async () => { const r = await call("contract_draft", { lang: exLang() }); if (r.missing.length) toast(L("ينقص: ", "Missing: ") + r.missing.join("، ")); await exPdf(r.html, "contract-draft.pdf"); });
+  $("dv-c-save").onclick = () => busy(() => dvSave("contract", {
+    contractValue: exN($("dv-c-val").value, "value"), currency: exS($("dv-c-cur").value), startDate: exS($("dv-c-start").value), durationDays: exN($("dv-c-days").value, "days"), retentionPct: exN($("dv-c-ret").value, "retention"),
+    delayPenaltyPerDay: exN($("dv-c-pen").value, "penalty"), penaltyCapPct: exN($("dv-c-cap").value, "cap"), defectsLiabilityMonths: exN($("dv-c-dlp").value, "DLP"), warrantyMonths: exN($("dv-c-war").value, "warranty"), governingLaw: exS($("dv-c-law").value),
+    parties: dvLinesIn(["role:s", "name:s", "idRef:o", "address:o"], $("dv-c-parties").value),
+    clauses: $("dv-c-clauses").value.split("\n").map(l => l.trim()).filter(Boolean).map(l => { const i = l.indexOf("::"); return { title: (i < 0 ? l : l.slice(0, i)).trim(), text: (i < 0 ? "" : l.slice(i + 2)).trim() }; }),
+  }));
+}
+$("tab-dv").textContent = L("المخرجات والإشراف", "Deliverables");
+document.querySelector('[data-tab="dv"]').addEventListener("click", () => busy(dvLoad));
+
 
 // ---------------------------------------------------------------- Milestone 7: selection hub, outliner, split view, versions, overlays
 // The page computes nothing here either: the tree, the differences and the overlay reviews come from the backend. What the page owns is

@@ -19,6 +19,8 @@ use nnx_core::{Command, Document, Id, Origin};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+mod deliverables;
+
 pub use nnx_core::project::{BriefIn, NanoArchProject, RoomIn, StructIn};
 
 /// The application state. The project itself (metadata, brief, structure, MEP and BOQ inputs, room names, municipal
@@ -571,6 +573,14 @@ impl App {
             "procure_set" => self.procure_set(args),
             "qaqc" => self.qaqc_report(args),
             "qaqc_set" => self.qaqc_set(args),
+            "supervision" => self.supervision_report(args),
+            "supervision_set" => self.supervision_set(args),
+            "wir_hold_points" => self.wir_hold_points(args),
+            "ipc" => self.ipc_report(args),
+            "geotech" => self.geotech_report(args),
+            "contract_draft" => self.contract_draft(args),
+            "asbuilt_sheets" => self.asbuilt_sheets(args),
+            "dossier_export" => self.dossier_export(args),
             "roi" => self.roi_report(),
             "roi_set" => self.roi_set(args),
             "outline" => self.outline_report(),
@@ -9268,6 +9278,86 @@ END-ISO-10303-21;
         let ok = app.handle("material_requests", &json!({ "inputs": { "as_of": "2026-11-20", "lead": { "cement": { "days": 10, "source": "synthetic quotation" } } } }));
         assert!(ok.is_ok(), "{ok:?}");
         assert!(App::default().handle("material_requests", &json!({})).is_err());
+    }
+
+    #[test]
+    fn supervision_registers_ipc_contract_and_the_full_dossier_are_built_from_one_project() {
+        let mut app = complete_app();
+        let hold = app.handle("wir_hold_points", &json!({ "stage": "foundation_rebar", "lang": "en" })).unwrap();
+        let points = hold["hold_points"].as_array().unwrap().clone();
+        assert!(points.len() >= 2);
+        assert!(app.handle("wir_hold_points", &json!({ "stage": "nope" })).is_err());
+
+        // An approval with an unsigned hold point is refused and nothing is stored.
+        let unsigned = json!([{ "id": "WIR-1", "stage": "foundation_rebar", "element": "FND-1", "status": "approved", "inspector": "Eng. A", "decidedDate": "2026-11-02", "holdPoints": points }]);
+        let e = app.handle("supervision_set", &json!({ "section": "wir", "value": unsigned })).unwrap_err();
+        assert!(e.contains("not signed"), "{e}");
+        assert!(app.handle("supervision", &json!({})).unwrap()["inputs"]["wir"].as_array().unwrap().is_empty());
+        assert!(app.handle("supervision_set", &json!({ "section": "bogus", "value": [] })).unwrap_err().contains("not a section"));
+
+        let signed: Vec<Value> = points.iter().map(|p| json!({ "text": p["text"], "signedBy": "Eng. A", "signedDate": "2026-11-02" })).collect();
+        let wir = json!([{ "id": "WIR-1", "stage": "foundation_rebar", "element": "FND-1", "status": "approved", "inspector": "Eng. A", "decidedDate": "2026-11-02", "holdPoints": signed }]);
+        assert_eq!(app.handle("supervision_set", &json!({ "section": "wir", "value": wir })).unwrap()["changed"], true);
+        let vos = json!([{ "id": "VO-1", "description": "extra bedroom", "costDelta": 5000.0, "daysDelta": 4, "status": "approved", "approvedDate": "2026-11-05", "source": "owner letter 12" }]);
+        app.handle("supervision_set", &json!({ "section": "variations", "value": vos })).unwrap();
+        app.handle("supervision_set", &json!({ "section": "ncr", "value": [{ "id": "NCR-1", "description": "honeycomb", "date": "2026-11-03" }] })).unwrap();
+        app.handle("supervision_set", &json!({ "section": "geotech", "value": { "reportRef": "GR-1", "reportDate": "2026-05-01", "bearingKpa": 150.0, "groundwaterDepthM": 3.5, "layers": [{ "fromM": 0.0, "toM": 3.0, "description": "sand" }], "recommended": ["isolated"] } })).unwrap();
+
+        let r = app.handle("supervision", &json!({ "lang": "en" })).unwrap();
+        assert_eq!(r["report"]["closeout_ready"], false);
+        let kpi = |id: &str| r["report"]["kpis"].as_array().unwrap().iter().find(|k| k["id"] == id).unwrap()["value"].clone();
+        assert_eq!(kpi("vo_cost"), "5000");
+        assert_eq!(kpi("ncr_open"), "1");
+        assert!(r["html"].as_str().unwrap().contains("honeycomb") && !r["xlsx_b64"].as_str().unwrap().is_empty());
+
+        // IPC over the project's own BOQ: an unknown retention percentage means no net payable is claimed.
+        let ipc = app.handle("ipc", &json!({})).unwrap();
+        let items = ipc["boq_items"].as_array().unwrap();
+        assert!(!items.is_empty(), "the BOQ of the sample project has measured items");
+        let code = items[0]["code"].as_str().unwrap().to_string();
+        let cert = json!({ "retentionPct": 10.0, "certificates": [{ "id": "1", "date": "2026-12-01", "lines": [{ "code": code, "cumQty": 1.0 }], "variations": [{ "id": "VO-1", "cumPct": 50.0 }] }] });
+        let r = app.handle("supervision_set", &json!({ "section": "ipc", "value": cert })).unwrap();
+        assert_eq!(r["changed"], true);
+        let ipc = app.handle("ipc", &json!({ "lang": "en" })).unwrap();
+        assert_eq!(ipc["report"]["certificates"][0]["variations"][0]["value"], 2500.0);
+        assert!(ipc["html"].as_str().unwrap().contains("Net payable"));
+        assert!(app.handle("supervision_set", &json!({ "section": "ipc", "value": { "certificates": [{ "id": "1", "date": "bad" }] } })).is_err());
+
+        let g = app.handle("geotech", &json!({})).unwrap();
+        assert_eq!(g["report"]["bearing_conflict"], false, "the sample project's structural bearing equals the report's 150 kPa: {:?}", g["report"]["issues"]);
+        assert!(g["report"]["issues"].as_array().unwrap().is_empty());
+        app.handle("supervision_set", &json!({ "section": "geotech", "value": { "reportRef": "GR-1", "reportDate": "2026-05-01", "bearingKpa": 120.0, "groundwaterDepthM": 3.5, "layers": [{ "fromM": 0.0, "toM": 3.0, "description": "sand" }], "recommended": ["isolated"] } })).unwrap();
+        let g = app.handle("geotech", &json!({ "lang": "en" })).unwrap();
+        assert_eq!(g["report"]["bearing_conflict"], true);
+        assert!(g["report"]["issues"][0].as_str().unwrap().contains("conflict"));
+        let c = app.handle("contract_draft", &json!({ "lang": "en" })).unwrap();
+        assert!(c["html"].as_str().unwrap().contains("DRAFT") && !c["missing"].as_array().unwrap().is_empty());
+
+        let ab = app.handle("asbuilt_sheets", &json!({ "lang": "en" })).unwrap();
+        let h = ab["html"].as_str().unwrap();
+        assert!(h.contains("AS-BUILT") && h.contains("VO-1") && h.contains("extra bedroom"));
+        assert_eq!(ab["variations"], 1);
+        assert!(h.contains("Open snags and RFIs on the plan"), "the room plan with the snag / RFI markers is part of the set");
+        assert!(!h.contains("Field redlines"), "without a measured x or y no redline sheet is made");
+        app.handle("asbuilt_set", &json!({ "csv": "name,x_mm,y_mm
+COL-1,10,10
+", "toleranceMm": 5.0 })).unwrap();
+        let ab = app.handle("asbuilt_sheets", &json!({ "lang": "en" })).unwrap();
+        let h = ab["html"].as_str().unwrap();
+        assert!(h.contains("Field redlines: measured against design") && h.contains("class=\"asbuilt\""), "the measured positions are drawn on the plan");
+
+        // The dossier: numbered folders, an index of exactly what is inside, and every part that could not be built is named.
+        let d = app.handle("dossier_export", &json!({ "lang": "en", "permit": { "engineer": { "name": "Eng. A", "licence_no": "L-1", "licensing_body": "Council" }, "project_no": "P-1", "sheet_prefix": "A", "revision": "Rev A" } })).unwrap();
+        let paths: Vec<&str> = d["paths"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
+        for folder in ["00_Index/", "01_Survey_Geotech/", "02_IFC_Drawings/", "04_Tender_BOQ/", "05_Permits/", "06_Supervision_QA_QC/", "07_Commercial_IPC/", "08_CloseOut_AsBuilt/"] {
+            assert!(paths.iter().any(|p| p.starts_with(folder)), "{folder} missing in {paths:?}");
+        }
+        let manifest: Value = serde_json::from_str(d["manifest"].as_str().unwrap()).unwrap();
+        assert_eq!(manifest["file_count"].as_u64().unwrap() as usize, paths.len() - 1);
+        assert!(!d["zip_b64"].as_str().unwrap().is_empty());
+        let without = app.handle("dossier_export", &json!({ "lang": "ar" })).unwrap();
+        assert!(without["skipped"].as_array().unwrap().iter().any(|s| s["file"].as_str().unwrap().starts_with("05_Permits/") && s["reason"].as_str().unwrap().contains("permit")));
+        assert!(!without["paths"].as_array().unwrap().iter().any(|p| p.as_str().unwrap().starts_with("05_Permits/")));
     }
 
     #[test]

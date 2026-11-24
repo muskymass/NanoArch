@@ -173,6 +173,8 @@ pub struct ProjectMeta {
     pub site_review: crate::sitereview::SiteReview,
     /// Milestone 6 inputs: the schedule setup, cost tiers, tender pack, payment milestones, long-lead items, QA/QC records and the apartment ROI.
     pub execution: crate::execution::ExecutionInputs,
+    /// Construction supervision registers: handover, submittals, inspections, tests, NCR, RFI, MOM, variations, progress, snags, close-out.
+    pub supervision: crate::supervision::SupervisionInputs,
 }
 
 /// Limits set by the municipality for this plot. Each carries the source the user took it from. A limit without a
@@ -346,6 +348,7 @@ impl NanoArchProject {
         self.meta.decisions.check()?;
         self.meta.site_review.check()?;
         self.meta.execution.check()?;
+        self.meta.supervision.check()?;
         crate::snapshot::check_all(&self.snapshots)?;
         crate::overlay::check_all(&self.overlays)?;
         crate::municipality::check_all(&self.municipalities)?;

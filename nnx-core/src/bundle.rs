@@ -16,6 +16,9 @@ use std::collections::BTreeSet;
 /// The folders of a bundle, in delivery order. The first is reserved for the index this module writes.
 pub const FOLDERS: [&str; 5] = ["00-index", "01-models", "02-drawings", "03-quantities", "04-documents"];
 
+/// The folders of the full project dossier, in delivery order. The first is reserved for the index.
+pub const DOSSIER_FOLDERS: [&str; 9] = ["00_Index", "01_Survey_Geotech", "02_IFC_Drawings", "03_Calculations", "04_Tender_BOQ", "05_Permits", "06_Supervision_QA_QC", "07_Commercial_IPC", "08_CloseOut_AsBuilt"];
+
 /// Longest file name accepted.
 const MAX_NAME: usize = 120;
 
@@ -52,14 +55,23 @@ fn check_name(name: &str) -> Result<(), String> {
 }
 
 /// Build the bundle. `title` and `date` (UTC `YYYY-MM-DD`) go into the index as given.
-pub fn build(title: &str, date: &str, mut entries: Vec<Entry>) -> Result<Bundle, String> {
+pub fn build(title: &str, date: &str, entries: Vec<Entry>) -> Result<Bundle, String> {
+    build_in(&FOLDERS, title, date, entries)
+}
+
+/// The full project dossier: the same checks and index as `build`, with the folders of `DOSSIER_FOLDERS`.
+pub fn build_dossier(title: &str, date: &str, entries: Vec<Entry>) -> Result<Bundle, String> {
+    build_in(&DOSSIER_FOLDERS, title, date, entries)
+}
+
+fn build_in(folders: &[&str], title: &str, date: &str, mut entries: Vec<Entry>) -> Result<Bundle, String> {
     if entries.is_empty() {
         return Err("bundle: nothing to deliver (choose at least one file)".into());
     }
     let mut seen = BTreeSet::new();
     for e in &entries {
-        if !FOLDERS[1..].contains(&e.folder.as_str()) {
-            return Err(format!("bundle: unknown folder '{}' (use one of {})", e.folder, FOLDERS[1..].join(", ")));
+        if !folders[1..].contains(&e.folder.as_str()) {
+            return Err(format!("bundle: unknown folder '{}' (use one of {})", e.folder, folders[1..].join(", ")));
         }
         check_name(&e.name)?;
         if e.bytes.is_empty() {
@@ -70,17 +82,17 @@ pub fn build(title: &str, date: &str, mut entries: Vec<Entry>) -> Result<Bundle,
         }
     }
     entries.sort_by(|a, b| {
-        let rank = |f: &str| FOLDERS.iter().position(|x| *x == f).unwrap_or(usize::MAX);
+        let rank = |f: &str| folders.iter().position(|x| *x == f).unwrap_or(usize::MAX);
         (rank(&a.folder), a.name.to_lowercase()).cmp(&(rank(&b.folder), b.name.to_lowercase()))
     });
     let files: Vec<serde_json::Value> = entries
         .iter()
         .map(|e| json!({ "path": format!("{}/{}", e.folder, e.name), "bytes": e.bytes.len(), "crc32": format!("{:08x}", crc32(&e.bytes)) }))
         .collect();
-    let manifest = serde_json::to_string_pretty(&json!({ "title": title, "date": date, "folders": FOLDERS, "file_count": files.len(), "files": files }))
+    let manifest = serde_json::to_string_pretty(&json!({ "title": title, "date": date, "folders": folders, "file_count": files.len(), "files": files }))
         .map_err(|e| format!("bundle: index could not be written: {e}"))?;
     let mut archive: Vec<(String, Vec<u8>)> = entries.into_iter().map(|e| (format!("{}/{}", e.folder, e.name), e.bytes)).collect();
-    archive.insert(0, (format!("{}/manifest.json", FOLDERS[0]), manifest.clone().into_bytes()));
+    archive.insert(0, (format!("{}/manifest.json", folders[0]), manifest.clone().into_bytes()));
     let paths = archive.iter().map(|(p, _)| p.clone()).collect();
     Ok(Bundle { zip: zip_stored(&archive), paths, manifest })
 }
