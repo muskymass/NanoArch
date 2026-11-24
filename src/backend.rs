@@ -443,6 +443,8 @@ impl App {
             "areas_import" => Self::areas_import(args),
             "folder_import" => Self::folder_import(args),
             "sketch_accept" => Self::sketch_accept(args),
+            "raster_detect" => Self::raster_detect(args),
+            "auto_run" => self.auto_run(args),
             "deed_accept" => Self::deed_accept(args),
             "prefs_learn" => Self::prefs_learn(args),
             "templates" => Ok(json!({ "templates": nnx_core::templates::all() })),
@@ -3333,6 +3335,69 @@ impl App {
     /// The review step of `ai_sketch`: `{ reading, keys, floor, edits?, draft? }`. Only the confirmed `keys` become brief rooms (and a
     /// `placement` for `generate`); a room with an issue is refused until its box is corrected in `edits`. With a `draft`, the rooms
     /// replace the draft's rooms of that floor and the clarification state comes back with it.
+    /// The whole chain in one call: generate the layouts from the brief, choose one, check the model, check it against the rules and, when
+    /// the engineer's details are given, build the dossier. Each stage is listed with what it did. A stage that needs a value the user has
+    /// not entered stops the chain and is named in `blockers` (nothing is defaulted to get past it); a stage that fails stops it too.
+    /// `args` are `generate`'s (`brief`, `struct`, `meta`, `limits`, optional `placement`) plus `index` (default 0, the best-scored
+    /// layout) and an optional `dossier` object (`dossier_export`'s arguments).
+    fn auto_run(&mut self, args: &Value) -> Result<Value, String> {
+        let mut stages: Vec<Value> = Vec::new();
+        let mut blockers: Vec<String> = Vec::new();
+        let generated = self.handle("generate", args).map_err(|e| format!("automatic run, layouts: {e}"))?;
+        let n = generated.get("alternatives").and_then(Value::as_array).map_or(0, Vec::len);
+        stages.push(json!({ "stage": "layouts", "ok": true, "detail": format!("{n} layouts generated and ranked by their declared score") }));
+        let index = args.get("index").and_then(Value::as_u64).unwrap_or(0);
+        let sel = self.handle("select", &json!({ "index": index, "struct": args.get("struct").cloned().unwrap_or(json!({})) })).map_err(|e| format!("automatic run, choosing layout {index}: {e}"))?;
+        let warnings: Vec<Value> = sel.get("warnings").and_then(Value::as_array).cloned().unwrap_or_default();
+        stages.push(json!({ "stage": "model", "ok": true, "detail": format!("layout {index} built into the model"), "warnings": warnings }));
+        let pre = self.handle("precheck", &json!({})).map_err(|e| format!("automatic run, model check: {e}"))?;
+        let errors = pre.get("issues").and_then(Value::as_array).map_or(0, |a| a.iter().filter(|i| i.get("level").and_then(Value::as_str) == Some("error")).count());
+        stages.push(json!({ "stage": "model_check", "ok": errors == 0, "detail": format!("{errors} integrity errors"), "result": pre }));
+        if errors > 0 {
+            return Ok(json!({ "stages": stages, "blockers": ["the model has integrity errors: fix them before the next stages"], "complete": false }));
+        }
+        match self.handle("check_rules", &json!({})) {
+            Ok(r) => stages.push(json!({ "stage": "rules", "ok": true, "detail": "rules checked; a rule whose value is unset is reported as skipped in the result", "result": r })),
+            Err(e) => {
+                stages.push(json!({ "stage": "rules", "ok": false, "detail": e }));
+                blockers.push(format!("rules: {e}"));
+            }
+        }
+        if let Some(d) = args.get("dossier") {
+            match self.handle("dossier_export", d) {
+                Ok(r) => stages.push(json!({ "stage": "dossier", "ok": true, "detail": "dossier built; parts that could not be built are listed as skipped", "result": r })),
+                Err(e) => {
+                    stages.push(json!({ "stage": "dossier", "ok": false, "detail": e }));
+                    blockers.push(format!("dossier: {e}"));
+                }
+            }
+        } else {
+            blockers.push("dossier: not built, the engineer's and project details were not given".into());
+        }
+        Ok(json!({ "stages": stages, "blockers": blockers, "complete": blockers.is_empty() }))
+    }
+
+    /// Boxes of the rooms in a raster plan, in image pixels, by image analysis (`nnx_core::rasterplan`). The page sends the plan's grey
+    /// bitmap (`gray_b64`, one byte per pixel, `width` x `height`); optional `wall_px`, `gap_px`, `min_room_px` override the derived
+    /// values. Nothing is converted to millimetres here: that needs the user's scale, which the page already holds.
+    fn raster_detect(args: &Value) -> Result<Value, String> {
+        use nnx_core::rasterplan;
+        let dim = |k: &str| args.get(k).and_then(Value::as_u64).filter(|v| *v >= 1 && *v <= 20_000).map(|v| v as u32).ok_or_else(|| format!("plan reading: '{k}' is missing or not a size in pixels"));
+        let (w, h) = (dim("width")?, dim("height")?);
+        let rgb = args.get("rgb_b64").and_then(Value::as_str);
+        let b64 = rgb.or_else(|| args.get("gray_b64").and_then(Value::as_str)).ok_or("plan reading: the bitmap (rgb_b64 or gray_b64) is missing")?;
+        let gray = nnx_core::xlsx::base64_decode(b64).map_err(|e| format!("plan reading: {e}"))?;
+        let opt = |k: &str| -> Result<Option<u32>, String> {
+            match args.get(k) {
+                None | Some(Value::Null) => Ok(None),
+                Some(v) => v.as_u64().filter(|n| *n <= 20_000).map(|n| Some(n as u32)).ok_or_else(|| format!("plan reading: '{k}' must be a whole number of pixels")),
+            }
+        };
+        let p = rasterplan::Params { wall_px: opt("wall_px")?, gap_px: opt("gap_px")?, min_room_px: opt("min_room_px")? };
+        let found = if rgb.is_some() { rasterplan::detect_rgb(&gray, w, h, &p) } else { rasterplan::detect(&gray, w, h, &p) }.map_err(|e| format!("plan reading: {e}"))?;
+        serde_json::to_value(found).map_err(|e| e.to_string())
+    }
+
     fn sketch_accept(args: &Value) -> Result<Value, String> {
         use nnx_core::{clarify, sketchread};
         let reading: sketchread::Reading = serde_json::from_value(args.get("reading").cloned().ok_or("sketch review: the reading is missing")?).map_err(|e| format!("sketch review: the reading is not valid: {e}"))?;
@@ -5411,6 +5476,45 @@ mod tests {
     // ------------------------------------------------------------------ several floors
 
     /// Ground: public rooms and a kitchen. First floor: bedrooms. SYNTHETIC sizes.
+    #[test]
+    fn the_automatic_run_chains_the_stages_and_names_what_it_could_not_do() {
+        let mut app = App::default();
+        let r = app.handle("auto_run", &json!({ "brief": brief2(), "struct": loads2() })).unwrap();
+        let names: Vec<&str> = r["stages"].as_array().unwrap().iter().map(|s| s["stage"].as_str().unwrap()).collect();
+        assert_eq!(&names[..3], ["layouts", "model", "model_check"], "{names:?}");
+        assert!(app.doc.is_some(), "the chosen layout is the open document");
+        // Without the engineer's details the dossier is not built, and the run says so instead of passing.
+        assert_eq!(r["complete"], false);
+        assert!(r["blockers"].as_array().unwrap().iter().any(|b| b.as_str().unwrap().starts_with("dossier:")), "{}", r["blockers"]);
+        // A brief that cannot be generated stops the run with the stage named.
+        let e = App::default().handle("auto_run", &json!({ "brief": { "width_m": 0 } })).unwrap_err();
+        assert!(e.starts_with("automatic run, layouts:"), "{e}");
+    }
+
+    #[test]
+    fn a_plan_bitmap_is_read_into_rooms_and_bad_bitmaps_are_errors() {
+        let (w, h) = (240usize, 160usize);
+        let mut g = vec![255u8; w * h];
+        let mut rect = |x0: usize, y0: usize, x1: usize, y1: usize| {
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    g[y * w + x] = 30;
+                }
+            }
+        };
+        rect(20, 20, 220, 26);
+        rect(20, 134, 220, 140);
+        rect(20, 20, 26, 140);
+        rect(214, 20, 220, 140);
+        rect(117, 20, 123, 140);
+        let b64 = nnx_core::xlsx::base64_encode(&g);
+        let mut app = App::default();
+        let r = app.handle("raster_detect", &json!({ "width": 240, "height": 160, "gray_b64": b64, "wall_px": 5, "gap_px": 10 })).unwrap();
+        assert_eq!(r["rooms"].as_array().unwrap().len(), 2, "{r}");
+        assert!(app.handle("raster_detect", &json!({ "width": 240, "height": 160 })).unwrap_err().contains("bitmap"));
+        assert!(app.handle("raster_detect", &json!({ "width": 10, "height": 10, "gray_b64": "AAAA" })).unwrap_err().contains("plan reading"));
+    }
+
     fn brief2() -> Value {
         let r = |key: &str, name: &str, func: &str, area: f64, zone: &str, light: bool, floor: u32| json!({ "key": key, "name": name, "func": func, "area": area, "zone": zone, "light": light, "floor": floor });
         json!({
