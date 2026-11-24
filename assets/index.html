@@ -520,7 +520,7 @@ ar: {
   qty:"الكمية", unit:"الوحدة", el:"عناصر", code:"البند", missing:"معدلات ناقصة", days:"يوم عمل", finish:"الانتهاء", saved:"تم الحفظ", cancelled:"أُلغي", error:"خطأ",
   fi_ai:"حلّل بالذكاء الاصطناعي (محلي)", fi_ai_note:"يقرأ نموذج على جهازك نصوص الملفات والرسومات المصوّرة ويقترح قيماً. ما يقرؤه النموذج غير مؤكد: راجعه ثم اضغط «طبّق».", fi_ai_off:"خادم النموذج المحلي غير متاح (Ollama)", fi_apply:"طبّق", fi_ai_none:"لم يجد النموذج قيمة جديدة", fi_ai_busy:"جارٍ القراءة", fi_ai_area:"المساحة", fi_ai_dims:"الأبعاد", fi_ai_city:"المدينة",
   fi_h:"استيراد مجلد مشروع", fi_note:"اكتب اسم المشروع واختر المجلد الذي فيه الرسومات. يقرأ البرنامج كل ملف بما يناسبه (جداول المساحات Excel، وحدود الأرض DXF، ونماذج IFC) ويملأ الموجز بما وجده فقط. الصور وملفات PDF تحتاج مقياساً وقراءة منك في الرسم الأولي، وما لا يوجد في أي ملف يبقى ناقصاً ويُذكر.", fi_name:"اسم المشروع", fi_pick:"اختر المجلد واستورد", fi_open:"افتح في الرسم الأولي", fi_missing:"ما ينقص الموجز", fi_files:"الملفات", fi_none:"لا ينقص شيء من أسئلة الموجز", fi_need_name:"اكتب اسم المشروع أولاً", fi_st:{ read: "قُرئ", needs_you: "يحتاج منك", skipped: "تُخطّي", unsupported: "غير مدعوم" },
-  lib_h:"مكتبة الكود", lib_note:"يبحث في ملفات الكود السعودي PDF ويعرض البند والصفحة ونصّها لتتحقق منها بنفسك. لا يُملأ أي رقم تلقائياً.", lib_ph:"كلمات البحث (مثل: مساحة غرفة النوم)", lib_go:"ابحث في الكود", lib_use:"استخدم كمصدر", lib_none:"لا نتائج في ملفات المكتبة", lib_busy:"جارٍ قراءة الملف", lib_page:"ص", lib_find:"ابحث في الكود",
+  lib_ocr:"اقرأ الصفحة بالذكاء الاصطناعي", lib_h:"مكتبة الكود", lib_note:"يبحث في ملفات الكود السعودي PDF ويعرض البند والصفحة ونصّها لتتحقق منها بنفسك. لا يُملأ أي رقم تلقائياً.", lib_ph:"كلمات البحث (مثل: مساحة غرفة النوم)", lib_go:"ابحث في الكود", lib_use:"استخدم كمصدر", lib_none:"لا نتائج في ملفات المكتبة", lib_busy:"جارٍ قراءة الملف", lib_page:"ص", lib_find:"ابحث في الكود",
   checked:"فُحص", findings:"مخالفات", skipped:"قواعد لم تُفحص", lim_value:"القيمة", lim_source:"المصدر (بند وطبعة ورقم صفحة)", lim_run:"شغّل بهذه القيمة", lim_need:"أدخل القيمة ومصدرها معاً", lim_clear:"أزل القيم المدخلة", func:{majlis:"مجلس",living:"صالة",dining:"طعام",kitchen:"مطبخ",bedroom:"نوم",bathroom:"حمام",lift:"مصعد",courtyard:"فناء",other:"أخرى"},
   zone:{public:"عام",private:"خاص",service:"خدمات"}, days7:["اثنين","ثلاثاء","أربعاء","خميس","جمعة","سبت","أحد"], pick_days:"اختر أيام العمل", sync_done:"المزامنة: جديد {c}، محذوف {r}، بلا تغيير {u}",
   unsaved:"غير محفوظ", saved_state:"محفوظ", assump_h:"افتراضات التصميم (قيم مؤقتة)", assump_note:"هذه قيم افتراضية استعملتها المحركات لأنك لم تحدد غيرها. ليست قيماً نظامية؛ استبدلها بقيم مشروعك أو SBC.",
@@ -572,7 +572,7 @@ en: {
   qty:"Quantity", unit:"Unit", el:"Elements", code:"Item", missing:"Missing rates", days:"working days", finish:"Finish", saved:"Saved", cancelled:"Cancelled", error:"Error",
   fi_ai:"Analyse with AI (local)", fi_ai_note:"A model on your computer reads the files' text and the photographed drawings and proposes values. What the model reads is unconfirmed: check it, then press Apply.", fi_ai_off:"The local model server (Ollama) is not available", fi_apply:"Apply", fi_ai_none:"The model found no new value", fi_ai_busy:"Reading", fi_ai_area:"Area", fi_ai_dims:"Dimensions", fi_ai_city:"City",
   fi_h:"Import a project folder", fi_note:"Type the project name and pick the folder that holds the drawings. Each file is read with the importer that fits it (Excel area schedules, DXF plot boundaries, IFC models) and the brief is filled with what was found only. Images and PDFs need a scale and a reading from you in the draft sketch, and anything no file holds stays missing and is listed.", fi_name:"Project name", fi_pick:"Pick the folder and import", fi_open:"Open in the draft sketch", fi_missing:"What the brief still lacks", fi_files:"Files", fi_none:"No brief question is left open", fi_need_name:"Type the project name first", fi_st:{ read: "Read", needs_you: "Needs you", skipped: "Skipped", unsupported: "Not supported" },
-  lib_h:"Code library", lib_note:"Searches the Saudi Building Code PDFs and shows the clause, page and its text for you to check. No number is ever filled in automatically.", lib_ph:"Search words (e.g. bedroom minimum area)", lib_go:"Search the code", lib_use:"Use as source", lib_none:"No results in the library files", lib_busy:"Reading file", lib_page:"p.", lib_find:"Search the code",
+  lib_ocr:"Read the page with AI", lib_h:"Code library", lib_note:"Searches the Saudi Building Code PDFs and shows the clause, page and its text for you to check. No number is ever filled in automatically.", lib_ph:"Search words (e.g. bedroom minimum area)", lib_go:"Search the code", lib_use:"Use as source", lib_none:"No results in the library files", lib_busy:"Reading file", lib_page:"p.", lib_find:"Search the code",
   checked:"Checked", findings:"Findings", skipped:"Rules not run", lim_value:"Value", lim_source:"Source (clause, edition, page)", lim_run:"Run with this value", lim_need:"Enter the value and its source together", lim_clear:"Clear entered values", func:{majlis:"Majlis",living:"Living",dining:"Dining",kitchen:"Kitchen",bedroom:"Bedroom",bathroom:"Bathroom",lift:"Lift",courtyard:"Courtyard",other:"Other"},
   zone:{public:"Public",private:"Private",service:"Service"}, days7:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], pick_days:"Choose the working days", sync_done:"Sync: created {c}, removed {r}, unchanged {u}",
   unsaved:"Unsaved", saved_state:"Saved", assump_h:"Design assumptions (placeholders)", assump_note:"Defaults the engines used because you gave no value. They are not code values; replace them with your project or SBC values.",
@@ -1449,7 +1449,7 @@ async function fiText(path, ext) {
   const f = (await call("folder_file", { path })).picked;
   if (ext === "pdf") {
     const pdf = await (await skPdfLib()).getDocument({ data: b64bytes(f.b64) }).promise, out = [];
-    for (let n = 1; n <= Math.min(pdf.numPages, 400); n++) out.push((await (await pdf.getPage(n)).getTextContent()).items.map(i => i.str).join(" "));
+    for (let n = 1; n <= Math.min(pdf.numPages, 400); n++) out.push(arFix((await (await pdf.getPage(n)).getTextContent()).items.map(i => i.str).join(" ")));
     return out.join("\n");
   }
   const b = b64bytes(f.b64), dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
@@ -1552,7 +1552,12 @@ $("fi-ai").onclick = () => busy(async () => {
 const RULE_LIMITS = {};
 // The code library: the Saudi Building Code PDFs are read on demand (once per session) and searched page by page. The program only finds
 // and shows the clause and its page; the user reads it, then enters the value and its source. Nothing is filled in automatically.
-const LIB = { pages: {}, target: null };
+const LIB = { pages: {}, docs: {}, target: null };
+// The PDF engine writes a lam ligature (lam with mim, hah, jim, kha, ha, or with a hamza alef) as its two letters swapped, so the article
+// of many words reads backwards ("المنشآت" comes out as "املنشآت", "الأدنى" as "األدنى"). Undone only after the article's alef at the start of a
+// word (with an optional one-letter prefix), where it cannot be mistaken for another word. Letters the font maps wrongly ("مجلس" read as "ميلس")
+// cannot be repaired from the text: the hit's "Read the page with AI" button transcribes the rendered page instead.
+function arFix(s) { return String(s).replace(/(^|[^\u0621-\u064A])([وفبكل]?)ا([محجخهأإآ])ل/g, "$1$2ال$3"); }
 // Matching ignores Arabic diacritics and tatweel and folds alef, ya and ta marbuta variants; `map` keeps each folded character's place in the original text.
 function libIndex(s) {
   let out = "", map = [];
@@ -1566,8 +1571,9 @@ async function libPages(name) {
   if (LIB.pages[name]) return LIB.pages[name];
   const lib = await skPdfLib(), f = await call("code_library_file", { name });
   const pdf = await lib.getDocument({ data: b64bytes(f.b64) }).promise, pages = [];
+  LIB.docs[name] = pdf;
   for (let n = 1; n <= pdf.numPages; n++) {
-    const text = (await (await pdf.getPage(n)).getTextContent()).items.map(i => i.str).join(" ");
+    const text = arFix((await (await pdf.getPage(n)).getTextContent()).items.map(i => i.str).join(" "));
     pages.push({ text, ...libIndex(text) });
   }
   return (LIB.pages[name] = pages);
@@ -1593,8 +1599,16 @@ $("lib-go").onclick = () => busy(async () => {
   const q = $("lib-q").value.trim(); if (!q) return;
   const hits = await libSearch(q);
   $("libout").innerHTML = hits.length
-    ? `<ul class="clean">${hits.map((h, i) => `<li class="${h.all ? "ok" : "hint"}"><b dir="ltr">${esc(h.file)} · ${t("lib_page")} ${h.page}</b><div>${esc(h.excerpt)}</div>${LIB.target ? `<button class="lib-use" data-i="${i}">${t("lib_use")}</button>` : ""}</li>`).join("")}</ul>`
+    ? `<ul class="clean">${hits.map((h, i) => `<li class="${h.all ? "ok" : "hint"}"><b dir="ltr">${esc(h.file)} · ${t("lib_page")} ${h.page}</b><div>${esc(h.excerpt)}</div>${LIB.target ? `<button class="lib-use" data-i="${i}">${t("lib_use")}</button>` : ""}<button class="lib-ocr" data-i="${i}">${t("lib_ocr")}</button><div class="lib-ocr-out" id="lib-ocr-${i}"></div></li>`).join("")}</ul>`
     : `<div class="warn">${t("lib_none")}</div>`;
+  document.querySelectorAll("#libout .lib-ocr").forEach(b => b.onclick = () => busy(async () => {
+    const h = hits[+b.dataset.i], box = $(`lib-ocr-${b.dataset.i}`); box.textContent = t("fi_ai_busy");
+    const page = await LIB.docs[h.file].getPage(h.page), vp = page.getViewport({ scale: 2 }), cv = document.createElement("canvas");
+    cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+    const c = cv.getContext("2d"); c.fillStyle = "#fff"; c.fillRect(0, 0, cv.width, cv.height); await page.render({ canvasContext: c, viewport: vp }).promise;
+    try { const o = await call("ai_ocr", { ...aiArgs(), file_b64: cv.toDataURL("image/png").split(",")[1] }); box.innerHTML = `<div class="hint">${esc(o.model)} (OCR)</div><div>${esc(o.text)}</div>`; }
+    catch (e) { box.innerHTML = `<div class="warn">${esc(e.message || String(e))}</div>`; }
+  }));
   document.querySelectorAll("#libout .lib-use").forEach(b => b.onclick = () => { const h = hits[+b.dataset.i]; LIB.target.value = `${h.file}, ${t("lib_page")} ${h.page}`; });
 });
 $("lib-q").onkeydown = e => { if (e.key === "Enter") $("lib-go").click(); };
