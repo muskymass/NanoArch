@@ -74,22 +74,28 @@ mod imp {
     }
 }
 
-const TARGET: &str = "NanoArch/ai-api-key";
+/// One key per provider: the credential's name carries the provider's id (letters, digits, `-` and `_` only).
+fn target(id: &str) -> Result<String, String> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(format!("bad provider id '{id}'"));
+    }
+    Ok(format!("NanoArch/ai-api-key/{id}"))
+}
 
-pub fn save_key(key: &str) -> Result<(), String> {
+pub fn save_key(id: &str, key: &str) -> Result<(), String> {
     let key = key.trim();
     if key.is_empty() {
         return Err("the key is empty".into());
     }
-    imp::store(TARGET, key)
+    imp::store(&target(id)?, key)
 }
 
-pub fn key() -> Result<Option<String>, String> {
-    imp::load(TARGET)
+pub fn key(id: &str) -> Result<Option<String>, String> {
+    imp::load(&target(id)?)
 }
 
-pub fn clear_key() -> Result<(), String> {
-    imp::remove(TARGET)
+pub fn clear_key(id: &str) -> Result<(), String> {
+    imp::remove(&target(id)?)
 }
 
 /// `AIza****`-style display: first 4 characters then `****` for a key of 16 or more, else `****` and its length.
@@ -106,5 +112,7 @@ mod tests {
     fn a_long_key_shows_four_characters_and_a_short_one_only_its_length() {
         assert_eq!(mask("sk-abcdefghijklmnop"), "sk-a****");
         assert_eq!(mask("short"), "**** (5)");
+        assert_eq!(target("gemini").unwrap(), "NanoArch/ai-api-key/gemini");
+        assert!(target("../x").is_err() && target("").is_err());
     }
 }

@@ -135,10 +135,10 @@ impl Conn {
     }
 }
 
-/// `https://host[/prefix]` of a remote API (plain http only for this computer), without a trailing slash or a trailing `/v1`.
+/// The address up to (not including) `/chat/completions` and `/models`, as the provider documents it (for example
+/// `https://api.openai.com/v1`); plain http only for this computer. A trailing slash is dropped.
 pub fn parse_api_base(s: &str) -> Result<String, String> {
     let s = s.trim().trim_end_matches('/');
-    let s = s.strip_suffix("/v1").unwrap_or(s);
     if s.is_empty() {
         return Err("give the API address (for example https://api.openai.com)".into());
     }
@@ -155,13 +155,18 @@ fn conn_of(cmd: &str, args: &Value) -> Result<Conn, String> {
     if args.get("provider").and_then(Value::as_str) != Some("api") {
         return Ok(Conn { endpoint, api: None });
     }
-    let base = parse_api_base(args.get("api_base").and_then(Value::as_str).unwrap_or("https://api.openai.com"))?;
+    let base = parse_api_base(args.get("api_base").and_then(Value::as_str).unwrap_or("https://api.openai.com/v1"))?;
     let model = args.get("api_model").and_then(Value::as_str).map(str::trim).filter(|m| !m.is_empty()).ok_or("API: give the model identifier exactly as the provider names it")?.to_string();
-    let key = crate::secret::key()?.ok_or("API: no key is stored: enter it once and press Save key")?;
+    let key = crate::secret::key(api_id(args))?.ok_or("API: no key is stored for this provider: enter it once and press Save key")?;
     if cmd != "ai_status" && args.get("consent").and_then(Value::as_bool) != Some(true) {
         return Err("API: this sends the project's text or images to the API provider, outside this computer. Tick the consent box to allow it".into());
     }
     Ok(Conn { endpoint, api: Some(Api { base, model, key }) })
+}
+
+/// The provider whose key is used (`api_id`), `astra` when none is named.
+fn api_id(args: &Value) -> &str {
+    args.get("api_id").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).unwrap_or("astra")
 }
 
 fn api_agent(timeout_s: u64) -> ureq::Agent {
@@ -197,7 +202,7 @@ fn api_failure(status: u16, body: &str) -> String {
 
 /// The model identifiers the API lists (to check the key and offer the names).
 fn api_models(api: &Api) -> Result<Vec<String>, String> {
-    let (status, body) = api_request(api, "GET", "/v1/models", None, 20)?;
+    let (status, body) = api_request(api, "GET", "/models", None, 20)?;
     if status != 200 {
         return Err(api_failure(status, &body));
     }
@@ -225,11 +230,18 @@ fn api_chat(api: &Api, system: &str, user: &str, images_b64: &[String], schema: 
         parts.push(json!({ "type": "image_url", "image_url": { "url": format!("data:{};base64,{i}", image_mime(i)) } }));
     }
     let user_content = if images_b64.is_empty() { json!(user) } else { json!(parts) };
-    let mut body = json!({ "model": api.model, "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user_content }] });
+    let mut body = json!({ "model": api.model, "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user_content.clone() }] });
     if let Some(s) = schema {
         body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "schema": s, "strict": false } });
     }
-    let (status, resp) = api_request(api, "POST", "/v1/chat/completions", Some(&body.to_string()), timeout_s)?;
+    let (mut status, mut resp) = api_request(api, "POST", "/chat/completions", Some(&body.to_string()), timeout_s)?;
+    // Providers differ on structured output (one accepts only strict schemas, another none): when it is refused, ask again for plain
+    // text with the schema written into the instructions; the answer still goes through the same JSON parsing and checks.
+    if status == 400 && let Some(s) = schema {
+        let sys = format!("{system}\n\nAnswer with one JSON object only, no other text, following this JSON schema:\n{s}");
+        let plain = json!({ "model": api.model, "messages": [{ "role": "system", "content": sys }, { "role": "user", "content": user_content }] });
+        (status, resp) = api_request(api, "POST", "/chat/completions", Some(&plain.to_string()), timeout_s)?;
+    }
     if status != 200 {
         return Err(api_failure(status, &resp));
     }
@@ -368,15 +380,15 @@ pub fn handle(cmd: &str, args: &Value) -> Result<Value, String> {
     match cmd {
         "ai_key_set" => {
             let k = args.get("key").and_then(Value::as_str).ok_or("give the key")?;
-            crate::secret::save_key(k)?;
+            crate::secret::save_key(api_id(args), k)?;
             return Ok(json!({ "stored": true, "masked": crate::secret::mask(k.trim()) }));
         }
         "ai_key_clear" => {
-            crate::secret::clear_key()?;
+            crate::secret::clear_key(api_id(args))?;
             return Ok(json!({ "stored": false }));
         }
         "ai_key_status" => {
-            return Ok(match crate::secret::key()? {
+            return Ok(match crate::secret::key(api_id(args))? {
                 Some(k) => json!({ "stored": true, "masked": crate::secret::mask(&k) }),
                 None => json!({ "stored": false }),
             });
@@ -581,7 +593,8 @@ mod tests {
     #[test]
     fn an_api_address_must_be_https_and_the_remote_option_needs_consent_and_a_model() {
         assert_eq!(parse_api_base("https://api.example.com/").unwrap(), "https://api.example.com");
-        assert_eq!(parse_api_base("https://api.example.com/v1").unwrap(), "https://api.example.com");
+        assert_eq!(parse_api_base("https://api.example.com/v1/").unwrap(), "https://api.example.com/v1");
+        assert_eq!(parse_api_base("https://generativelanguage.googleapis.com/v1beta/openai/").unwrap(), "https://generativelanguage.googleapis.com/v1beta/openai");
         assert!(parse_api_base("http://api.example.com").unwrap_err().contains("https"));
         assert!(parse_api_base("api.example.com").is_err());
         assert!(parse_api_base("http://localhost:8080").is_ok());
