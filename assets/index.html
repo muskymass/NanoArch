@@ -1535,7 +1535,7 @@ $("fi-ai").onclick = () => busy(async () => {
         if (k.plot_width_m && k.plot_length_m) got.push(`${t("fi_ai_dims")}: ${k.plot_width_m} x ${k.plot_length_m} m`);
         if (k.plot_area_m2) got.push(`${t("fi_ai_area")}: ${k.plot_area_m2} m²`);
         if (k.city) got.push(`${t("fi_ai_city")}: ${k.city}`);
-        props.push({ rel: f.rel, model: `${o.model} (OCR)`, rd: { area_m2: k.plot_area_m2, rect_width_m: k.plot_width_m, rect_length_m: k.plot_length_m, city: k.city }, ocr: o.text, structured_error: e.message || String(e) });
+        props.push({ rel: f.rel, model: `${o.model} (OCR)`, rd: { area_m2: k.plot_area_m2, rect_width_m: k.plot_width_m || (o.rect && o.rect.width_m), rect_length_m: k.plot_length_m || (o.rect && o.rect.length_m), city: k.city }, ocr: o.text, structured_error: e.message || String(e) });
       } catch (e2) { props.push({ rel: f.rel, error: `${e.message || e} | ${e2.message || e2}` }); }
     }
   }

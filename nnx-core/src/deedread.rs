@@ -374,6 +374,67 @@ pub fn accept(r: &DeedReading, keys: &[String], edit: &Edit) -> Result<Accepted,
     Ok(out)
 }
 
+/// How far apart (percent of the longer one) opposite sides may be and still count as the two sides of one rectangle.
+pub const SIDE_AGREEMENT_PCT: f64 = 1.0;
+
+/// The plot rectangle the four side lengths give, `(width, length)`: the north and south sides average to the width (along x), the
+/// east and west sides to the length. `None` unless every side is above zero and opposite sides agree within [`SIDE_AGREEMENT_PCT`].
+pub fn rect_from_sides(north: f64, south: f64, east: f64, west: f64) -> Option<(f64, f64)> {
+    let agree = |a: f64, b: f64| a > 0.0 && b > 0.0 && (a - b).abs() / a.max(b) * 100.0 <= SIDE_AGREEMENT_PCT;
+    (agree(north, south) && agree(east, west)).then(|| ((north + south) / 2.0, (east + west) / 2.0))
+}
+
+/// The side lengths written in a transcription (English or Arabic names of the four directions, Arabic-Indic digits too). After a
+/// direction word the number that follows `length` / `بطول` is taken when there is one, otherwise the first number (a street width
+/// written before the length would otherwise be mistaken for it). The first mention of a direction wins.
+pub fn sides_in_text(text: &str) -> std::collections::BTreeMap<&'static str, f64> {
+    let ascii: String = text
+        .chars()
+        .map(|c| match c {
+            '\u{0660}'..='\u{0669}' => char::from(b'0' + (c as u32 - 0x0660) as u8),
+            '\u{06F0}'..='\u{06F9}' => char::from(b'0' + (c as u32 - 0x06F0) as u8),
+            '\u{066B}' | '\u{066C}' => '.',
+            _ => c,
+        })
+        .collect();
+    let lower = ascii.to_lowercase();
+    let keys: [(&'static str, &[&str]); 4] = [("north", &["north", "شمال"]), ("south", &["south", "جنوب"]), ("east", &["east", "شرق"]), ("west", &["west", "غرب"])];
+    // Every direction word with where it starts, in text order.
+    let mut marks: Vec<(usize, &'static str, usize)> = Vec::new();
+    for (dir, words) in keys {
+        for w in words {
+            for (at, _) in lower.match_indices(w) {
+                marks.push((at, dir, w.len()));
+            }
+        }
+    }
+    marks.sort();
+    let number_after = |seg: &str| -> Option<f64> {
+        let mut cur = String::new();
+        for c in seg.chars() {
+            if c.is_ascii_digit() || ((c == '.' || c == ',') && !cur.is_empty()) {
+                cur.push(if c == ',' { '.' } else { c });
+            } else if !cur.is_empty() {
+                break;
+            }
+        }
+        cur.trim_end_matches('.').parse::<f64>().ok().filter(|n| *n > 0.0)
+    };
+    let mut out = std::collections::BTreeMap::new();
+    for (i, (at, dir, len)) in marks.iter().enumerate() {
+        if out.contains_key(dir) {
+            continue;
+        }
+        let end = marks.get(i + 1).map_or(lower.len(), |m| m.0).min(lower.len());
+        let seg = lower.get(at + len..end).unwrap_or("");
+        let after_length = ["بطول", "length", "طول"].iter().filter_map(|k| seg.find(k).map(|p| &seg[p + k.len()..])).next();
+        if let Some(n) = after_length.and_then(number_after).or_else(|| number_after(seg)) {
+            out.insert(*dir, n);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,5 +559,20 @@ mod tests {
         assert!(accept(&c, &["area".into()], &Edit { area_m2: Some(0.0), ..Edit::default() }).unwrap_err().contains("above zero"));
         let unchecked = from_model_json(&deed_json(), "m", None).unwrap();
         assert!(accept(&unchecked, &["dimensions".into()], &Edit::default()).unwrap_err().contains("type both"));
+    }
+
+    #[test]
+    fn four_side_lengths_in_a_transcription_give_the_plot_rectangle_only_when_opposite_sides_agree() {
+        let en = sides_in_text("North 20.00 m   South 20.00 m\nEast 30.00 m   West 30.00 m");
+        assert_eq!((en["north"], en["south"], en["east"], en["west"]), (20.0, 20.0, 30.0, 30.0));
+        assert_eq!(rect_from_sides(en["north"], en["south"], en["east"], en["west"]), Some((20.0, 30.0)));
+        // Arabic names and Arabic-Indic digits; the street width written before the length is not taken for the length.
+        let ar = sides_in_text("شمالاً: شارع عرض ١٥م بطول ٢٠٫٥٠ م\nجنوباً: ملك بطول ٢٠٫٥٠ م\nشرقاً: شارع بطول ٣٠ م\nغرباً: ملك بطول ٣٠ م");
+        assert_eq!((ar["north"], ar["south"], ar["east"], ar["west"]), (20.5, 20.5, 30.0, 30.0));
+        // Opposite sides that differ, a zero side or a missing side give no rectangle.
+        assert_eq!(rect_from_sides(20.0, 24.0, 30.0, 30.0), None);
+        assert_eq!(rect_from_sides(0.0, 20.0, 30.0, 30.0), None);
+        assert_eq!(sides_in_text("North 20 m South 20 m").len(), 2);
+        assert!(sides_in_text("no sides here").is_empty());
     }
 }

@@ -182,7 +182,12 @@ fn ai_ocr(endpoint: &str, args: &Value) -> Result<Value, String> {
     let timeout = args.get("timeout_s").and_then(Value::as_u64).unwrap_or(DEFAULT_READ_TIMEOUT_S * 3);
     let b64s: Vec<String> = images.iter().map(|i| nnx_core::xlsx::base64_encode(i)).collect();
     let text = chat_text_images(endpoint, &model, "You transcribe the text, numbers and dimensions written on a drawing, plan or document. Copy them exactly, one item per line. Do not explain, translate or add anything.", "Transcribe all the text on this image.", &b64s, timeout).map_err(|e| format!("ocr: {model}: {e}"))?;
-    Ok(json!({ "text": text, "model": model, "images_sent": images.len(), "notes": notes }))
+    let sides = deedread::sides_in_text(&text);
+    let rect = match (sides.get("north"), sides.get("south"), sides.get("east"), sides.get("west")) {
+        (Some(n), Some(s), Some(e), Some(w)) => deedread::rect_from_sides(*n, *s, *e, *w).map(|(wd, ln)| json!({ "width_m": wd, "length_m": ln })),
+        _ => None,
+    };
+    Ok(json!({ "text": text, "model": model, "images_sent": images.len(), "notes": notes, "sides": sides, "rect": rect }))
 }
 
 fn endpoint_of(args: &Value) -> String {
@@ -297,6 +302,17 @@ fn ai_deed(endpoint: &str, args: &Value) -> Result<Value, String> {
     let mut reading = deedread::from_model_json(&v, &model, tolerance_pct).map_err(|e| format!("deed: {model}: {e}"))?;
     notes.append(&mut reading.notes);
     reading.notes = notes;
+    // A stated area or a tolerance is not needed to see that four sides close a rectangle: when they do and the reading has no
+    // rectangle yet, it is filled in (the page still shows it as an unconfirmed proposal).
+    if reading.rect_width_m.is_none() {
+        let side = |d: &str| reading.boundaries.iter().find(|b| b.direction == d && b.issues.is_empty()).and_then(|b| b.length_m);
+        if let (Some(n), Some(s), Some(e), Some(w)) = (side("north"), side("south"), side("east"), side("west"))
+            && let Some((wd, ln)) = deedread::rect_from_sides(n, s, e, w)
+        {
+            (reading.rect_width_m, reading.rect_length_m, reading.rect_area_m2) = (Some(wd), Some(ln), Some(wd * ln));
+            reading.notes.push(format!("the four sides close a rectangle ({wd:.2} x {ln:.2} m): opposite sides agree within {}%", deedread::SIDE_AGREEMENT_PCT));
+        }
+    }
     Ok(json!({ "reading": reading, "model": model, "images_sent": images.len() }))
 }
 
