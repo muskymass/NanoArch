@@ -634,6 +634,9 @@ impl App {
             "assemblies_get" => self.assemblies_get(),
             "assemblies_set" => self.assemblies_set(args),
             "assembly_assign" => self.assembly_assign(args),
+            "families_get" => self.families_get(),
+            "families_set" => self.families_set(args),
+            "family_assign" => self.family_assign(args),
             "precheck" => {
                 let mut r = nnx_core::precheck::run(&self.doc()?.model);
                 // A fact a project file gave that the brief now contradicts is a warning, so the file really counts as an input.
@@ -2342,6 +2345,39 @@ impl App {
         Ok(v)
     }
 
+    /// The door and window families with the openings that use each, and the openings that disagree with their family.
+    fn families_get(&self) -> Result<Value, String> {
+        Ok(nnx_core::families::report(&self.doc()?.model))
+    }
+
+    /// Replaces the project's opening families. Every opening that names a family is resized to it in the same undo step; a refusal
+    /// (a family removed while openings use it, an opening that no longer fits its wall) changes nothing.
+    fn families_set(&mut self, args: &Value) -> Result<Value, String> {
+        let list: Vec<nnx_core::families::OpeningFamily> = serde_json::from_value(args.get("families").cloned().ok_or("families is required")?).map_err(|e| format!("families: {e}"))?;
+        let model = &self.doc()?.model;
+        let mut cmds = nnx_core::project::update_commands(model, |p| {
+            p.meta.opening_families = list.clone();
+            Ok(())
+        })?;
+        cmds.extend(nnx_core::families::retarget_commands(model, &list)?);
+        let level = self.current_level();
+        let mut v = if cmds.is_empty() { self.draft_frame()? } else { self.draft_commit_with("Opening families", nnx_core::draft::Edit { cmds, ..Default::default() }, level, false)? };
+        v["families"] = self.families_get()?;
+        Ok(v)
+    }
+
+    /// Gives doors or windows a family (or clears it with `null`); their sizes become the family's.
+    fn family_assign(&mut self, args: &Value) -> Result<Value, String> {
+        let openings = Self::ids_arg(args, "openings")?;
+        self.guard_lock(&openings)?;
+        let fam = args.get("family").and_then(Value::as_str);
+        let level = openings.first().and_then(|i| self.doc().ok()?.model.get(i)?.level_id);
+        let cmds = nnx_core::families::assign_commands(&self.doc()?.model, &openings, fam)?;
+        let mut v = self.draft_commit_with(if fam.is_some() { "Assign opening family" } else { "Clear opening family" }, nnx_core::draft::Edit { cmds, ..Default::default() }, level, false)?;
+        v["families"] = self.families_get()?;
+        Ok(v)
+    }
+
     /// Finds the rooms the walls enclose, as one undoable step (the same thing every wall edit does on its own).
     fn draft_rooms(&mut self) -> Result<Value, String> {
         let level = self.current_level();
@@ -2463,6 +2499,9 @@ impl App {
         if v["kind"] == "Wall" {
             v["assemblyId"] = json!(self.doc()?.model.get(&id).and_then(|e| e.props.get("assembly").cloned()));
             v["wallLocked"] = json!(self.project().is_some_and(|p| p.meta.locked_walls.contains(&id.to_string())));
+        }
+        if v["kind"] == "Door" || v["kind"] == "Window" {
+            v["familyId"] = json!(self.doc()?.model.get(&id).and_then(|e| e.props.get("family").cloned()));
         }
         Ok(v)
     }
@@ -5476,6 +5515,46 @@ mod tests {
     // ------------------------------------------------------------------ several floors
 
     /// Ground: public rooms and a kitchen. First floor: bedrooms. SYNTHETIC sizes.
+    #[test]
+    fn editing_a_family_resizes_every_opening_that_uses_it_in_one_undo_step_and_refusals_change_nothing() {
+        let mut app = started();
+        let ids = |app: &App, kind: &str| -> Vec<String> { app.doc.as_ref().unwrap().model.elements.values().filter(|e| e.kind == kind).map(|e| e.id.to_string()).collect() };
+        let width = |app: &App, id: &str| app.doc.as_ref().unwrap().model.elements.values().find(|e| e.id.to_string() == id).unwrap().props["width"].as_i64().unwrap();
+        let (doors, windows) = (ids(&app, "Door"), ids(&app, "Window"));
+        assert!(doors.len() >= 2 && !windows.is_empty());
+        let fam = |w: i64| json!([{ "id": "D1", "name": "Interior door", "kind": "door", "widthMm": w, "heightMm": 2100 }, { "id": "W1", "name": "Window", "kind": "window", "widthMm": 800, "heightMm": 1000, "sillMm": 900 }]);
+        app.handle("families_set", &json!({ "families": fam(800) })).unwrap();
+        let two = &doors[..2];
+        app.handle("family_assign", &json!({ "openings": two, "family": "D1" })).unwrap();
+        assert!(two.iter().all(|d| width(&app, d) == 800), "assigning sets the family's size");
+        let rep = app.handle("families_get", &json!({})).unwrap();
+        assert_eq!(rep["families"][0]["count"], 2);
+        assert!(rep["mismatches"].as_array().unwrap().is_empty());
+
+        // Editing the family moves every opening that names it, and one undo restores them all.
+        let before = nnx_core::project::get(&app.doc.as_ref().unwrap().model).unwrap().unwrap().meta.opening_families.clone();
+        app.handle("families_set", &json!({ "families": fam(850) })).unwrap();
+        assert!(two.iter().all(|d| width(&app, d) == 850));
+        app.handle("undo", &json!({})).unwrap();
+        assert!(two.iter().all(|d| width(&app, d) == 800), "one undo restores the openings");
+        assert_eq!(nnx_core::project::get(&app.doc.as_ref().unwrap().model).unwrap().unwrap().meta.opening_families, before, "and the family");
+
+        // A hand edit away from the family is reported, not reset.
+        app.handle("set_opening", &json!({ "id": two[0], "width": 900 })).unwrap();
+        let rep = app.handle("families_get", &json!({})).unwrap();
+        assert_eq!(rep["mismatches"].as_array().unwrap().len(), 1, "{rep}");
+
+        // Refusals change nothing: a family still in use cannot be removed, a window family cannot go on a door.
+        let snapshot = app.doc.as_ref().unwrap().model.elements.len();
+        assert!(app.handle("families_set", &json!({ "families": [] })).unwrap_err().contains("clear it from the opening first"));
+        assert!(app.handle("family_assign", &json!({ "openings": [doors[2.min(doors.len() - 1)]], "family": "W1" })).unwrap_err().contains("is a window family"));
+        assert!(app.handle("family_assign", &json!({ "openings": two, "family": "nope" })).unwrap_err().contains("no opening family"));
+        assert_eq!(app.doc.as_ref().unwrap().model.elements.len(), snapshot);
+        // Clearing the family frees it for removal.
+        app.handle("family_assign", &json!({ "openings": two, "family": null })).unwrap();
+        app.handle("families_set", &json!({ "families": [] })).unwrap();
+    }
+
     #[test]
     fn the_automatic_run_chains_the_stages_and_names_what_it_could_not_do() {
         let mut app = App::default();

@@ -82,6 +82,7 @@ pub mod model3d;
 pub mod persist;
 pub mod printdoc;
 pub mod precheck;
+pub mod families;
 pub mod plot_import;
 pub mod rasterplan;
 pub mod project;

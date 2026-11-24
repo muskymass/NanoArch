@@ -151,6 +151,8 @@ pub struct ProjectMeta {
     /// Wall assemblies (named wall types with explicit layers) and which of them walls fall back to.
     pub assemblies: Vec<crate::assembly::WallAssembly>,
     pub assembly_defaults: crate::assembly::AssemblyDefaults,
+    /// Door and window families (named types with explicit sizes); an opening that names one takes its sizes from it.
+    pub opening_families: Vec<crate::families::OpeningFamily>,
     /// The files of the project folder the user bound to this project, each with what was read from it. They are inputs of the
     /// project: the facts they gave filled the brief, are listed in the printed plan set, and are checked against the brief.
     pub inputs: Vec<ProjectInput>,
@@ -340,6 +342,7 @@ impl NanoArchProject {
         }
         self.meta.compliance.check()?;
         crate::assembly::check_all(&self.meta.assemblies, &self.meta.assembly_defaults)?;
+        crate::families::check_all(&self.meta.opening_families)?;
         self.meta.structural.check()?;
         self.meta.mep_ext.check()?;
         self.meta.finishes.check()?;
