@@ -366,6 +366,7 @@ impl App {
             "span_compare" => Self::span_compare(args),
             "wall_load" => Self::wall_load(args),
             "drift_check" => Self::drift_check(args),
+            "lateral_loads" => Self::lateral_loads(args),
             "deep_foundation_check" => Self::deep_foundation_check(args),
             "spalling_check" => Self::spalling_check(args),
             "lighting_plan" => Self::lighting_plan(args),
@@ -2617,6 +2618,17 @@ impl App {
             .map_err(|e| format!("drift check: inputs are malformed (see the field list for beams, storeys, footings and pairs): {e}"))?;
         let report = nnx_core::drift::check(&input)?;
         Ok(json!({ "drift": report }))
+    }
+
+    /// Seismic (equivalent lateral force) and wind (velocity pressure) load screen: `{ levels: [{ key, elevation_mm, weight_kn?, kz? }],
+    /// seismic?: { source, sds, sd1, r, ie, tl_s, k, period_s? | ct + x, cs_min_sds_factor?, cs_min_abs? }, wind?: { source,
+    /// basic_speed_m_s, air_density_kg_m3, kd, kzt, gust, directions: [{ name, face_width_mm, cp_windward, cp_leeward }] } }`.
+    /// Every code value is an input with its source; a missing one is refused by name. The storey shears feed `drift_check`.
+    fn lateral_loads(args: &Value) -> Result<Value, String> {
+        let input: nnx_core::lateral::LateralInput = serde_json::from_value(args.clone())
+            .map_err(|e| format!("lateral loads: inputs are malformed (see the field list for levels, seismic and wind): {e}"))?;
+        let report = nnx_core::lateral::analyse(&input)?;
+        Ok(json!({ "lateral": report }))
     }
 
     /// Mat and pile-group screen: `{ screen?: { isolated_area_m2, building_area_m2, max_coverage_ratio? }, mat?: { x_mm, y_mm,
@@ -5666,6 +5678,24 @@ EOF
         no_limit.as_object_mut().unwrap().remove("max_span_mm");
         assert!(app.handle("span_compare", &no_limit).unwrap_err().contains("max_span_mm is required"));
         assert!(app.handle("span_compare", &json!({ "envelope": { "w": 1, "h": 1 }, "max_span_mm": 6000 })).unwrap_err().contains("alternatives are required"));
+    }
+
+    #[test]
+    fn lateral_loads_run_seismic_and_wind_from_cited_inputs_and_name_missing_ones() {
+        let mut app = App::default();
+        let args = json!({
+            "levels": [{ "key": "L1", "elevation_mm": 3000, "weight_kn": 1000, "kz": 1.0 }, { "key": "L2", "elevation_mm": 6000, "weight_kn": 1000, "kz": 1.0 }],
+            "seismic": { "source": "test code, p.1", "sds": 0.5, "sd1": 0.1, "r": 4, "ie": 1, "tl_s": 8, "k": 1, "period_s": 0.4 },
+            "wind": { "source": "test code, p.2", "basic_speed_m_s": 40, "air_density_kg_m3": 1.2, "kd": 1, "kzt": 1, "gust": 1,
+                      "directions": [{ "name": "X", "face_width_mm": 10000, "cp_windward": 0.8, "cp_leeward": -0.5 }] }
+        });
+        let r = app.handle("lateral_loads", &args).unwrap();
+        assert_eq!(r["lateral"]["seismic"]["base_shear_kn"], 125.0);
+        assert!(r["lateral"]["wind"]["directions"][0]["base_shear_kn"].as_f64().unwrap() > 0.0);
+        let mut no_src = args.clone();
+        no_src["seismic"]["source"] = json!("");
+        assert!(app.handle("lateral_loads", &no_src).unwrap_err().contains("seismic.source"));
+        assert!(app.handle("lateral_loads", &json!({ "levels": 3 })).unwrap_err().contains("malformed"));
     }
 
     #[test]
