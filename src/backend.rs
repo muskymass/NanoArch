@@ -39,8 +39,27 @@ pub struct App {
     show_clouds: bool,
     /// The running tour link (`share_tour`), if any. It serves a snapshot and closes with the app.
     share: Option<nnx_core::share::ShareServer>,
+    /// The running phone preview and comment link (`site_review_start`), if any. It serves a snapshot of the plan and closes with the app.
+    review: Option<nnx_core::sitereview::ReviewServer>,
     /// The collaboration session (`collab_begin`): the saved state both people started from, and the exchanged copies.
     collab: Option<Collab>,
+}
+
+/// The inbox numbers of a request: a non-empty list of whole numbers.
+fn inbox_numbers(args: &Value, cmd: &str) -> Result<Vec<u64>, String> {
+    let list = args.get("numbers").and_then(Value::as_array).filter(|a| !a.is_empty()).ok_or_else(|| format!("{cmd}: numbers is required (a list of inbox numbers)"))?;
+    list.iter().map(|v| v.as_u64().ok_or_else(|| format!("{cmd}: numbers must be whole inbox numbers"))).collect()
+}
+
+/// The `width` and `height` of the drawing from its opening `<svg>` tag.
+fn svg_size(svg: &str) -> Option<(f64, f64)> {
+    let tag = &svg[svg.find("<svg")?..];
+    let tag = &tag[..tag.find('>')?];
+    let attr = |name: &str| -> Option<f64> {
+        let at = tag.find(&format!(" {name}=\""))? + name.len() + 3;
+        tag[at..].split('"').next()?.parse().ok()
+    };
+    Some((attr("width")?, attr("height")?))
 }
 
 /// One collaboration session. The base is the model at `collab_begin`, or the last merged model.
@@ -509,6 +528,13 @@ impl App {
             "share_tour" => self.share_tour(args),
             "share_status" => Ok(self.share_status()),
             "share_stop" => Ok(self.share_stop()),
+            "site_review" => self.site_review_report(),
+            "site_review_set" => self.site_review_set(args),
+            "site_review_start" => self.site_review_start(args),
+            "site_review_status" => Ok(self.site_review_status()),
+            "site_review_stop" => Ok(self.site_review_stop()),
+            "site_review_import" => self.site_review_import(args),
+            "site_review_discard" => self.site_review_discard(args),
             "facade_render" => self.facade_render(args),
             "ar_preview" => self.ar_preview(args),
             "tour_video" => self.tour_video(args),
@@ -4051,6 +4077,123 @@ impl App {
     fn share_stop(&mut self) -> Value {
         let was = self.share.take().is_some();
         json!({ "running": false, "was_running": was })
+    }
+
+    fn site_review_report(&self) -> Result<Value, String> {
+        let p = self.project().ok_or("choose a layout first")?;
+        let rep = nnx_core::sitereview::report(&self.doc()?.model, &p.meta.site_review);
+        Ok(json!({ "inputs": p.meta.site_review, "csv": rep.csv(), "html": rep.html(), "report": rep }))
+    }
+
+    /// Replaces the stored site comments (`site_review`): ONE undoable edit. Used to close a comment (`resolvedBy` with `resolvedOn`) or to
+    /// remove one. Every comment needs its author, text and a real date; element references must exist; nothing is stored on any refusal.
+    fn site_review_set(&mut self, args: &Value) -> Result<Value, String> {
+        let review: nnx_core::sitereview::SiteReview = serde_json::from_value(json!({ "comments": args.get("comments").cloned().ok_or("comments is required")? })).map_err(|e| format!("comments: {e}"))?;
+        review.check()?;
+        nnx_core::sitereview::validate_links(&self.doc()?.model, &review)?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "Site comments", |p| {
+            p.meta.site_review = review.clone();
+            Ok(())
+        })?;
+        let mut v = self.site_review_report()?;
+        v["changed"] = json!(out.changed);
+        Ok(v)
+    }
+
+    /// Start the phone link: `{ scope: "local" | "lan", expires_minutes (1..=10080), port?, lang? }`. It serves a snapshot of the plan of the
+    /// level on view (later edits are not shown; start again) and queues what phones send in an inbox. Nothing enters the project until
+    /// `site_review_import`. Who may open it, and for how long, are required and not defaulted.
+    fn site_review_start(&mut self, args: &Value) -> Result<Value, String> {
+        use nnx_core::sitereview as sr;
+        let scope = match args.get("scope").and_then(Value::as_str) {
+            Some("local") => nnx_core::share::Scope::Local,
+            Some("lan") => nnx_core::share::Scope::Lan,
+            _ => return Err("site_review_start: scope is missing ('local' is this machine only, 'lan' is every device on the network)".into()),
+        };
+        let minutes = args.get("expires_minutes").and_then(Value::as_u64).ok_or("site_review_start: expires_minutes is missing (1 to 10080)")?;
+        if !(1..=10080).contains(&minutes) {
+            return Err("site_review_start: expires_minutes must be between 1 and 10080 (seven days)".into());
+        }
+        let port = match args.get("port") {
+            None | Some(Value::Null) => 0,
+            Some(v) => v.as_u64().and_then(|p| u16::try_from(p).ok()).ok_or("site_review_start: port must be a number from 0 to 65535")?,
+        };
+        let doc = self.doc()?;
+        let level = self.current_level();
+        let opts = self.draw_opts(false);
+        let svg = plan_svg(&doc.model, level, &opts).map_err(|e| format!("site_review_start: {e}"))?;
+        let (min_x, max_y, px_per_mm, margin) = nnx_core::drawing::frame(&doc.model, level, &opts).ok_or("site_review_start: the plan has no frame to map taps to")?;
+        let (width_px, height_px) = svg_size(&svg).ok_or("site_review_start: the plan's size could not be read")?;
+        let element_ids = doc.model.elements.values().filter(|e| level.is_none() || e.level_id == level).map(|e| e.id.to_string()).collect();
+        let level_name = self.level_list().get(self.cur_level).map(|(_, _, n)| n.clone()).filter(|n| !n.trim().is_empty());
+        let cfg = sr::ReviewConfig {
+            title: self.display_title(),
+            level_name,
+            svg,
+            frame: sr::PlanFrame { min_x_mm: min_x, max_y_mm: max_y, px_per_mm, margin_px: margin, width_px, height_px },
+            element_ids,
+            arabic: args.get("lang").and_then(Value::as_str) != Some("en"),
+        };
+        // A previous link is closed first so two snapshots are never live at once.
+        self.review = None;
+        let server = sr::ReviewServer::start(cfg, scope, port, std::time::Duration::from_secs(minutes * 60))?;
+        let url = server.url()?;
+        self.review = Some(server);
+        let mut out = self.site_review_status();
+        out["url"] = json!(url);
+        Ok(out)
+    }
+
+    fn site_review_status(&self) -> Value {
+        match &self.review {
+            Some(s) => json!({
+                "running": s.is_live(), "url": if s.is_live() { s.url().ok() } else { None }, "scope": if s.scope() == nnx_core::share::Scope::Lan { "lan" } else { "local" },
+                "port": s.port(), "seconds_left": s.seconds_left(), "views": s.views(), "inbox": s.inbox(),
+                "notes": [
+                    "the plan is a snapshot taken when the link started; later model edits are not shown",
+                    "anyone on the network who has the link can read the plan and send comments until it expires or is stopped; there is no login and the traffic is not encrypted, so use a trusted network",
+                    "received comments wait in the inbox (in memory) and enter the project only through site_review_import; stopping the link or closing the app drops what was not imported",
+                    "a lan link needs the firewall to allow the app's incoming connections; the page needs the connection to this computer and has no offline mode",
+                ],
+            }),
+            None => json!({ "running": false }),
+        }
+    }
+
+    fn site_review_stop(&mut self) -> Value {
+        let was = self.review.take();
+        json!({ "running": false, "was_running": was.is_some(), "dropped": was.map(|s| s.inbox().len()).unwrap_or(0) })
+    }
+
+    /// Imports received comments, chosen by inbox number (`numbers`): ONE undoable edit, then they leave the inbox. An element that no
+    /// longer exists, or an id that clashes, refuses the whole import by name and nothing changes.
+    fn site_review_import(&mut self, args: &Value) -> Result<Value, String> {
+        let numbers = inbox_numbers(args, "site_review_import")?;
+        let server = self.review.as_ref().ok_or("site_review_import: no phone link is running (site_review_start)")?;
+        let incoming: Vec<nnx_core::sitereview::SiteComment> = server.pick(&numbers)?.into_iter().map(|r| r.comment).collect();
+        let check = nnx_core::sitereview::SiteReview { comments: incoming.clone() };
+        check.check()?;
+        nnx_core::sitereview::validate_links(&self.doc()?.model, &check)?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let out = nnx_core::project::update(doc, "Site comments", |p| {
+            p.meta.site_review.comments.extend(incoming.iter().cloned());
+            Ok(())
+        })?;
+        let removed = self.review.as_ref().map(|s| s.discard(&numbers)).unwrap_or(0);
+        let mut v = self.site_review_report()?;
+        v["changed"] = json!(out.changed);
+        v["imported"] = json!(numbers.len());
+        v["removed_from_inbox"] = json!(removed);
+        Ok(v)
+    }
+
+    /// Drops received comments from the inbox without importing them.
+    fn site_review_discard(&mut self, args: &Value) -> Result<Value, String> {
+        let numbers = inbox_numbers(args, "site_review_discard")?;
+        let server = self.review.as_ref().ok_or("site_review_discard: no phone link is running (site_review_start)")?;
+        server.pick(&numbers)?;
+        Ok(json!({ "discarded": server.discard(&numbers) }))
     }
 
     fn tour_file(&self, args: &Value, client: bool) -> Result<Value, String> {
@@ -8557,6 +8700,84 @@ END-ISO-10303-21;
         assert_eq!(st["was_running"], true);
         assert!(std::net::TcpStream::connect(new_hostport).is_err());
         assert_eq!(app.handle("share_stop", &json!({})).unwrap()["was_running"], false);
+    }
+
+    #[test]
+    fn a_phone_link_serves_the_plan_queues_comments_and_imports_them_as_one_undoable_edit() {
+        use std::io::{Read, Write};
+        fn exchange(hostport: &str, request: &str) -> String {
+            let mut s = std::net::TcpStream::connect(hostport).unwrap();
+            s.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+            s.write_all(request.as_bytes()).unwrap();
+            let mut out = Vec::new();
+            let _ = s.read_to_end(&mut out);
+            String::from_utf8_lossy(&out).into_owned()
+        }
+        let mut app = started();
+        assert!(App::default().handle("site_review_start", &json!({ "scope": "local", "expires_minutes": 5 })).is_err());
+        assert!(app.handle("site_review_start", &json!({ "expires_minutes": 5 })).unwrap_err().contains("scope is missing"));
+        assert!(app.handle("site_review_start", &json!({ "scope": "local" })).unwrap_err().contains("expires_minutes"));
+        assert!(app.handle("site_review_start", &json!({ "scope": "local", "expires_minutes": 10081 })).unwrap_err().contains("between 1 and 10080"));
+        assert!(app.handle("site_review_import", &json!({ "numbers": [0] })).unwrap_err().contains("no phone link"));
+        assert_eq!(app.handle("site_review_status", &json!({})).unwrap()["running"], false);
+
+        let r = app.handle("site_review_start", &json!({ "scope": "local", "expires_minutes": 5, "lang": "en" })).unwrap();
+        assert_eq!(r["running"], true);
+        let url = r["url"].as_str().unwrap().to_string();
+        let (hostport, path) = url.trim_start_matches("http://").split_once('/').map(|(h, p)| (h.to_string(), format!("/{p}"))).unwrap();
+        let page = exchange(&hostport, &format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n"));
+        assert!(page.starts_with("HTTP/1.1 200") && page.contains("<svg") && page.contains("manifest.webmanifest"));
+        let id_at = page.find("data-id=\"").unwrap() + 9;
+        let element = page[id_at..].split('"').next().unwrap().to_string();
+
+        // A phone taps the plan at its top-left drawing corner, on a drawn element, and writes a comment.
+        let post = |body: &str| exchange(&hostport, &format!("POST {path}comment HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()));
+        let good = json!({ "author": "Site engineer", "text": "check this wall", "date": "2026-03-01", "px": 120, "py": 120, "element": element }).to_string();
+        assert!(post(&good).starts_with("HTTP/1.1 201"));
+        assert!(post(&json!({ "author": "Owner", "text": "no pin", "date": "2026-03-02" }).to_string()).starts_with("HTTP/1.1 201"));
+        assert!(post(&json!({ "author": "Owner", "text": "bad", "date": "2026-03-02", "px": 99999, "py": 1 }).to_string()).starts_with("HTTP/1.1 422"));
+        let st = app.handle("site_review_status", &json!({})).unwrap();
+        assert_eq!(st["inbox"].as_array().unwrap().len(), 2);
+        // Nothing is in the project until the engineer imports it.
+        assert!(app.handle("site_review", &json!({})).unwrap()["inputs"]["comments"].as_array().unwrap().is_empty());
+        let n0 = app.handle("change_log", &json!({})).unwrap()["log"]["entries"].as_array().unwrap().len();
+
+        assert!(app.handle("site_review_import", &json!({})).unwrap_err().contains("numbers is required"));
+        assert!(app.handle("site_review_import", &json!({ "numbers": [9] })).unwrap_err().contains("not in the inbox"));
+        assert!(app.handle("site_review_import", &json!({ "numbers": ["a"] })).unwrap_err().contains("whole inbox numbers"));
+        let imp = app.handle("site_review_import", &json!({ "numbers": [0] })).unwrap();
+        assert_eq!(imp["changed"], true);
+        assert_eq!(imp["removed_from_inbox"], 1);
+        let c = &imp["inputs"]["comments"][0];
+        assert_eq!((c["author"].as_str(), c["level"].is_null(), c["element"].as_str()), (Some("Site engineer"), true, Some(element.as_str())));
+        // A single-storey plan has no named level, so the comment carries none rather than an invented one.
+        assert!(c["xMm"].is_i64() && c["yMm"].is_i64(), "the tap became plan millimetres: {c}");
+        assert_eq!(app.handle("change_log", &json!({})).unwrap()["log"]["entries"].as_array().unwrap().len(), n0 + 1);
+        assert_eq!(app.handle("site_review_status", &json!({})).unwrap()["inbox"].as_array().unwrap().len(), 1);
+        assert!(imp["csv"].as_str().unwrap().contains("check this wall"));
+
+        // Closing a comment needs who and when; the edit is one undoable step too.
+        let mut closed = imp["inputs"]["comments"].clone();
+        closed[0]["resolvedBy"] = json!("Owner");
+        assert!(app.handle("site_review_set", &json!({ "comments": closed })).unwrap_err().contains("go together"));
+        closed[0]["resolvedOn"] = json!("2026-03-03");
+        let set = app.handle("site_review_set", &json!({ "comments": closed })).unwrap();
+        assert_eq!(set["report"]["resolved"], 1);
+        let mut bad = set["inputs"]["comments"].clone();
+        bad[0]["element"] = json!("NOPE-9");
+        assert!(app.handle("site_review_set", &json!({ "comments": bad })).unwrap_err().contains("NOPE-9"));
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!(app.handle("site_review", &json!({})).unwrap()["report"]["open"], 1);
+        app.handle("undo", &json!({})).unwrap();
+        assert!(app.handle("site_review", &json!({})).unwrap()["inputs"]["comments"].as_array().unwrap().is_empty());
+
+        // The second comment can be dropped instead of imported; stopping closes the link.
+        assert_eq!(app.handle("site_review_discard", &json!({ "numbers": [1] })).unwrap()["discarded"], 1);
+        assert!(app.handle("site_review_discard", &json!({ "numbers": [1] })).is_err());
+        let stop = app.handle("site_review_stop", &json!({})).unwrap();
+        assert_eq!(stop["was_running"], true);
+        assert!(std::net::TcpStream::connect(&hostport).is_err());
+        assert_eq!(app.handle("site_review_stop", &json!({})).unwrap()["was_running"], false);
     }
 
     #[test]

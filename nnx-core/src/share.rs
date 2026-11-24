@@ -39,7 +39,7 @@ pub struct ShareServer {
 }
 
 /// A 148-bit random path token (two UUIDv7 values: the random parts of both are used).
-fn new_token() -> String {
+pub(crate) fn new_token() -> String {
     let a = uuid::Uuid::now_v7().simple().to_string();
     let b = uuid::Uuid::now_v7().simple().to_string();
     // The first 12 hex digits of a v7 UUID are the timestamp: they carry no secrecy and are dropped.
@@ -47,7 +47,7 @@ fn new_token() -> String {
 }
 
 /// Constant-time comparison so the token cannot be recovered by timing.
-fn same(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn same(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
 }
 
