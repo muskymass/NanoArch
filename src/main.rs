@@ -219,6 +219,15 @@ fn folder_file(args: &Value) -> Result<Value, String> {
     if !path.starts_with(&root) {
         return Err("folder file: that file is outside the imported folder".into());
     }
+    // A Word file is served as it is: the page unzips it to read its text.
+    if path.extension().is_some_and(|x| x.eq_ignore_ascii_case("docx")) {
+        let size = std::fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?.len();
+        if size > SKETCH_MAX_BYTES {
+            return Err(format!("the file is {} MB; the limit is {} MB", size / 1_048_576, SKETCH_MAX_BYTES / 1_048_576));
+        }
+        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        return Ok(json!({ "picked": { "name": path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), "kind": "docx", "b64": nnx_core::xlsx::base64_encode(&bytes) } }));
+    }
     Ok(json!({ "picked": read_sketch(&path)? }))
 }
 

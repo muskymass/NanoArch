@@ -39,6 +39,81 @@ impl BuildingType {
     }
 }
 
+/// One fact a project file gave to the brief (`field` is a brief field name such as `plot_width_m`, `value` its text).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InputFact {
+    pub field: String,
+    pub value: String,
+}
+
+/// A file of the project folder: what it is, whether it was read, and the facts that came from it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProjectInput {
+    /// Path relative to the project folder.
+    pub rel: String,
+    pub kind: String,
+    /// `read`, `needs_you`, `skipped` or `unsupported`.
+    pub status: String,
+    pub detail: String,
+    pub bytes: u64,
+    /// CRC-32 of the content (hex), so a changed file is noticed when the folder is imported again.
+    pub crc32: String,
+    pub facts: Vec<InputFact>,
+}
+
+/// Where the brief disagrees with a fact a project file gave: the user is told, nothing is changed.
+pub fn input_conflicts(p: &NanoArchProject) -> Vec<String> {
+    let Some(b) = p.brief.as_ref() else { return Vec::new() };
+    let mut out = Vec::new();
+    let num = |f: &InputFact| f.value.parse::<f64>().ok();
+    for i in &p.meta.inputs {
+        for f in &i.facts {
+            let (have, name) = match f.field.as_str() {
+                "plot_width_m" => (b.width_m, "plot width"),
+                "plot_length_m" => (b.length_m, "plot length"),
+                _ => continue,
+            };
+            // A plot outline that is not a rectangle makes the brief's size the buildable rectangle, so only a plain rectangle is compared.
+            if p.plot_is_irregular() {
+                continue;
+            }
+            if let Some(want) = num(f)
+                && (want - have).abs() > 0.01 * want.max(1.0)
+            {
+                out.push(format!("{name}: '{}' gave {want} m but the brief has {have} m", i.rel));
+            }
+        }
+    }
+    out
+}
+
+/// The imported files as a sheet of the printed plan set (HTML fragment).
+pub fn inputs_html(inputs: &[ProjectInput], arabic: bool) -> String {
+    if inputs.is_empty() {
+        return String::new();
+    }
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let t = |ar: &'static str, en: &'static str| if arabic { ar } else { en };
+    let rows: String = inputs
+        .iter()
+        .map(|i| {
+            let facts = i.facts.iter().map(|f| format!("{} = {}", esc(&f.field), esc(&f.value))).collect::<Vec<_>>().join("; ");
+            format!("<tr><td dir=\"ltr\">{}</td><td>{}</td><td>{}</td><td>{}</td></tr>", esc(&i.rel), esc(&i.status), esc(&i.detail), facts)
+        })
+        .collect();
+    format!(
+        "<section class=\"sheet\"><h1>{}</h1><table><tr><th>{}</th><th>{}</th><th>{}</th><th>{}</th></tr>{rows}</table><p class=\"foot\">{}</p></section>",
+        t("مدخلات المشروع المستوردة من المجلد", "Project inputs imported from the folder"),
+        t("الملف", "File"),
+        t("الحالة", "Status"),
+        t("ما قُرئ", "What was read"),
+        t("الحقائق المنقولة إلى الموجز", "Facts moved into the brief"),
+        t("أولي — يراجعه مهندس مرخّص", "Preliminary — to be checked by a licensed engineer")
+    )
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ProjectMeta {
@@ -76,6 +151,9 @@ pub struct ProjectMeta {
     /// Wall assemblies (named wall types with explicit layers) and which of them walls fall back to.
     pub assemblies: Vec<crate::assembly::WallAssembly>,
     pub assembly_defaults: crate::assembly::AssemblyDefaults,
+    /// The files of the project folder the user bound to this project, each with what was read from it. They are inputs of the
+    /// project: the facts they gave filled the brief, are listed in the printed plan set, and are checked against the brief.
+    pub inputs: Vec<ProjectInput>,
     /// The change log's baseline snapshot and the closed revisions.
     pub baseline: Option<crate::compliance::Baseline>,
     pub revision_history: Vec<crate::compliance::RevisionEntry>,

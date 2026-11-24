@@ -285,6 +285,16 @@ impl App {
         }
     }
 
+    /// The imported project files as the last sheet of the printed set, so what the folder gave appears in the final output.
+    fn with_inputs(&self, html: String, arabic: bool) -> String {
+        let Some(p) = self.project() else { return html };
+        let frag = nnx_core::project::inputs_html(&p.meta.inputs, arabic);
+        match html.rfind("</body>") {
+            Some(i) => format!("{}{}{}", &html[..i], frag, &html[i..]),
+            None => format!("{html}{frag}"),
+        }
+    }
+
     fn with_history(&self, html: String, arabic: bool) -> String {
         let (Some(doc), Some(p)) = (self.doc.as_ref(), self.project()) else { return html };
         let ch = p.meta.baseline.as_ref().map(|b| nnx_core::revisions::changes(&doc.model, b)).unwrap_or_default();
@@ -612,7 +622,14 @@ impl App {
             "assemblies_get" => self.assemblies_get(),
             "assemblies_set" => self.assemblies_set(args),
             "assembly_assign" => self.assembly_assign(args),
-            "precheck" => Ok(json!(nnx_core::precheck::run(&self.doc()?.model))),
+            "precheck" => {
+                let mut r = nnx_core::precheck::run(&self.doc()?.model);
+                // A fact a project file gave that the brief now contradicts is a warning, so the file really counts as an input.
+                for m in self.project().map(|p| nnx_core::project::input_conflicts(&p)).unwrap_or_default() {
+                    r.issues.push(nnx_core::precheck::Issue { level: nnx_core::precheck::Level::Warning, code: "INPUT.CONFLICT", message: m, elements: Vec::new() });
+                }
+                Ok(json!(r))
+            }
             "export_ifc" => self.gate(args).and_then(|_| self.export_ifc(args)),
             "export_bundle" => self.gate(args).and_then(|_| self.export_bundle(args)),
             "export_dxf" => self.gate(args).and_then(|_| self.export_dxf(args.get("all").and_then(Value::as_bool).unwrap_or(false), args.get("views").and_then(Value::as_bool).unwrap_or(false), args.get("layer_style"))),
@@ -851,6 +868,7 @@ impl App {
             date: utc_now().chars().take(10).collect(),
         };
         let html = self.with_history(self.with_compliance(nnx_core::printdoc::print_html(&self.doc()?.model, &opts)?, arabic), arabic);
+        let html = self.with_inputs(html, arabic);
         Ok(json!({ "html": html, "name": "plan.pdf" }))
     }
 
@@ -3127,16 +3145,24 @@ impl App {
         Ok(json!({ "table": table, "draft": draft, "next": clarify::next_question(&draft), "missing": clarify::missing(&draft), "complete": clarify::is_complete(&draft) }))
     }
 
-    /// `folder_import`: `{ path, name }`. Reads every file of a project folder (subfolders too) with the importer that fits it and
-    /// returns what was found as a brief draft, with each file's outcome and what is still missing. Per file: a spreadsheet of room
-    /// areas gives the rooms; a DXF gives the plot boundary when its units are stated and it holds one usable boundary; an IFC is
-    /// reviewed (its spaces are listed, not copied into the brief); a PDF or an image is listed as needing a scale and a reading by
-    /// the user (the draft sketch tab or `ai_sketch`); anything else is listed as not supported. Nothing is invented: a value no
-    /// file gave stays missing and `missing` names it.
+    /// `folder_import`: `{ path, name, texts? }`. Reads every file of a project folder (subfolders too) and returns what was found as
+    /// a brief draft, with each file's outcome, the facts it gave and what is still missing. Per file: a spreadsheet of room areas
+    /// gives the rooms; a DXF gives the plot boundary when its units are stated and it holds one usable boundary; an IFC is reviewed
+    /// (its spaces are listed, not copied into the brief); a text-like file (txt, md, csv, tsv, json, xml, html, rtf, svg) is read
+    /// for the brief's facts (building type, floors, plot size, city, style, rooms); `texts` carries the text the page extracted
+    /// from a PDF or a Word file (`{ relative path: text }`), read the same way; an image, or a PDF with no text, is listed as
+    /// needing a scale and a reading by the user; anything else is registered as an input that could not be read, with the reason.
+    /// Every file is recorded in `inputs` (size and CRC-32 too) so the project keeps them. Nothing is invented: a value no file
+    /// gave stays missing and `missing` names it.
     fn folder_import(args: &Value) -> Result<Value, String> {
+        use nnx_core::project::{InputFact, ProjectInput};
         use nnx_core::{briefai::BriefDraft, clarify};
         let root = args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty()).ok_or("folder import: the folder's path is missing")?;
         let name = args.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()).ok_or("folder import: the project name is missing")?;
+        let texts: std::collections::BTreeMap<String, String> = match args.get("texts").filter(|t| !t.is_null()) {
+            Some(t) => serde_json::from_value(t.clone()).map_err(|e| format!("folder import: texts must map file paths to text: {e}"))?,
+            None => Default::default(),
+        };
         let root = std::path::Path::new(root);
         if !root.is_dir() {
             return Err(format!("folder import: {} is not a folder", root.display()));
@@ -3161,25 +3187,67 @@ impl App {
         }
         found.sort();
         let mut draft = BriefDraft { title: Some(name.to_string()), source: "folder".into(), ..Default::default() };
-        let (mut files, mut plot) = (Vec::new(), None::<Value>);
+        let (mut files, mut inputs, mut plot) = (Vec::new(), Vec::<ProjectInput>::new(), None::<Value>);
         let mut have_rooms = false;
+        let fact = |field: &str, value: String| InputFact { field: field.into(), value };
+        // Keeps only what the draft does not have yet (the first file to state a value wins) and returns the facts that were taken.
+        let take_text = |draft: &mut BriefDraft, text: &str, have_rooms: &mut bool| -> Vec<InputFact> {
+            let k = nnx_core::briefai::from_keywords(text);
+            let mut f = Vec::new();
+            if draft.building_type.is_none() && let Some(v) = k.building_type {
+                f.push(fact("building_type", format!("{v:?}")));
+                draft.building_type = Some(v);
+            }
+            if draft.floors.is_none() && let Some(v) = k.floors {
+                f.push(fact("floors", v.to_string()));
+                draft.floors = Some(v);
+            }
+            if draft.city.is_none() && let Some(c) = k.city.clone() {
+                f.push(fact("city", c.clone()));
+                draft.city = Some(c);
+                draft.climate_zone = k.climate_zone;
+            }
+            if draft.style.is_none() && let Some(v) = k.style.clone() {
+                f.push(fact("style", v.clone()));
+                draft.style = Some(v);
+            }
+            if draft.plot_width_m.is_none() && let (Some(w), Some(l)) = (k.plot_width_m, k.plot_length_m) {
+                f.push(fact("plot_width_m", w.to_string()));
+                f.push(fact("plot_length_m", l.to_string()));
+                (draft.plot_width_m, draft.plot_length_m) = (Some(w), Some(l));
+            }
+            if draft.plot_area_m2.is_none() && let Some(a) = k.plot_area_m2 {
+                f.push(fact("plot_area_m2", a.to_string()));
+                draft.plot_area_m2 = Some(a);
+            }
+            if !*have_rooms && !k.rooms.is_empty() {
+                *have_rooms = true;
+                f.push(fact("rooms", k.rooms.len().to_string()));
+                draft.rooms = k.rooms;
+            }
+            f
+        };
         for p in &found {
             let rel = p.strip_prefix(root).unwrap_or(p).display().to_string();
             let ext = p.extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
-            let path = p.display().to_string();
-            let mut add = |kind: &str, status: &str, detail: String| files.push(json!({ "path": path, "rel": rel, "kind": kind, "status": status, "detail": detail }));
-            match ext.as_str() {
-                "xlsx" => match std::fs::read(p).map_err(|e| e.to_string()).and_then(|b| nnx_core::areatable::import(&b, None).map_err(|e| e.to_string())) {
+            let bytes = std::fs::read(p);
+            let (size, crc) = bytes.as_ref().map_or((0, String::new()), |b| (b.len() as u64, format!("{:08x}", nnx_core::xlsx::crc32(b))));
+            let mut facts: Vec<InputFact> = Vec::new();
+            let (kind, status, detail): (&str, &str, String) = match (&bytes, ext.as_str()) {
+                (Err(e), _) => ("other", "needs_you", format!("cannot be read: {e}")),
+                (Ok(b), "xlsx") => match nnx_core::areatable::import(b, None) {
                     Ok(t) if !have_rooms && !t.rooms.is_empty() => {
                         have_rooms = true;
                         draft.notes.push(format!("rooms read from '{rel}', sheet '{}': {} room(s), {:.1} m²", t.sheet, t.rooms.len(), t.total_area_m2));
-                        add("areas", "read", format!("{} rooms, {:.1} m²", t.rooms.len(), t.total_area_m2));
+                        facts.push(fact("rooms", t.rooms.len().to_string()));
+                        let d = format!("{} rooms, {:.1} m²", t.rooms.len(), t.total_area_m2);
                         draft.rooms = t.rooms;
+                        ("areas", "read", d)
                     }
-                    Ok(t) => add("areas", "skipped", format!("{} rooms, not used: {}", t.rooms.len(), if have_rooms { "another workbook already gave the rooms" } else { "no rooms in it" })),
-                    Err(e) => add("areas", "needs_you", e),
+                    Ok(t) => ("areas", "skipped", format!("{} rooms, not used: {}", t.rooms.len(), if have_rooms { "another file already gave the rooms" } else { "no rooms in it" })),
+                    Err(e) => ("areas", "needs_you", e.to_string()),
                 },
-                "dxf" => match std::fs::read(p).map_err(|e| e.to_string()).and_then(|b| nnx_core::plot_import::import_dxf(&b, None, None)) {
+                (Ok(b), "dxf") => match nnx_core::plot_import::import_dxf(b, None, None) {
                     Ok(r) => match r.selected.and_then(|i| r.candidates.get(i)) {
                         Some(c) if plot.is_none() => {
                             let (xs, ys): (Vec<f64>, Vec<f64>) = (c.polygon_m.iter().map(|q| q[0]).collect(), c.polygon_m.iter().map(|q| q[1]).collect());
@@ -3187,36 +3255,53 @@ impl App {
                             let (w, l) = (span(&xs), span(&ys));
                             let rect = (w * l - c.area_m2).abs() <= 0.01 * (w * l).max(1.0);
                             draft.plot_area_m2 = Some((c.area_m2 * 100.0).round() / 100.0);
+                            facts.push(fact("plot_area_m2", format!("{:.2}", c.area_m2)));
                             if rect {
                                 draft.plot_width_m = Some((w * 100.0).round() / 100.0);
                                 draft.plot_length_m = Some((l * 100.0).round() / 100.0);
+                                facts.push(fact("plot_width_m", format!("{w:.2}")));
+                                facts.push(fact("plot_length_m", format!("{l:.2}")));
                             } else {
                                 draft.notes.push(format!("the plot boundary in '{rel}' is not a rectangle ({:.1} m², bounding box {w:.1} x {l:.1} m): enter its shape on the plot tab", c.area_m2));
                             }
                             plot = Some(json!({ "polygon_m": c.polygon_m, "area_m2": c.area_m2, "from": rel }));
-                            add("plot", "read", format!("boundary {:.1} m² ({w:.1} x {l:.1} m){}", c.area_m2, if rect { "" } else { ", not a rectangle" }));
+                            ("plot", "read", format!("boundary {:.1} m² ({w:.1} x {l:.1} m){}", c.area_m2, if rect { "" } else { ", not a rectangle" }))
                         }
-                        Some(_) => add("plot", "skipped", "another file already gave the plot".into()),
-                        None => add("plot", "needs_you", format!("{} closed shapes and none was chosen: open it with the plot DXF import and pick one", r.candidates.len())),
+                        Some(_) => ("plot", "skipped", "another file already gave the plot".into()),
+                        None => ("plot", "needs_you", format!("{} closed shapes and none was chosen: open it with the plot DXF import and pick one", r.candidates.len())),
                     },
-                    Err(e) => add("plot", "needs_you", e),
+                    Err(e) => ("plot", "needs_you", e),
                 },
-                "ifc" => match std::fs::read(p).map_err(|e| e.to_string()).and_then(|b| nnx_core::ifc_review::review_ifc(&b)) {
-                    Ok(r) => add("ifc", "read", format!("{} {} entities, {} storey(s), {} space(s); reviewed, not copied into the brief", r.schema.clone().unwrap_or_default(), r.entity_count, r.storeys.len(), r.spaces.len())),
-                    Err(e) => add("ifc", "needs_you", e),
+                (Ok(b), "ifc") => match nnx_core::ifc_review::review_ifc(b) {
+                    Ok(r) => ("ifc", "read", format!("{} {} entities, {} storey(s), {} space(s); reviewed, not copied into the brief", r.schema.clone().unwrap_or_default(), r.entity_count, r.storeys.len(), r.spaces.len())),
+                    Err(e) => ("ifc", "needs_you", e),
                 },
-                "rvt" | "rfa" => add("revit", "unsupported", "a Revit file cannot be read: export it to IFC".into()),
-                "dwg" => add("plot", "unsupported", "a binary DWG cannot be read here: save it as DXF (or convert it with the DWG converter)".into()),
-                "pdf" => add("sketch", "needs_you", "a drawing: it needs a scale reference and a reading (draft sketch tab)".into()),
-                "png" | "jpg" | "jpeg" | "bmp" | "webp" => add("sketch", "needs_you", "an image: it needs a scale reference and a reading (draft sketch tab)".into()),
-                _ => add("other", "unsupported", format!("'.{ext}' is not a type the importer reads")),
-            }
+                (Ok(_), "rvt" | "rfa") => ("revit", "unsupported", "a Revit file cannot be read: export it to IFC".into()),
+                (Ok(_), "dwg") => ("plot", "unsupported", "a binary DWG cannot be read here: save it as DXF (or convert it with the DWG converter)".into()),
+                (Ok(b), "txt" | "md" | "csv" | "tsv" | "json" | "xml" | "html" | "htm" | "rtf" | "svg") => {
+                    let text = String::from_utf8_lossy(b).into_owned();
+                    facts = take_text(&mut draft, &text, &mut have_rooms);
+                    if facts.is_empty() { ("text", "read", "read; it states none of the brief's facts that are still open".into()) } else { ("text", "read", format!("{} fact(s) for the brief", facts.len())) }
+                }
+                (Ok(_), "pdf" | "docx") if texts.contains_key(&rel) => {
+                    let text = texts[&rel].clone();
+                    facts = take_text(&mut draft, &text, &mut have_rooms);
+                    let d = format!("text of {} characters read{}", text.chars().count(), if facts.is_empty() { "; it states none of the brief's facts that are still open" } else { "" });
+                    (if ext == "pdf" { "pdf_text" } else { "document" }, "read", if facts.is_empty() { d } else { format!("{d}; {} fact(s) for the brief", facts.len()) })
+                }
+                (Ok(_), "pdf") => ("sketch", "needs_you", "a drawing: it has no text, so it needs a scale reference and a reading (draft sketch tab)".into()),
+                (Ok(_), "docx") => ("document", "needs_you", "its text was not extracted".into()),
+                (Ok(_), "png" | "jpg" | "jpeg" | "bmp" | "webp") => ("sketch", "needs_you", "an image: it needs a scale reference and a reading (draft sketch tab)".into()),
+                (Ok(_), _) => ("other", "unsupported", format!("'.{ext}' is not a type the importer reads; it is registered as an input of the project")),
+            };
+            files.push(json!({ "path": p.display().to_string(), "rel": rel, "kind": kind, "status": status, "detail": detail }));
+            inputs.push(ProjectInput { rel, kind: kind.into(), status: status.into(), detail, bytes: size, crc32: crc, facts });
         }
         if truncated {
             draft.notes.push("the folder holds more than 500 files: only the first 500 were looked at".into());
         }
         let missing = clarify::missing(&draft);
-        Ok(json!({ "name": name, "folder": root.display().to_string(), "files": files, "plot": plot, "next": clarify::next_question(&draft), "missing": missing, "complete": clarify::is_complete(&draft), "draft": draft }))
+        Ok(json!({ "name": name, "folder": root.display().to_string(), "files": files, "inputs": inputs, "plot": plot, "next": clarify::next_question(&draft), "missing": missing, "complete": clarify::is_complete(&draft), "draft": draft }))
     }
 
     /// The review step of `ai_sketch`: `{ reading, keys, floor, edits?, draft? }`. Only the confirmed `keys` become brief rooms (and a
@@ -7319,7 +7404,7 @@ END-ISO-10303-21;
         assert_eq!(status("ground.pdf"), ("sketch".into(), "needs_you".into()));
         assert_eq!(status("front.JPG"), ("sketch".into(), "needs_you".into()));
         assert_eq!(status("model.rvt"), ("revit".into(), "unsupported".into()));
-        assert_eq!(status("note.txt"), ("other".into(), "unsupported".into()));
+        assert_eq!(status("note.txt"), ("text".into(), "read".into()), "a text file is read for facts; this one states none");
         assert_eq!(r["draft"]["title"], "Villa Test");
         assert_eq!((r["draft"]["plot_width_m"].as_f64(), r["draft"]["plot_length_m"].as_f64()), (Some(18.0), Some(22.0)));
         assert!(!r["draft"]["rooms"].as_array().unwrap().is_empty(), "the workbook gave the rooms");
@@ -7329,6 +7414,43 @@ END-ISO-10303-21;
         assert!(App::default().handle("folder_import", &json!({ "path": dir.to_str().unwrap() })).unwrap_err().contains("name"));
         assert!(App::default().handle("folder_import", &json!({ "path": dir.join("nope").to_str().unwrap(), "name": "x" })).unwrap_err().contains("not a folder"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn text_files_and_extracted_pdf_text_give_facts_and_every_file_is_kept_as_an_input_that_reaches_the_outputs() {
+        let dir = std::env::temp_dir().join(format!("nnx_folder_txt_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("brief.txt"), "villa with 2 floors in Riyadh on a 20x30 m plot, modern style").unwrap();
+        std::fs::write(dir.join("report.pdf"), b"%PDF-1.4").unwrap();
+        std::fs::write(dir.join("model.step"), b"ISO-10303").unwrap();
+        let path = dir.to_str().unwrap();
+        let first = App::default().handle("folder_import", &json!({ "path": path, "name": "P" })).unwrap();
+        let find = |r: &Value, rel: &str| r["inputs"].as_array().unwrap().iter().find(|i| i["rel"] == rel).unwrap_or_else(|| panic!("{rel} registered")).clone();
+        assert_eq!(find(&first, "report.pdf")["status"], "needs_you", "a PDF whose text was not extracted waits for the user");
+        assert_eq!(find(&first, "model.step")["status"], "unsupported");
+        assert_eq!(find(&first, "model.step")["bytes"], 9, "even an unreadable file is registered with its size");
+        let facts: Vec<String> = find(&first, "brief.txt")["facts"].as_array().unwrap().iter().map(|f| f["field"].as_str().unwrap().to_string()).collect();
+        assert!(facts.contains(&"floors".to_string()) && facts.contains(&"plot_width_m".to_string()) && facts.contains(&"city".to_string()), "{facts:?}");
+        assert_eq!((first["draft"]["floors"].as_u64(), first["draft"]["plot_width_m"].as_f64()), (Some(2), Some(20.0)));
+        // The page extracts the PDF's text and sends it back: it is read like any other text.
+        let texts = json!({ "report.pdf": "The client wants a palace with 3 floors in Jeddah on a 40x50 m plot, neo-classical style" });
+        let second = App::default().handle("folder_import", &json!({ "path": path, "name": "P", "texts": texts })).unwrap();
+        assert_eq!(find(&second, "report.pdf")["status"], "read");
+        assert_eq!(second["draft"]["floors"].as_u64(), Some(2), "the first file to state a value wins");
+        assert!(find(&second, "report.pdf")["facts"].as_array().unwrap().is_empty() || find(&second, "report.pdf")["facts"][0]["field"] != "floors");
+        std::fs::remove_dir_all(&dir).ok();
+
+        // The kept inputs reach the outputs: a fact the brief contradicts is a precheck warning and the files are a sheet of the printed set.
+        let meta = json!({ "title": "T", "inputs": [{ "rel": "survey.dxf", "kind": "plot", "status": "read", "detail": "boundary", "bytes": 1, "crc32": "00", "facts": [{ "field": "plot_width_m", "value": "25" }] }] });
+        let mut app = App::default();
+        app.handle("generate", &json!({ "brief": brief2(), "struct": loads2(), "meta": meta })).unwrap();
+        app.handle("select", &json!({ "index": 0, "struct": loads2() })).unwrap();
+        let pre = app.handle("precheck", &json!({})).unwrap();
+        assert!(pre["issues"].as_array().unwrap().iter().any(|i| i["code"] == "INPUT.CONFLICT" && i["message"].as_str().unwrap().contains("survey.dxf")), "{pre}");
+        let kept = app.handle("project", &json!({})).unwrap();
+        assert_eq!(kept["settings"]["meta"]["inputs"][0]["rel"], "survey.dxf", "the inputs are part of the saved project settings");
+        let html = app.handle("pdf_html", &json!({})).unwrap()["html"].as_str().unwrap().to_string();
+        assert!(html.contains("survey.dxf") && html.contains("plot_width_m = 25"), "the imported files are a sheet of the plan set");
     }
 
     #[test]
