@@ -1,10 +1,10 @@
-; NanoArch installer (Inno Setup 6). Build:
+﻿; NanoArch installer (Inno Setup 6). Build:
 ;   ISCC.exe /DExeSrc="<path to nanoarch-app.exe>" installer\nanoarch.iss
 ; Installs per user (no administrator rights) unless the user chooses "for all users".
 ; The installer is NOT code-signed, so Windows SmartScreen will warn on first run.
 
 #define AppName "NanoArch"
-#define AppVersion "2.1.1"
+#define AppVersion "2.2.1"
 #define AppPublisher "NanoNexus"
 #ifndef ExeSrc
   #error Pass the built executable: /DExeSrc="C:\path\to\nanoarch-app.exe"
