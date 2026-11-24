@@ -1,3 +1,8 @@
+//! Both directions go through a converter the user installed. `export_dwg` writes the plan as DXF and converts it to DWG;
+//! `dwg_to_dxf` (the import side, used by the project-folder import) converts a DWG of the folder to DXF, which the plot importer
+//! then reads. The converter is found among the usual install places (ODA File Converter) and on the PATH (`dwg2dxf` of LibreDWG)
+//! unless a path is given; when none is found the DWG is listed as needing one and nothing is guessed.
+//!
 //! `export_dwg`: the plan as a real DWG file, made by a DXF-to-DWG converter the user installed on this computer. DWG is a
 //! closed binary format with no open specification, so this application does not write it itself. It exports the plan as
 //! DXF (the same `export_dxf` engine call, with the same precheck gate and options) and hands that file to the converter.
@@ -75,11 +80,16 @@ fn work_dir() -> PathBuf {
 
 /// Runs the converter; on failure the error carries its own message.
 fn run(req: &Request, input: &Path, in_dir: &Path, out_dir: &Path, out_file: &Path) -> Result<(), String> {
+    run_dir(req, input, in_dir, out_dir, out_file, false)
+}
+
+/// `to_dxf`: the input is a DWG and the output a DXF (otherwise the other way round).
+fn run_dir(req: &Request, input: &Path, in_dir: &Path, out_dir: &Path, out_file: &Path, to_dxf: bool) -> Result<(), String> {
     let mut cmd = Command::new(&req.exe);
     match req.kind {
         Kind::Oda => {
-            let name = input.file_name().ok_or("the temporary DXF has no file name")?;
-            cmd.arg(in_dir).arg(out_dir).arg(&req.version).args(["DWG", "0", "1"]).arg(name);
+            let name = input.file_name().ok_or("the temporary input has no file name")?;
+            cmd.arg(in_dir).arg(out_dir).arg(&req.version).args([if to_dxf { "DXF" } else { "DWG" }, "0", "1"]).arg(name);
         }
         Kind::LibreDwg => {
             cmd.arg("-y").arg("-o").arg(out_file).arg(input);
@@ -165,6 +175,58 @@ pub fn convert(dxf: &str, args: &Value) -> Result<Value, String> {
     }))
 }
 
+/// The converter to use for reading a DWG: `NANOARCH_DWG_CONVERTER` (`oda;<path>` or `libredwg;<path>`, the seam of the tests), else the
+/// newest ODA File Converter under Program Files, else `dwg2dxf` on the PATH.
+fn find_reader() -> Option<Request> {
+    let make = |kind: Kind, exe: PathBuf| Request { kind, exe, version: DEFAULT_ODA_VERSION.to_string(), limit: Duration::from_secs(DEFAULT_TIMEOUT_S) };
+    if let Some(v) = std::env::var_os("NANOARCH_DWG_CONVERTER") {
+        let v = v.to_string_lossy().into_owned();
+        let (k, path) = v.split_once(';')?;
+        let kind = if k == "oda" { Kind::Oda } else { Kind::LibreDwg };
+        return Path::new(path).is_file().then(|| make(kind, PathBuf::from(path)));
+    }
+    for root in ["C:\\Program Files\\ODA", "C:\\Program Files (x86)\\ODA"] {
+        let Ok(rd) = std::fs::read_dir(root) else { continue };
+        let mut dirs: Vec<PathBuf> = rd.filter_map(Result::ok).map(|e| e.path()).collect();
+        dirs.sort();
+        for d in dirs.into_iter().rev() {
+            let exe = d.join("ODAFileConverter.exe");
+            if exe.is_file() {
+                return Some(make(Kind::Oda, exe));
+            }
+        }
+    }
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).map(|d| d.join("dwg2dxf.exe")).find(|p| p.is_file()).map(|exe| make(Kind::LibreDwg, exe))
+}
+
+/// Converts a DWG (bytes) to DXF text with the converter found on this computer; `Ok(None)` when there is none. A result that is not
+/// DXF text is an error and is discarded.
+pub fn dwg_to_dxf(bytes: &[u8]) -> Result<Option<String>, String> {
+    let Some(req) = find_reader() else { return Ok(None) };
+    if !is_dwg(bytes) {
+        return Err("the file is not a DWG (no AC10xx signature)".into());
+    }
+    let dir = work_dir();
+    let (in_dir, out_dir) = (dir.join("in"), dir.join("out"));
+    let (input, out_file) = (in_dir.join("drawing.dwg"), out_dir.join("drawing.dxf"));
+    let result = (|| {
+        for d in [&in_dir, &out_dir] {
+            std::fs::create_dir_all(d).map_err(|e| format!("a temporary folder could not be created: {e}"))?;
+        }
+        std::fs::write(&input, bytes).map_err(|e| format!("the DWG could not be written to a temporary file: {e}"))?;
+        run_dir(&req, &input, &in_dir, &out_dir, &out_file, true)?;
+        let text = std::fs::read(&out_file).map_err(|_| "the converter finished but wrote no DXF: it may not read this DWG version".to_string())?;
+        let text = String::from_utf8_lossy(&text).into_owned();
+        if !text.contains("SECTION") || !text.contains("EOF") {
+            return Err("the converter wrote a file that is not a DXF; it was discarded".to_string());
+        }
+        Ok(text)
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    result.map(Some)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,5 +300,27 @@ mod tests {
         let prefix = format!("nanoarch-dwg-{}-", std::process::id());
         let left = std::fs::read_dir(std::env::temp_dir()).unwrap().filter_map(Result::ok).filter(|e| e.file_name().to_string_lossy().starts_with(&prefix)).count();
         assert_eq!(left, 0, "the temporary folders are deleted");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_dwg_is_read_through_the_converter_found_here_and_without_one_nothing_is_guessed() {
+        let d = dir();
+        let dwg = b"AC1027\0\0\0\0\0\0 a drawing".to_vec();
+        // ODA stand-in for the import direction: `<in> <out> <version> DXF 0 1 <file>`; writes drawing.dxf into the output folder.
+        let oda = d.join("oda_to_dxf.cmd");
+        std::fs::write(&oda, "@echo off\r\nif not exist \"%~1\\drawing.dwg\" exit /b 3\r\nif not \"%~4\"==\"DXF\" exit /b 4\r\n(echo 0& echo SECTION& echo 2& echo ENTITIES& echo 0& echo ENDSEC& echo 0& echo EOF)> \"%~2\\drawing.dxf\"\r\nexit /b 0\r\n").unwrap();
+        // Every case in one test: the converter is chosen through the process environment, which tests share.
+        unsafe { std::env::set_var("NANOARCH_DWG_CONVERTER", format!("oda;{}", oda.to_string_lossy())) };
+        let dxf = dwg_to_dxf(&dwg).unwrap().unwrap();
+        assert!(dxf.contains("SECTION") && dxf.contains("EOF"));
+        assert!(dwg_to_dxf(b"not a drawing at all").unwrap_err().contains("not a DWG"));
+        let junk = d.join("junk_dxf.cmd");
+        std::fs::write(&junk, "@echo off\r\n<nul set /p =nothing useful> \"%~3\"\r\nexit /b 0\r\n").unwrap();
+        unsafe { std::env::set_var("NANOARCH_DWG_CONVERTER", format!("libredwg;{}", junk.to_string_lossy())) };
+        assert!(dwg_to_dxf(&dwg).unwrap_err().contains("not a DXF"));
+        unsafe { std::env::set_var("NANOARCH_DWG_CONVERTER", format!("oda;{}", d.join("missing.exe").to_string_lossy())) };
+        assert_eq!(dwg_to_dxf(&dwg).unwrap(), None, "a converter that is not there is no converter");
+        unsafe { std::env::remove_var("NANOARCH_DWG_CONVERTER") };
     }
 }

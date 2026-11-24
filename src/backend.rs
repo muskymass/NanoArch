@@ -3163,6 +3163,11 @@ impl App {
             Some(t) => serde_json::from_value(t.clone()).map_err(|e| format!("folder import: texts must map file paths to text: {e}"))?,
             None => Default::default(),
         };
+        // A DWG the page had converted to DXF by the converter installed on this computer: `{ relative path: DXF text }`.
+        let dxf_texts: std::collections::BTreeMap<String, String> = match args.get("dxf_texts").filter(|t| !t.is_null()) {
+            Some(t) => serde_json::from_value(t.clone()).map_err(|e| format!("folder import: dxf_texts must map file paths to DXF text: {e}"))?,
+            None => Default::default(),
+        };
         let root = std::path::Path::new(root);
         if !root.is_dir() {
             return Err(format!("folder import: {} is not a folder", root.display()));
@@ -3235,7 +3240,14 @@ impl App {
             let bytes = std::fs::read(p);
             let (size, crc) = bytes.as_ref().map_or((0, String::new()), |b| (b.len() as u64, format!("{:08x}", nnx_core::xlsx::crc32(b))));
             let mut facts: Vec<InputFact> = Vec::new();
-            let (kind, status, detail): (&str, &str, String) = match (&bytes, ext.as_str()) {
+            // A converted DWG is read as the DXF it became (size and CRC above stay those of the DWG itself).
+            let converted = if ext == "dwg" { dxf_texts.get(&rel) } else { None };
+            let read_bytes: Result<Vec<u8>, String> = match converted {
+                Some(t) => Ok(t.clone().into_bytes()),
+                None => bytes.as_ref().map(Clone::clone).map_err(|e| e.to_string()),
+            };
+            let ext_read = if converted.is_some() { "dxf".to_string() } else { ext.clone() };
+            let (kind, status, detail): (&str, &str, String) = match (&read_bytes, ext_read.as_str()) {
                 (Err(e), _) => ("other", "needs_you", format!("cannot be read: {e}")),
                 (Ok(b), "xlsx") => match nnx_core::areatable::import(b, None) {
                     Ok(t) if !have_rooms && !t.rooms.is_empty() => {
@@ -3279,7 +3291,7 @@ impl App {
                     Err(e) => ("ifc", "needs_you", e),
                 },
                 (Ok(_), "rvt" | "rfa") => ("revit", "unsupported", "a Revit file cannot be read: export it to IFC".into()),
-                (Ok(_), "dwg") => ("plot", "unsupported", "a binary DWG cannot be read here: save it as DXF (or convert it with the DWG converter)".into()),
+                (Ok(_), "dwg") => ("plot", "needs_you", "a binary DWG: no DWG converter was found on this computer (install the ODA File Converter or LibreDWG's dwg2dxf), or save the drawing as DXF".into()),
                 (Ok(b), "txt" | "md" | "csv" | "tsv" | "json" | "xml" | "html" | "htm" | "rtf" | "svg") => {
                     let text = String::from_utf8_lossy(b).into_owned();
                     texts_read.insert(rel.clone(), Value::String(text.chars().take(12_000).collect()));
@@ -7417,6 +7429,25 @@ END-ISO-10303-21;
         assert!(missing.contains(&"city".to_string()), "no file named the city, so it stays missing: {missing:?}");
         assert!(App::default().handle("folder_import", &json!({ "path": dir.to_str().unwrap() })).unwrap_err().contains("name"));
         assert!(App::default().handle("folder_import", &json!({ "path": dir.join("nope").to_str().unwrap(), "name": "x" })).unwrap_err().contains("not a folder"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_dwg_is_read_as_the_dxf_it_was_converted_to_and_waits_for_a_converter_otherwise() {
+        let dir = std::env::temp_dir().join(format!("nnx_folder_dwg_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dwg = b"AC1027\0\0\0\0\0\0 not really a drawing";
+        std::fs::write(dir.join("site.dwg"), dwg).unwrap();
+        let path = dir.to_str().unwrap();
+        let find = |r: &Value| r["inputs"].as_array().unwrap().iter().find(|i| i["rel"] == "site.dwg").unwrap().clone();
+        let without = App::default().handle("folder_import", &json!({ "path": path, "name": "P" })).unwrap();
+        assert_eq!((find(&without)["status"].as_str(), find(&without)["kind"].as_str()), (Some("needs_you"), Some("plot")));
+        assert!(find(&without)["detail"].as_str().unwrap().contains("converter"));
+        let dxf = "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n6\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\nP\n90\n4\n70\n1\n10\n0\n20\n0\n10\n18\n20\n0\n10\n18\n20\n22\n10\n0\n20\n22\n0\nENDSEC\n0\nEOF\n";
+        let with = App::default().handle("folder_import", &json!({ "path": path, "name": "P", "dxf_texts": { "site.dwg": dxf } })).unwrap();
+        assert_eq!(find(&with)["status"], "read");
+        assert_eq!((with["draft"]["plot_width_m"].as_f64(), with["draft"]["plot_length_m"].as_f64()), (Some(18.0), Some(22.0)));
+        assert_eq!(find(&with)["bytes"], dwg.len(), "the input keeps the size of the DWG itself");
         std::fs::remove_dir_all(&dir).ok();
     }
 

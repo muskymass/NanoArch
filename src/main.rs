@@ -84,6 +84,8 @@ fn respond(app: &Shared, body: &str) -> String {
             r
         }
         "folder_file" => folder_file(&args),
+        // A DWG of the imported folder converted to DXF by a converter installed here; it may take a while, so it runs outside the lock.
+        "dwg_to_dxf" => dwg_to_dxf_file(&args),
         "sketch_pdfjs" => Ok(json!({ "lib": PDFJS, "worker": PDFJS_WORKER })),
         // The code library (the Saudi Building Code PDFs): the page reads a file only to look a clause up while the user works.
         "code_library_list" => code_library_list(),
@@ -229,6 +231,18 @@ fn folder_file(args: &Value) -> Result<Value, String> {
         return Ok(json!({ "picked": { "name": path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), "kind": "docx", "b64": nnx_core::xlsx::base64_encode(&bytes) } }));
     }
     Ok(json!({ "picked": read_sketch(&path)? }))
+}
+
+/// `dwg_to_dxf`: `{ path }` of a DWG inside the imported folder. `{ dxf: text }` when a converter is installed, `{ dxf: null }` when none is.
+fn dwg_to_dxf_file(args: &Value) -> Result<Value, String> {
+    let wanted = args.get("path").and_then(Value::as_str).ok_or("dwg: the path is missing")?;
+    let root = IMPORT_FOLDER.lock().unwrap_or_else(|e| e.into_inner()).clone().ok_or("dwg: no folder has been imported")?;
+    let path = std::fs::canonicalize(wanted).map_err(|e| format!("dwg: cannot read {wanted}: {e}"))?;
+    if !path.starts_with(&root) || !path.extension().is_some_and(|x| x.eq_ignore_ascii_case("dwg")) {
+        return Err("dwg: that is not a DWG of the imported folder".into());
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("dwg: {}: {e}", path.display()))?;
+    Ok(json!({ "dxf": dwg::dwg_to_dxf(&bytes)? }))
 }
 
 fn pick_sketch() -> Result<Value, String> {

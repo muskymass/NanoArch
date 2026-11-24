@@ -1479,7 +1479,13 @@ $("fi-pick").onclick = () => busy(async () => {
     if (ext !== "pdf" && ext !== "docx") continue;
     try { const tx = await fiText(f.path, ext); if (tx.trim().length > 40) texts[f.rel] = tx; } catch (e) { /* the file stays listed as needing the user */ }
   }
-  if (Object.keys(texts).length) r = await call("folder_import", { path: folder, name, texts });
+  // A DWG is converted to DXF by a converter installed on this computer (none installed: it stays listed as needing one).
+  const dxf_texts = {};
+  for (const f of r.files) {
+    if (f.rel.split(".").pop().toLowerCase() !== "dwg") continue;
+    try { const c = await call("dwg_to_dxf", { path: f.path }); if (c.dxf) dxf_texts[f.rel] = c.dxf; } catch (e) { toast(`${f.rel}: ${e.message || e}`); }
+  }
+  if (Object.keys(texts).length || Object.keys(dxf_texts).length) r = await call("folder_import", { path: folder, name, texts, dxf_texts });
   const d = r.draft;
   FI.inputs = r.inputs || []; FI.folder = folder;
   $("title").value = name;
