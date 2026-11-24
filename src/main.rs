@@ -8,6 +8,7 @@ mod backend;
 mod editing;
 mod levels;
 mod ollama;
+mod dwg;
 mod voice;
 
 use serde_json::{Value, json};
@@ -77,6 +78,8 @@ fn respond(app: &Shared, body: &str) -> String {
         "ai_status" | "ai_brief" | "ai_sketch" | "ai_deed" => ollama::handle(cmd, &args),
         // A recording is transcribed by a program on this computer; it may take a while, so it runs outside the lock.
         "voice_transcribe" => voice::handle(&args),
+        // A real DWG: the DXF comes from the engine under the lock, then a converter program on this computer runs outside it.
+        "export_dwg" => export_dwg(app, &args),
         // The lock is held only while the engines run, never while a dialog is open.
         _ => lock(app).handle(cmd, &args),
     };
@@ -85,6 +88,13 @@ fn respond(app: &Shared, body: &str) -> String {
         Err(error) => json!({ "ok": false, "error": error }),
     };
     format!("window.__resolve({id}, {payload});")
+}
+
+/// `export_dwg`: the plan's DXF (same arguments and gate as `export_dxf`) converted to DWG by the converter named in `args`.
+fn export_dwg(app: &Shared, args: &Value) -> Result<Value, String> {
+    let dxf = lock(app).handle("export_dxf", args)?;
+    let text = dxf.get("dxf").and_then(Value::as_str).ok_or("the plan produced no DXF")?;
+    dwg::convert(text, args)
 }
 
 /// Where an export goes. Normally the user picks it in a Save dialog. Setting the environment variable

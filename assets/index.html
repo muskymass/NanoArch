@@ -239,6 +239,7 @@ main.hl{grid-template-columns:1fr 420px}main.hr{grid-template-columns:400px 1fr}
           <button class="mi" id="exportifc" disabled data-i="export_ifc"></button>
           <button class="mi" id="exportdxf" disabled data-i="export_dxf"></button>
           <button class="mi" id="exportdxfall" disabled style="display:none" data-i="export_dxf_all"></button>
+          <button class="mi" id="exportdwg" disabled data-i="export_dwg"></button>
           <button class="mi" id="exportrep" disabled data-i="rep_pdf"></button>
           <button class="mi" id="exportrepx" disabled data-i="rep_xlsx"></button>
           <button class="mi" id="exportpdf" disabled data-i="export_pdf"></button>
@@ -525,7 +526,7 @@ ar: {
   t_sbc:"المشروع والكود", sbc_note:"تفاصيل المشروع وحدود البلدية (الارتدادات ونسبة البناء) تُدخل من أنظمة البلدية مع مصدرها. فحص الكود أولي ولا يغني عن الجهة المعتمدة.", bt:"نوع المبنى", bt_villa:"فيلا", bt_house:"منزل", bt_palace:"قصر", bt_apartment_building:"عمارة سكنية", p_style:"الطراز المعماري", p_climate:"المنطقة المناخية", p_smart:"التقنيات الذكية (مفصولة بفاصلة)",
   lim_h:"حدود البلدية", lim_f:"أدنى ارتداد أمامي (م)", lim_b:"أدنى ارتداد خلفي (م)", lim_s:"أدنى ارتداد جانبي (م)", lim_c:"أقصى نسبة بناء (%)", lim_src:"مصدر هذه الحدود (النظام، المادة، البلدية)", lim_enforce:"ارفض أي تعديل يضيف مخالفة", proj_save:"احفظ تفاصيل المشروع", proj_saved:"حُفظت تفاصيل المشروع", plan_outdated:"تغيرت الارتدادات بعد توليد المخطط: ولّد البدائل من جديد ليتبعها المخطط.",
   edge_x0:"يسار", edge_x1:"يمين", edge_y0:"أسفل", edge_y1:"أعلى", i_grow:"غيّر الضلع (مم)", i_swap:"بدّل المكان مع", i_merge:"احذف وادمج في", i_nb:"جار", i_nb_none:"لا جار يشاركه ضلعاً كاملاً: لا تبديل ولا دمج.",
-  export_dxf:"تصدير DXF", export_dxf_all:"DXF كل الأدوار", dxf_done:"DXF: {n} كياناً على {l} طبقة. الأبعاد بالمليمتر والتصدير أولي.",
+  export_dxf:"تصدير DXF", export_dxf_all:"DXF كل الأدوار", export_dwg:"تصدير DWG", dwg_conv:"مسار برنامج التحويل (ODAFileConverter أو dxf2dwg):", dwg_done:"DWG: {b} بايتاً ({s}) عبر {c}.", dxf_done:"DXF: {n} كياناً على {l} طبقة. الأبعاد بالمليمتر والتصدير أولي.",
   export_ifc:"تصدير IFC", ifc_done:"IFC: {n} عنصراً (جدران {w}، أبواب {d}، نوافذ {x}، فراغات {s}). الأبعاد بالمليمتر والتصدير أولي.",
   r_floor:"الدور", example2:"مثال بدورين", stair_note:"عدد الأدوار أكبر من 1: تُرسم الأدوار فعلاً ويلزم إدخال الدرج (لا قيم افتراضية). أعطِ كل فراغ رقم دوره (1 أرضي)؛ دور بلا فراغات يكرر الذي تحته. يُرسم عمود الدرج (البئر) فقط، لا الدرجات.", r_phase:"المرحلة",qto_phase:"المرحلة",phase_all:"كل المراحل",phase_unset:"بلا مرحلة",phase:{EXISTING:"قائم",TO_BE_DEMOLISHED:"يُهدم",TO_BE_MODIFIED:"يُعدّل",NEW:"جديد",TEMPORARY:"مؤقت",UNVERIFIED:"غير متحقق"},wall_ext:"سماكة الجدار الخارجي (مم)، اختياري",wall_int:"سماكة الجدار الداخلي (مم)، اختياري", wall_h:"ارتفاع الجدار = ارتفاع الدور (مم)، اختياري (الافتراضي 3000)",stair_w:"عرض الدرج (م)", stair_l:"طول الدرج (م)", stair_side:"جهة الدرج", lv_ground:"الأرضي", lv_n:"الدور {n}", lv_all:"كل الأدوار", v_level:"الأدوار",
   to3d:"3D", to2d:"المخطط 2D", v_slab:"السقف", v_struct:"الإنشائي", v_floor:"الأرضيات", v_glass:"الزجاج", v_mep:"نقاط MEP", v_top:"من أعلى", v_reset:"إعادة الضبط", v_solids:"مجسم", v_visual:"سماكة بصرية فقط: لا عمق مصمَّم", v_hint:"اسحب للدوران، Shift أو الزر الأيمن للتحريك، العجلة للتقريب، انقر لتحديد عنصر.",
@@ -574,7 +575,7 @@ en: {
   t_sbc:"Project and code", sbc_note:"Project details and the municipality's limits (setbacks, plot coverage) are entered from the municipal regulations with their source. The code check is preliminary and does not replace the approving authority.", bt:"Building type", bt_villa:"Villa", bt_house:"House", bt_palace:"Palace", bt_apartment_building:"Apartment building", p_style:"Architectural style", p_climate:"Climate zone", p_smart:"Smart technology (comma separated)",
   lim_h:"Municipal limits", lim_f:"Minimum front setback (m)", lim_b:"Minimum rear setback (m)", lim_s:"Minimum side setback (m)", lim_c:"Maximum coverage (%)", lim_src:"Source of these limits (regulation, article, municipality)", lim_enforce:"Refuse any edit that adds a violation", proj_save:"Save project details", proj_saved:"Project details saved", plan_outdated:"The setbacks changed after the plan was generated: generate again so the plan follows them.",
   edge_x0:"Left", edge_x1:"Right", edge_y0:"Bottom", edge_y1:"Top", i_grow:"Change the side (mm)", i_swap:"Swap places with", i_merge:"Delete and merge into", i_nb:"neighbour", i_nb_none:"No neighbour shares a full wall: no swap or merge.",
-  export_dxf:"Export DXF", export_dxf_all:"DXF all levels", dxf_done:"DXF: {n} entities on {l} layers. Millimetres; preliminary export.",
+  export_dxf:"Export DXF", export_dxf_all:"DXF all levels", export_dwg:"Export DWG", dwg_conv:"Path of the converter program (ODAFileConverter or dxf2dwg):", dwg_done:"DWG: {b} bytes ({s}) via {c}.", dxf_done:"DXF: {n} entities on {l} layers. Millimetres; preliminary export.",
   export_ifc:"Export IFC", ifc_done:"IFC: {n} products (walls {w}, doors {d}, windows {x}, spaces {s}). Millimetres; preliminary export.",
   r_floor:"Floor", example2:"Two-floor example", stair_note:"Floors above 1 draw real levels and need the stair (no defaults). Give each room its floor number (1 is the ground floor); a floor with no rooms repeats the one below. Only the stair shaft is drawn, not the treads.", r_phase:"Phase",qto_phase:"Phase",phase_all:"All phases",phase_unset:"No phase",phase:{EXISTING:"Existing",TO_BE_DEMOLISHED:"Demolish",TO_BE_MODIFIED:"Modify",NEW:"New",TEMPORARY:"Temporary",UNVERIFIED:"Unverified"},wall_ext:"Exterior wall thickness (mm), optional",wall_int:"Interior wall thickness (mm), optional", wall_h:"Wall height = storey height (mm), optional (default 3000)",stair_w:"Stair width (m)", stair_l:"Stair length (m)", stair_side:"Stair side", lv_ground:"Ground", lv_n:"Floor {n}", lv_all:"All levels", v_level:"Levels",
   to3d:"3D", to2d:"2D plan", v_slab:"Roof slab", v_struct:"Structure", v_floor:"Floors", v_glass:"Glass", v_mep:"MEP points", v_top:"Top view", v_reset:"Reset", v_solids:"solids", v_visual:"visual thickness only: no designed depth", v_hint:"Drag to orbit, Shift or right button to pan, wheel to zoom, click to select an element.",
@@ -882,7 +883,7 @@ async function choose(i) {
   renderAlts(); renderNotes(); setPlanButtons(true); $("p-qto").innerHTML = `<div class="empty">${t("working")}</div>`; $("schedout").innerHTML = "";
   loadQto(); refreshStatus(); try { anBuild(); } catch (e) { /* panel not built yet */ }
 }
-function setPlanButtons(on) { ["exportrep", "exportrepx", "viewsel", "undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportpdf", "saveproj", "to3d", "split", "draft"].forEach(id => $(id).disabled = !on); if (on && typeof v5SyncFin === "function") v5SyncFin(); }
+function setPlanButtons(on) { ["exportrep", "exportrepx", "viewsel", "undo", "redo", "sync", "exportsvg", "exportifc", "exportdxf", "exportdxfall", "exportdwg", "exportpdf", "saveproj", "to3d", "split", "draft"].forEach(id => $(id).disabled = !on); if (on && typeof v5SyncFin === "function") v5SyncFin(); }
 
 // ---------------------------------------------------------------- toolbar
 // The generated SVG text is kept as is, so an export is the real file and not the browser's re-serialisation.
@@ -1012,6 +1013,17 @@ const exportDxf = all => busy(async () => {
   const total = Object.values(r.counts).reduce((a, b) => a + b, 0);
   const s = await call("export", { name: (all ? "plan-all-levels" : "plan") + (views ? "-with-views" : "") + ".dxf", data: r.dxf });
   toast(s.saved ? t("dxf_done").replace("{n}", total).replace("{l}", Object.keys(r.counts).length) : t("cancelled"));
+});
+// ---------------------------------------------------------------- DWG export (through a converter installed on this computer)
+$("exportdwg").onclick = () => busy(async () => {
+  let exe = localStorage.getItem("nx_dwg_exe") || "";
+  const typed = prompt(t("dwg_conv"), exe);
+  if (typed === null) { toast(t("cancelled")); return; }
+  exe = typed.trim(); localStorage.setItem("nx_dwg_exe", exe);
+  const converter = /dxf2dwg/i.test(exe) ? "libredwg" : "oda";
+  const r = await call("export_dwg", { converter, converter_exe: exe, views: $("dxfviews").checked });
+  const s = await call("export", { name: r.name, b64: r.dwg_b64 });
+  toast(s.saved ? t("dwg_done").replace("{b}", r.bytes).replace("{s}", r.signature).replace("{c}", r.converter) : t("cancelled"));
 });
 $("exportdxf").onclick = () => exportDxf(false);
 $("exportdxfall").onclick = () => exportDxf(true);
