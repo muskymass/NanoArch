@@ -487,6 +487,7 @@ impl App {
             "share_stop" => Ok(self.share_stop()),
             "facade_render" => self.facade_render(args),
             "ar_preview" => self.ar_preview(args),
+            "tour_video" => self.tour_video(args),
             "stl_export" => self.stl_export(args),
             "exec" => self.exec_state(),
             "cost" => self.cost_report(),
@@ -3740,6 +3741,37 @@ impl App {
         let id = self.project().and_then(|p| p.meta.finishes.facade).ok_or("facade_render: choose a facade finish first (finishes_set)")?;
         let finish = nnx_core::finishes::find("facade", &id).ok_or_else(|| format!("facade_render: unknown facade finish '{id}'"))?;
         let page = nnx_core::facade_render::render_html(&scene, &self.display_title(), arabic, finish, &input)?;
+        serde_json::to_value(page).map_err(|e| e.to_string())
+    }
+
+    /// The offline orbit-video page (preview plus local WebM recording), lit by the sun the user enters:
+    /// `{ latitude_deg, day, solar_hour, north_offset_deg, duration_s, fps, turns, clockwise, pitch_deg, distance_factor, width, height,
+    /// bitrate_kbps, lang? }`. Every value is the user's and a missing one is named. The facade finish must have been chosen.
+    fn tour_video(&self, args: &Value) -> Result<Value, String> {
+        let num = |k: &str| args.get(k).and_then(Value::as_f64).ok_or_else(|| format!("tour_video: {k} is missing"));
+        let whole = |k: &str| args.get(k).and_then(Value::as_u64).and_then(|d| u32::try_from(d).ok()).ok_or_else(|| format!("tour_video: {k} is missing (a whole number)"));
+        let sun = nnx_core::facade_render::RenderInput {
+            latitude_deg: num("latitude_deg")?,
+            day: whole("day")?,
+            solar_hour: num("solar_hour")?,
+            north_offset_deg: args.get("north_offset_deg").and_then(Value::as_f64).ok_or("tour_video: north_offset_deg is missing (0 when the plan's up is true north)")?,
+        };
+        let video = nnx_core::tourvideo::TourVideoInput {
+            duration_s: num("duration_s")?,
+            fps: whole("fps")?,
+            turns: num("turns")?,
+            clockwise: args.get("clockwise").and_then(Value::as_bool).ok_or("tour_video: clockwise is missing (true or false)")?,
+            pitch_deg: num("pitch_deg")?,
+            distance_factor: num("distance_factor")?,
+            width: whole("width")?,
+            height: whole("height")?,
+            bitrate_kbps: whole("bitrate_kbps")?,
+        };
+        let arabic = args.get("lang").and_then(Value::as_str) != Some("en");
+        let scene = nnx_core::model3d::build_styled(&self.doc()?.model, self.style());
+        let id = self.project().and_then(|p| p.meta.finishes.facade).ok_or("tour_video: choose a facade finish first (finishes_set)")?;
+        let finish = nnx_core::finishes::find("facade", &id).ok_or_else(|| format!("tour_video: unknown facade finish '{id}'"))?;
+        let page = nnx_core::tourvideo::render_html(&scene, &self.display_title(), arabic, finish, &sun, &video).map_err(|e| format!("tour_video: {e}"))?;
         serde_json::to_value(page).map_err(|e| e.to_string())
     }
 
@@ -8275,6 +8307,30 @@ END-ISO-10303-21;
         assert!(html.contains("<canvas id=\"gl\">") && html.contains("\"type\":1") && !html.contains("src=\"http"));
         assert!(r["sun"]["altitude_deg"].as_f64().unwrap() > 0.0 && r["boxes"].as_u64().unwrap() > 0);
         assert!(App::default().handle("facade_render", &sun).is_err());
+    }
+
+    #[test]
+    fn the_tour_video_needs_every_choice_and_is_one_offline_page_with_a_recorder() {
+        let mut app = started();
+        let args = json!({ "latitude_deg": 24.7, "day": 172, "solar_hour": 10.0, "north_offset_deg": 0.0, "duration_s": 12.0, "fps": 30, "turns": 1.0,
+            "clockwise": false, "pitch_deg": 20.0, "distance_factor": 1.0, "width": 1280, "height": 720, "bitrate_kbps": 6000, "lang": "en" });
+        assert!(app.handle("tour_video", &args).unwrap_err().contains("facade finish"));
+        app.handle("finishes_set", &json!({ "finishes": { "facade": "travertine" } })).unwrap();
+        for missing in ["latitude_deg", "day", "solar_hour", "north_offset_deg", "duration_s", "fps", "turns", "clockwise", "pitch_deg", "distance_factor", "width", "height", "bitrate_kbps"] {
+            let mut a = args.clone();
+            a.as_object_mut().unwrap().remove(missing);
+            assert!(app.handle("tour_video", &a).unwrap_err().contains(missing), "{missing}");
+        }
+        let mut odd = args.clone();
+        odd["width"] = json!(1281);
+        assert!(app.handle("tour_video", &odd).unwrap_err().contains("even"));
+        let r = app.handle("tour_video", &args).unwrap();
+        assert_eq!(r["name"], "tour-video.html");
+        assert_eq!(r["video_name"], "tour-video.webm");
+        assert_eq!(r["frame_count"], 360);
+        let html = r["html"].as_str().unwrap();
+        assert!(html.contains("MediaRecorder") && html.contains("captureStream") && !html.contains("@@") && !html.contains("src=\"http"));
+        assert!(App::default().handle("tour_video", &args).is_err());
     }
 
     #[test]

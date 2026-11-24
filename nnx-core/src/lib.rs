@@ -114,6 +114,7 @@ pub mod templates;
 pub mod thermal;
 pub mod facade_render;
 pub mod arpreview;
+pub mod tourvideo;
 pub mod tour;
 pub mod vertical;
 pub mod wireless;
