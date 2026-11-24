@@ -133,6 +133,7 @@ pub mod procure;
 pub mod payment;
 pub mod progress;
 pub mod sitephotos;
+pub mod collab;
 pub mod decisions;
 pub mod quality;
 pub mod execution;

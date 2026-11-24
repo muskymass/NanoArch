@@ -39,6 +39,19 @@ pub struct App {
     show_clouds: bool,
     /// The running tour link (`share_tour`), if any. It serves a snapshot and closes with the app.
     share: Option<nnx_core::share::ShareServer>,
+    /// The collaboration session (`collab_begin`): the saved state both people started from, and the exchanged copies.
+    collab: Option<Collab>,
+}
+
+/// One collaboration session. The base is the model at `collab_begin`, or the last merged model.
+struct Collab {
+    replica: String,
+    base: nnx_core::Model,
+    /// This computer's copy as it was when the exchange started; the merge applies only while the document still equals it.
+    mine: Option<nnx_core::collab::Snapshot>,
+    theirs: Option<nnx_core::collab::Snapshot>,
+    host: Option<nnx_core::collab::Host>,
+    host_error: Option<String>,
 }
 
 /// The buildable rectangle (plot minus setbacks) and the entrance side.
@@ -482,6 +495,13 @@ impl App {
             "asbuilt_svg" => self.asbuilt_svg(),
             "tour_export" => self.tour_export(args),
             "client_view_export" => self.client_view_export(args),
+            "collab_begin" => self.collab_begin(args),
+            "collab_host" => self.collab_host(args),
+            "collab_join" => self.collab_join(args),
+            "collab_status" => self.collab_status(),
+            "collab_review" => self.collab_merge(args, false),
+            "collab_merge" => self.collab_merge(args, true),
+            "collab_end" => Ok(self.collab_end()),
             "share_tour" => self.share_tour(args),
             "share_status" => Ok(self.share_status()),
             "share_stop" => Ok(self.share_stop()),
@@ -3799,6 +3819,137 @@ impl App {
         let scene = nnx_core::model3d::build_styled(&self.doc()?.model, self.style());
         let page = nnx_core::arpreview::render_html(&scene, &self.display_title(), arabic, &photo, &input).map_err(|e| format!("ar_preview: {e}"))?;
         serde_json::to_value(page).map_err(|e| e.to_string())
+    }
+
+    // ---- Collaboration (tracker item 94) ----
+
+    fn collab_begin(&mut self, args: &Value) -> Result<Value, String> {
+        let replica = args.get("replica").and_then(Value::as_str).ok_or("collab_begin: replica is missing (who you are in this session, e.g. your name)")?;
+        let base = self.doc()?.model.clone();
+        nnx_core::collab::Snapshot::new(replica, &base, &base)?;
+        self.collab = Some(Collab { replica: replica.trim().to_string(), base, mine: None, theirs: None, host: None, host_error: None });
+        let mut v = self.collab_status()?;
+        v["notes"] = json!(["both people must open the same saved file before this step: the exchange is refused when the starting states differ", "save the project first if the file on disk is not the copy you both opened"]);
+        Ok(v)
+    }
+
+    fn collab_session(&mut self, who: &str) -> Result<&mut Collab, String> {
+        self.collab.as_mut().ok_or_else(|| format!("{who}: start a session first (collab_begin)"))
+    }
+
+    fn collab_wait(args: &Value, who: &str) -> Result<std::time::Duration, String> {
+        let s = args.get("wait_s").and_then(Value::as_u64).ok_or_else(|| format!("{who}: wait_s is missing (1 to {} seconds)", nnx_core::collab::MAX_WAIT_S))?;
+        Ok(std::time::Duration::from_secs(s))
+    }
+
+    fn collab_code<'a>(args: &'a Value, who: &str) -> Result<&'a str, String> {
+        args.get("code").and_then(Value::as_str).ok_or_else(|| format!("{who}: code is missing (a session code of 6 or more characters that you both agree on)"))
+    }
+
+    /// Opens this computer to ONE partner. Returns at once with the address to give them; `collab_status` shows when they joined.
+    fn collab_host(&mut self, args: &Value) -> Result<Value, String> {
+        let local = match args.get("scope").and_then(Value::as_str) {
+            Some("local") => true,
+            Some("lan") => false,
+            _ => return Err("collab_host: scope is missing ('local' is this machine only, 'lan' is the local network)".into()),
+        };
+        let port = match args.get("port") {
+            None | Some(Value::Null) => 0,
+            Some(v) => v.as_u64().and_then(|p| u16::try_from(p).ok()).ok_or("collab_host: port must be a number from 0 to 65535")?,
+        };
+        let code = Self::collab_code(args, "collab_host")?.to_string();
+        let wait = Self::collab_wait(args, "collab_host")?;
+        let model = self.doc()?.model.clone();
+        let c = self.collab_session("collab_host")?;
+        let mine = nnx_core::collab::Snapshot::new(&c.replica, &c.base, &model)?;
+        c.host = None;
+        c.theirs = None;
+        c.host_error = None;
+        let host = nnx_core::collab::Host::start(&code, local, port, wait, mine.clone())?;
+        let bound = host.addr();
+        let reach = if local { bound.to_string() } else { format!("{}:{}", nnx_core::share::lan_address()?, bound.port()) };
+        c.mine = Some(mine);
+        c.host = Some(host);
+        let mut v = self.collab_status()?;
+        v["join_address"] = json!(reach);
+        v["notes"] = json!(["give your partner this address and the session code; the code is sent unencrypted, so use a trusted network", "a lan address needs the firewall to allow the incoming connections of this application"]);
+        Ok(v)
+    }
+
+    fn collab_join(&mut self, args: &Value) -> Result<Value, String> {
+        let address = args.get("address").and_then(Value::as_str).ok_or("collab_join: address is missing (the host address, e.g. 192.168.1.20:7070)")?.to_string();
+        let code = Self::collab_code(args, "collab_join")?.to_string();
+        let wait = Self::collab_wait(args, "collab_join")?;
+        let model = self.doc()?.model.clone();
+        let c = self.collab_session("collab_join")?;
+        let mine = nnx_core::collab::Snapshot::new(&c.replica, &c.base, &model)?;
+        let theirs = nnx_core::collab::connect(&address, &code, &mine, wait)?;
+        c.host = None;
+        c.host_error = None;
+        c.mine = Some(mine);
+        c.theirs = Some(theirs);
+        self.collab_status()
+    }
+
+    fn collab_status(&mut self) -> Result<Value, String> {
+        let c = self.collab_session("collab_status")?;
+        if let Some(h) = &c.host {
+            match h.state() {
+                nnx_core::collab::HostState::Waiting => {}
+                nnx_core::collab::HostState::Done(s) => {
+                    c.theirs = Some(*s);
+                    c.host = None;
+                }
+                nnx_core::collab::HostState::Failed(e) => {
+                    c.host_error = Some(e);
+                    c.host = None;
+                }
+            }
+        }
+        Ok(json!({
+            "session": true, "replica": c.replica, "waiting_for_partner": c.host.is_some(), "host_error": c.host_error,
+            "partner": c.theirs.as_ref().map(|t| t.replica.clone()), "exchanged": c.mine.is_some() && c.theirs.is_some(),
+            "base_hash": c.base.state_hash().to_string(),
+        }))
+    }
+
+    /// `apply` false only previews (`collab_review`): conflicts, issues and counts. True (`collab_merge`) applies the merge as one
+    /// undoable step when no conflict is left open.
+    fn collab_merge(&mut self, args: &Value, apply: bool) -> Result<Value, String> {
+        let who = if apply { "collab_merge" } else { "collab_review" };
+        let choices: BTreeMap<String, String> = match args.get("choices") {
+            None | Some(Value::Null) => BTreeMap::new(),
+            Some(v) => serde_json::from_value(v.clone()).map_err(|e| format!("{who}: choices must map a conflict key to the replica name whose value is kept: {e}"))?,
+        };
+        self.collab_status().map_err(|_| format!("{who}: start a session first (collab_begin)"))?;
+        let c = self.collab_session(who)?;
+        let (mine, theirs) = match (&c.mine, &c.theirs) {
+            (Some(m), Some(t)) => (m.clone(), t.clone()),
+            _ => return Err(format!("{who}: no copy has been exchanged yet (collab_host or collab_join first)")),
+        };
+        let base = c.base.clone();
+        let r = nnx_core::collab::merge(&base, (&mine.replica, &mine.model), (&theirs.replica, &theirs.model), &choices)?;
+        let mut out = json!({ "replicas": r.replicas, "conflicts": r.conflicts, "issues": r.issues, "stats": r.stats, "ready": r.model.is_some(), "applied": false });
+        let Some(merged) = r.model else { return Ok(out) };
+        out["merged_hash"] = json!(merged.state_hash().to_string());
+        if !apply {
+            return Ok(out);
+        }
+        let label = format!("Merge with {}", theirs.replica);
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let n = nnx_core::collab::apply_merged(doc, &merged, mine.model.state_hash(), &label)?;
+        let c = self.collab_session(who)?;
+        c.base = merged;
+        c.mine = None;
+        c.theirs = None;
+        out["applied"] = json!(true);
+        out["commands"] = json!(n);
+        out["notes"] = json!(["compare merged_hash with your partner: equal hashes mean both computers hold the same model", "the merge is one undoable step; the merged state is the new base for the next exchange", "your partner must apply the merge with the same choices on their computer"]);
+        Ok(out)
+    }
+
+    fn collab_end(&mut self) -> Value {
+        json!({ "was_active": self.collab.take().is_some() })
     }
 
     /// Start a link to the tour page: `{ view: "client" | "full", scope: "local" | "lan", expires_minutes (1..=10080), port?, lang? }`.
@@ -8160,6 +8311,78 @@ END-ISO-10303-21;
         assert_eq!(app.handle("site_photos_set", &ok).unwrap()["changed"], false);
         app.handle("undo", &json!({})).unwrap();
         assert!(app.handle("site_photos", &json!({})).unwrap()["inputs"]["photos"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn two_people_exchange_copies_resolve_a_conflict_by_name_and_merge_as_one_undoable_step() {
+        let d = |id: &str, by: &str| json!({ "id": id, "date": "2026-03-01", "title": format!("t {id}"), "decision": "x", "decidedBy": by });
+        let mut ali = started();
+        let mut sara = App { doc: Some(nnx_core::Document::new(ali.doc().unwrap().model.clone())), ..Default::default() };
+        let code = json!({ "code": "session-42", "wait_s": 20 });
+        let begin = |a: &mut App, who: &str| a.handle("collab_begin", &json!({ "replica": who })).unwrap();
+
+        // Nothing works before a session exists, and every input is named when missing.
+        assert!(ali.handle("collab_status", &json!({})).unwrap_err().contains("collab_begin"));
+        assert!(ali.handle("collab_begin", &json!({})).unwrap_err().contains("replica"));
+        assert!(App::default().handle("collab_begin", &json!({ "replica": "Ali" })).is_err());
+        begin(&mut ali, "Ali");
+        begin(&mut sara, "Sara");
+        let mut bad = code.clone();
+        bad["scope"] = json!("world");
+        assert!(ali.handle("collab_host", &bad).unwrap_err().contains("scope"));
+        let mut no_code = json!({ "scope": "local", "wait_s": 20 });
+        assert!(ali.handle("collab_host", &no_code).unwrap_err().contains("code"));
+        no_code["code"] = json!("short");
+        assert!(ali.handle("collab_host", &no_code).unwrap_err().contains("at least 6"));
+        assert!(ali.handle("collab_review", &json!({})).unwrap_err().contains("no copy has been exchanged"));
+
+        // Each edits the same project setting differently.
+        ali.handle("decisions_set", &json!({ "decisions": [d("a", "Ali")] })).unwrap();
+        sara.handle("decisions_set", &json!({ "decisions": [d("s", "Sara")] })).unwrap();
+        let mut host_args = code.clone();
+        host_args["scope"] = json!("local");
+        let hosted = ali.handle("collab_host", &host_args).unwrap();
+        let addr = hosted["join_address"].as_str().unwrap().to_string();
+        assert_eq!(hosted["waiting_for_partner"], true);
+        let mut join = code.clone();
+        join["address"] = json!(addr);
+        let mut wrong = join.clone();
+        wrong["code"] = json!("not-the-code");
+        assert!(sara.handle("collab_join", &wrong).unwrap_err().contains("wrong session code"));
+        assert_eq!(sara.handle("collab_join", &join).unwrap()["partner"], "Ali");
+        let mut st = json!(null);
+        for _ in 0..200 {
+            st = ali.handle("collab_status", &json!({})).unwrap();
+            if st["exchanged"] == true {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert_eq!(st["partner"], "Sara");
+
+        let r = ali.handle("collab_merge", &json!({})).unwrap();
+        assert_eq!(r["applied"], false);
+        assert_eq!(r["ready"], false);
+        let conflicts = r["conflicts"].as_array().unwrap();
+        assert!(!conflicts.is_empty(), "{r}");
+        let keys: Vec<String> = conflicts.iter().map(|c| c["key"].as_str().unwrap().to_string()).collect();
+        let choose = |who: &str| json!({ "choices": keys.iter().map(|k| (k.clone(), json!(who))).collect::<serde_json::Map<_, _>>() });
+        let depth_before = ali.doc().unwrap().undo_depth();
+        let ra = ali.handle("collab_merge", &choose("Sara")).unwrap();
+        assert_eq!(ra["applied"], true, "{ra}");
+        assert_eq!(ali.doc().unwrap().undo_depth(), depth_before + 1);
+        let rs = sara.handle("collab_merge", &choose("Sara")).unwrap();
+        assert_eq!(rs["applied"], true, "{rs}");
+        // Both computers now hold the same model, and Sara's decision won.
+        assert_eq!(ra["merged_hash"], rs["merged_hash"]);
+        assert_eq!(ali.doc().unwrap().model, sara.doc().unwrap().model);
+        let log = ali.handle("decisions", &json!({})).unwrap();
+        assert_eq!(log["inputs"]["decisions"][0]["id"], "s");
+        // The merge is one step: undo returns Ali's own copy.
+        assert!(ali.doc.as_mut().unwrap().undo());
+        assert_eq!(ali.handle("decisions", &json!({})).unwrap()["inputs"]["decisions"][0]["id"], "a");
+        assert_eq!(ali.handle("collab_end", &json!({})).unwrap()["was_active"], true);
+        assert!(ali.handle("collab_status", &json!({})).is_err());
     }
 
     #[test]
