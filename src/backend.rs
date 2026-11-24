@@ -518,6 +518,8 @@ impl App {
             "plugin_toggle" => self.plugin_toggle(args),
             "plugin_remove" => self.plugin_remove(args),
             "plugin_template" => self.plugin_template(args),
+            "licensed_pack_review" => self.licensed_pack_review(args),
+            "licensed_pack_load" => self.licensed_pack_load(args),
             "overlay_review" => self.overlay_review(args),
             "overlay_add" => self.overlay_add(args),
             "overlay_toggle" => self.overlay_toggle(args),
@@ -1812,6 +1814,49 @@ impl App {
         let mut v = self.overlays_report()?;
         v["stored"] = json!(true);
         v["review"] = json!(review);
+        Ok(v)
+    }
+
+    /// The arguments an overlay needs, taken from a licensed pack's own header (holder, reference, date, code and edition).
+    fn licensed_overlay_args(&self, args: &Value) -> Result<(nnx_core::licensed::Audit, Value), String> {
+        let pack = args.get("pack").and_then(Value::as_str).ok_or("paste or open the licensed pack (JSON)")?;
+        let audit = nnx_core::licensed::audit(pack);
+        if !audit.errors.is_empty() {
+            return Err(format!("licensed pack refused: {}", audit.errors.join("; ")));
+        }
+        let lic = audit.license.clone().ok_or("the pack has no licence")?;
+        let mut ov = json!({
+            "name": format!("{} {} (licensed)", audit.code, audit.edition),
+            "authority": lic.holder, "document": lic.reference, "date": lic.date.clone().unwrap_or_default(),
+            "pack": pack, "enabled": true,
+        });
+        if let Some(b) = args.get("base") {
+            ov["base"] = b.clone();
+        }
+        Ok((audit, ov))
+    }
+
+    /// Read-only: what a licensed code pack contains and what loading it would do, with every missing proof named.
+    fn licensed_pack_review(&self, args: &Value) -> Result<Value, String> {
+        let pack = args.get("pack").and_then(Value::as_str).ok_or("paste or open the licensed pack (JSON)")?;
+        let audit = nnx_core::licensed::audit(pack);
+        if !audit.errors.is_empty() {
+            return Ok(json!({ "acceptable": false, "audit": audit }));
+        }
+        let (audit, ov) = self.licensed_overlay_args(args)?;
+        let review = self.overlay_review(&ov)?;
+        Ok(json!({ "acceptable": true, "audit": audit, "review": review["review"],
+            "note": "a preliminary check from text the user transcribed under their own licence; it does not replace the approving authority" }))
+    }
+
+    /// Validates a licensed pack and stores it as an overlay (same confirmation, undo and `.nnx` persistence as any overlay).
+    fn licensed_pack_load(&mut self, args: &Value) -> Result<Value, String> {
+        let (audit, mut ov) = self.licensed_overlay_args(args)?;
+        if let Some(c) = args.get("confirm") {
+            ov["confirm"] = c.clone();
+        }
+        let mut v = self.overlay_add(&ov)?;
+        v["audit"] = json!(audit);
         Ok(v)
     }
 
@@ -8296,6 +8341,32 @@ END-ISO-10303-21;
         let (from, delta) = (row["from"].as_f64().unwrap(), row["delta"].as_f64().unwrap());
         assert!((delta - from * 0.5).abs() < 0.01, "{from} {delta}");
         assert!(d["diff"]["elements"].as_array().unwrap().is_empty(), "only the price changed");
+    }
+
+    #[test]
+    fn a_licensed_pack_needs_licence_edition_and_page_sources_then_loads_as_an_overlay_and_runs() {
+        let mut app = started();
+        let pack = r#"{ "id": "SBC301-2024", "edition": "2024", "version": "1", "code": "SBC 301",
+            "license": { "holder": "Synthetic Office", "reference": "licence SYN-1", "date": "2027-01-01" },
+            "rules": [ { "id": "syn.room", "clause": "5.2", "applies_to": { "kind": "Space" }, "check": "area >= param.min",
+              "params": { "min": { "value": 5000, "source": "SBC 301 2024, table 5.2, p. 41" }, "other": { "value": null, "source": "" } },
+              "severity": "error", "message": "room too small" } ] }"#;
+        let bad = pack.replace(", p. 41", "");
+        let r = app.handle("licensed_pack_review", &json!({ "pack": bad })).unwrap();
+        assert_eq!(r["acceptable"], false);
+        assert!(r["audit"]["errors"][0].as_str().unwrap().contains("names no page"));
+        assert!(app.handle("licensed_pack_load", &json!({ "pack": bad })).unwrap_err().contains("names no page"));
+        let r = app.handle("licensed_pack_review", &json!({ "pack": pack })).unwrap();
+        assert_eq!(r["acceptable"], true);
+        assert_eq!(r["audit"]["params_set"], 1);
+        assert_eq!(r["audit"]["params_unset"], json!(["syn.room.other"]));
+        let r = app.handle("licensed_pack_load", &json!({ "pack": pack })).unwrap();
+        assert_eq!(r["stored"], true, "{r}");
+        assert_eq!(r["overlays"][0]["name"], "SBC 301 2024 (licensed)");
+        assert_eq!(r["overlays"][0]["authority"], "Synthetic Office");
+        let c = app.handle("check_rules", &json!({})).unwrap();
+        assert_eq!(c["layers"], json!(["SBC301-2024@2024/1"]));
+        assert!(app.handle("overlay_remove", &json!({ "id": "ov1" })).is_ok());
     }
 
     const OV_BASE: &str = r#"{ "id": "BASE", "edition": "synthetic", "version": "1", "rules": [ { "id": "room.area", "clause": "T-1", "applies_to": { "kind": "Space" }, "check": "area >= param.min", "params": { "min": { "value": 5, "source": "synthetic base" } }, "severity": "warning", "message": "room too small" } ] }"#;

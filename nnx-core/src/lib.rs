@@ -116,6 +116,7 @@ pub mod vertical;
 pub mod wireless;
 pub mod snapshot;
 pub mod overlay;
+pub mod licensed;
 pub mod municipality;
 pub mod numaudit;
 pub mod outline;
