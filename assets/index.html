@@ -41,6 +41,7 @@ td.num{font-variant-numeric:tabular-nums}
 .alt{flex:0 0 auto;width:130px;border:2px solid var(--line);border-radius:6px;background:#fff;cursor:pointer;padding:2px;position:relative}
 .alt.sel{border-color:var(--accent)}
 .alt svg{width:100%;height:auto;display:block;max-height:118px}
+.alt .sc{font-size:11px;text-align:center;color:var(--muted,#555)}
 .alt .tag{position:absolute;top:2px;inset-inline-start:4px;font-size:10px;background:var(--accent);color:var(--accent-ink);border-radius:3px;padding:0 4px}
 #v3{flex:1;display:none;flex-direction:column;min-height:0;background:#f3f5f8}
 #v3 .tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:6px 10px;background:#fff;border-bottom:1px solid #ddd}
@@ -871,8 +872,18 @@ $("generate").onclick = () => busy(async () => {
   await choose(0);
   skStage(false);
 });
+// The declared score of an alternative (0-100): the overall figure on the card, each criterion and the neighbour rules in its tooltip.
+// A criterion that could not be measured shows "-" (never a default), and the reason is listed.
+function altScore(a) {
+  const s = a.scores;
+  if (!s) return "";
+  const f = v => (v == null ? "-" : Math.round(v));
+  const nb = s.basis && s.basis.neighbours && s.basis.neighbours.den > 0 ? `${s.basis.neighbours.num}/${s.basis.neighbours.den}` : "-";
+  const tip = [`${L("الإضاءة", "Lighting")} ${f(s.lighting)}`, `${L("الاتصال", "Connectivity")} ${f(s.connectivity)}`, `${L("الخصوصية", "Privacy")} ${f(s.privacy)}`, `${L("قواعد الجوار", "Neighbour rules")} ${nb}`, ...(s.unmeasured || [])].join(" · ");
+  return `<div class="sc" title="${esc(tip)}">${L("الدرجة", "Score")} <b>${f(s.overall)}</b></div>`;
+}
 function renderAlts() {
-  $("alts").innerHTML = state.alts.map((a, i) => `<div class="alt ${i === state.sel ? "sel" : ""}" data-n="${i}" title="${t("cost")} ${a.cost}">${i === 0 ? `<span class="tag">${a.from_sketch ? t("sk_alt") : t("cheapest")}</span>` : (i === 1 && state.alts[0].from_sketch ? `<span class="tag">${t("cheapest")}</span>` : "")}${a.svg}</div>`).join("");
+  $("alts").innerHTML = state.alts.map((a, i) => `<div class="alt ${i === state.sel ? "sel" : ""}" data-n="${i}" title="${t("cost")} ${a.cost}">${i === 0 ? `<span class="tag">${a.from_sketch ? t("sk_alt") : t("cheapest")}</span>` : (i === 1 && state.alts[0].from_sketch ? `<span class="tag">${t("cheapest")}</span>` : "")}${a.svg}${altScore(a)}</div>`).join("");
   $("alts").querySelectorAll(".alt").forEach(e => e.onclick = () => busy(() => choose(Number(e.dataset.n))));
 }
 async function choose(i) {
