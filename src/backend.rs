@@ -5285,6 +5285,37 @@ mod tests {
     }
 
     #[test]
+    fn a_neighbour_rule_changes_the_generated_layout_in_the_direction_of_its_sign() {
+        // Rooms of one level share a wall when their rectangles meet along an edge of positive length.
+        fn touch(app: &App, a: &str, b: &str) -> bool {
+            let m = &app.doc.as_ref().unwrap().model;
+            let rect = |k: &str| {
+                let e = m.elements.values().find(|e| e.kind == "Space" && e.props["requirementKey"] == k).unwrap();
+                let g = |p: &str| e.props[p].as_f64().unwrap();
+                (g("x"), g("y"), g("w"), g("h"))
+            };
+            let (ax, ay, aw, ah) = rect(a);
+            let (bx, by, bw, bh) = rect(b);
+            let tol = 1.0;
+            let overlap_x = ax.max(bx) < (ax + aw).min(bx + bw) - tol;
+            let overlap_y = ay.max(by) < (ay + ah).min(by + bh) - tol;
+            let meet_x = ((ax + aw) - bx).abs() <= tol || ((bx + bw) - ax).abs() <= tol;
+            let meet_y = ((ay + ah) - by).abs() <= tol || ((by + bh) - ay).abs() <= tol;
+            (meet_x && overlap_y) || (meet_y && overlap_x)
+        }
+        let run = |weight: i64| {
+            let mut brief = brief2();
+            brief["adjacency"] = json!([{ "a": "majlis", "b": "kitchen", "weight": weight }]);
+            let mut app = App::default();
+            app.handle("generate", &json!({ "brief": brief, "struct": loads2() })).unwrap();
+            app.handle("select", &json!({ "index": 0, "struct": loads2() })).unwrap();
+            touch(&app, "majlis", "kitchen")
+        };
+        assert!(run(3), "a strongly wanted pair shares a wall");
+        assert!(!run(-3), "a strongly unwanted pair does not");
+    }
+
+    #[test]
     fn the_precheck_passes_a_generated_model_and_stops_exports_when_the_model_contradicts_itself() {
         let mut app = started2();
         let r = app.handle("precheck", &json!({})).unwrap();
