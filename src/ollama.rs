@@ -99,6 +99,179 @@ fn request(host: &str, port: u16, method: &str, path: &str, body: Option<&str>, 
     Ok((status, String::from_utf8_lossy(&body).to_string()))
 }
 
+/// The remote option: an OpenAI-compatible chat API reached over HTTPS with the key kept in the Windows Credential Manager.
+/// Unlike the local server, what is sent here leaves this computer, so every call that sends a project's text or images needs the
+/// page's explicit `consent: true` (the page asks for it with a visible warning).
+pub struct Api {
+    pub base: String,
+    pub model: String,
+    key: String,
+}
+
+impl std::fmt::Debug for Api {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Api({} {} key {})", self.base, self.model, crate::secret::mask(&self.key))
+    }
+}
+
+/// Where a request goes: the local server (`endpoint`) or, when `api` is set, the remote service.
+pub struct Conn {
+    pub endpoint: String,
+    pub api: Option<Api>,
+}
+
+impl Conn {
+    fn check(&self) -> Result<(), String> {
+        match &self.api {
+            Some(_) => Ok(()),
+            None => parse_endpoint(&self.endpoint).map(|_| ()),
+        }
+    }
+    fn who(&self) -> String {
+        match &self.api {
+            Some(a) => format!("the API at {}", a.base),
+            None => format!("the local model server at {}", self.endpoint),
+        }
+    }
+}
+
+/// `https://host[/prefix]` of a remote API (plain http only for this computer), without a trailing slash or a trailing `/v1`.
+pub fn parse_api_base(s: &str) -> Result<String, String> {
+    let s = s.trim().trim_end_matches('/');
+    let s = s.strip_suffix("/v1").unwrap_or(s);
+    if s.is_empty() {
+        return Err("give the API address (for example https://api.openai.com)".into());
+    }
+    match s.split_once("://") {
+        Some(("https", r)) if !r.is_empty() && !r.starts_with('/') => Ok(s.to_string()),
+        Some(("http", r)) if parse_endpoint(&format!("http://{r}")).is_ok() => Ok(s.to_string()),
+        Some(("http", _)) => Err("an API address must be https (plain http is accepted only for this computer)".into()),
+        _ => Err("the API address must start with https://".into()),
+    }
+}
+
+fn conn_of(cmd: &str, args: &Value) -> Result<Conn, String> {
+    let endpoint = endpoint_of(args);
+    if args.get("provider").and_then(Value::as_str) != Some("api") {
+        return Ok(Conn { endpoint, api: None });
+    }
+    let base = parse_api_base(args.get("api_base").and_then(Value::as_str).unwrap_or("https://api.openai.com"))?;
+    let model = args.get("api_model").and_then(Value::as_str).map(str::trim).filter(|m| !m.is_empty()).ok_or("API: give the model identifier exactly as the provider names it")?.to_string();
+    let key = crate::secret::key()?.ok_or("API: no key is stored: enter it once and press Save key")?;
+    if cmd != "ai_status" && args.get("consent").and_then(Value::as_bool) != Some(true) {
+        return Err("API: this sends the project's text or images to the API provider, outside this computer. Tick the consent box to allow it".into());
+    }
+    Ok(Conn { endpoint, api: Some(Api { base, model, key }) })
+}
+
+fn api_agent(timeout_s: u64) -> ureq::Agent {
+    ureq::Agent::config_builder().http_status_as_error(false).timeout_global(Some(Duration::from_secs(timeout_s.max(1)))).build().into()
+}
+
+/// One request to the API: `(status, body)`. The key goes only in the Authorization header and never into an error message.
+fn api_request(api: &Api, method: &str, path: &str, body: Option<&str>, timeout_s: u64) -> Result<(u16, String), String> {
+    let url = format!("{}{}", api.base, path);
+    let agent = api_agent(timeout_s);
+    let auth = format!("Bearer {}", api.key);
+    let resp = match (method, body) {
+        ("POST", Some(b)) => agent.post(&url).header("Authorization", &auth).header("Content-Type", "application/json").send(b),
+        _ => agent.get(&url).header("Authorization", &auth).call(),
+    }
+    .map_err(|e| format!("cannot reach {}: {e}", api.base))?;
+    let status = resp.status().as_u16();
+    let text = resp.into_body().with_config().limit(32 * 1024 * 1024).read_to_string().map_err(|e| format!("cannot read the API's answer: {e}"))?;
+    Ok((status, text))
+}
+
+fn api_failure(status: u16, body: &str) -> String {
+    let v: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let msg = v["error"]["message"].as_str().or_else(|| v["error"].as_str()).unwrap_or("no message");
+    let hint = match status {
+        401 | 403 => " (the key was refused: check it)",
+        404 => " (the model or the address was not found: check the model identifier)",
+        429 => " (too many requests or no quota)",
+        _ => "",
+    };
+    format!("the API answered {status}{hint}: {}", msg.chars().take(300).collect::<String>())
+}
+
+/// The model identifiers the API lists (to check the key and offer the names).
+fn api_models(api: &Api) -> Result<Vec<String>, String> {
+    let (status, body) = api_request(api, "GET", "/v1/models", None, 20)?;
+    if status != 200 {
+        return Err(api_failure(status, &body));
+    }
+    let v: Value = serde_json::from_str(&body).map_err(|_| "the model list is not JSON (is this an OpenAI-compatible API?)")?;
+    Ok(v["data"].as_array().map(|a| a.iter().filter_map(|m| m["id"].as_str().map(str::to_string)).collect()).unwrap_or_default())
+}
+
+/// The image MIME type from the first characters of its base64.
+fn image_mime(b64: &str) -> &'static str {
+    if b64.starts_with("/9j/") {
+        "image/jpeg"
+    } else if b64.starts_with("iVBOR") {
+        "image/png"
+    } else if b64.starts_with("Qk") {
+        "image/bmp"
+    } else {
+        "image/png"
+    }
+}
+
+/// A chat completion; with `schema` the answer is asked as JSON following it. Returns the text of the first choice.
+fn api_chat(api: &Api, system: &str, user: &str, images_b64: &[String], schema: Option<&Value>, timeout_s: u64) -> Result<String, String> {
+    let mut parts = vec![json!({ "type": "text", "text": user })];
+    for i in images_b64 {
+        parts.push(json!({ "type": "image_url", "image_url": { "url": format!("data:{};base64,{i}", image_mime(i)) } }));
+    }
+    let user_content = if images_b64.is_empty() { json!(user) } else { json!(parts) };
+    let mut body = json!({ "model": api.model, "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user_content }] });
+    if let Some(s) = schema {
+        body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "schema": s, "strict": false } });
+    }
+    let (status, resp) = api_request(api, "POST", "/v1/chat/completions", Some(&body.to_string()), timeout_s)?;
+    if status != 200 {
+        return Err(api_failure(status, &resp));
+    }
+    let v: Value = serde_json::from_str(&resp).map_err(|_| format!("the API's answer is not JSON ({status})"))?;
+    v["choices"][0]["message"]["content"].as_str().map(str::to_string).ok_or_else(|| "the API's answer has no content".to_string())
+}
+
+fn c_models(conn: &Conn) -> Result<Vec<String>, String> {
+    match &conn.api {
+        Some(a) => Ok(vec![a.model.clone()]),
+        None => models(&conn.endpoint),
+    }
+}
+
+fn c_chat_json_images(conn: &Conn, model: &str, system: &str, user: &str, images_b64: &[String], schema: &Value, timeout_s: u64) -> Result<Value, String> {
+    match &conn.api {
+        Some(a) => {
+            let text = api_chat(a, system, user, images_b64, Some(schema), timeout_s)?;
+            let t = text.trim();
+            let t = t.strip_prefix("```json").or_else(|| t.strip_prefix("```")).map(|r| r.trim_end_matches("```").trim()).unwrap_or(t);
+            serde_json::from_str(t).map_err(|_| "the model did not return JSON".to_string())
+        }
+        None => chat_json_images(&conn.endpoint, model, system, user, images_b64, schema, timeout_s),
+    }
+}
+
+fn c_chat_text_images(conn: &Conn, model: &str, system: &str, user: &str, images_b64: &[String], timeout_s: u64) -> Result<String, String> {
+    match &conn.api {
+        Some(a) => api_chat(a, system, user, images_b64, None, timeout_s),
+        None => chat_text_images(&conn.endpoint, model, system, user, images_b64, timeout_s),
+    }
+}
+
+/// The model to read an image with: the API's configured one, or a vision model installed on the local server.
+fn vision_for(conn: &Conn, args: &Value, label: &str, hint: &str) -> Result<String, String> {
+    if let Some(a) = &conn.api {
+        return Ok(a.model.clone());
+    }
+    let installed = models(&conn.endpoint).map_err(|e| format!("{label}: the local model server is not reachable at {}: {e}. {hint}", conn.endpoint))?;
+    vision_model(&installed, args, label)
+}
+
 /// The names of the models installed on the server.
 pub fn models(endpoint: &str) -> Result<Vec<String>, String> {
     let (host, port) = parse_endpoint(endpoint)?;
@@ -110,12 +283,8 @@ pub fn models(endpoint: &str) -> Result<Vec<String>, String> {
     Ok(v["models"].as_array().map(|a| a.iter().filter_map(|m| m["name"].as_str().map(str::to_string)).collect()).unwrap_or_default())
 }
 
-/// Asks `model` to answer with JSON following `schema`. Returns the parsed JSON of its reply.
-pub fn chat_json(endpoint: &str, model: &str, system: &str, user: &str, schema: &Value, timeout_s: u64) -> Result<Value, String> {
-    chat_json_images(endpoint, model, system, user, &[], schema, timeout_s)
-}
-
-/// Like `chat_json`, with images (base64) attached to the user's message for a vision model.
+/// Asks `model` to answer with JSON following `schema`, with optional images (base64) attached to the user's message for a vision model.
+/// Returns the parsed JSON of its reply.
 pub fn chat_json_images(endpoint: &str, model: &str, system: &str, user: &str, images_b64: &[String], schema: &Value, timeout_s: u64) -> Result<Value, String> {
     let (host, port) = parse_endpoint(endpoint)?;
     let mut user_msg = json!({ "role": "user", "content": user });
@@ -166,7 +335,7 @@ fn chat_text_images(endpoint: &str, model: &str, system: &str, user: &str, image
 /// `ai_ocr`: the text written on a drawing, a deed or a scanned page (PNG, JPEG, BMP or a scanned PDF), transcribed by a vision model on
 /// this computer. Arguments: `file_b64`, optional `model`, `endpoint`, `timeout_s`. The text is returned as it is; the page reads it for
 /// the brief's facts and proposes them, so nothing here is applied.
-fn ai_ocr(endpoint: &str, args: &Value) -> Result<Value, String> {
+fn ai_ocr(conn: &Conn, args: &Value) -> Result<Value, String> {
     use nnx_core::{deedread, sketchread};
     let b64 = args.get("file_b64").and_then(Value::as_str).filter(|t| !t.trim().is_empty()).ok_or("ocr: give the file's content as file_b64")?;
     let bytes = nnx_core::xlsx::base64_decode(b64).map_err(|e| format!("ocr: {e}"))?;
@@ -176,12 +345,11 @@ fn ai_ocr(endpoint: &str, args: &Value) -> Result<Value, String> {
         sketchread::image_size(&bytes).map_err(|e| format!("ocr: {e}"))?;
         (vec![bytes], Vec::new())
     };
-    parse_endpoint(endpoint)?;
-    let installed = models(endpoint).map_err(|e| format!("ocr: the local model server is not reachable at {endpoint}: {e}"))?;
-    let model = vision_model(&installed, args, "ocr")?;
+    conn.check()?;
+    let model = vision_for(conn, args, "ocr", "")?;
     let timeout = args.get("timeout_s").and_then(Value::as_u64).unwrap_or(DEFAULT_READ_TIMEOUT_S * 3);
     let b64s: Vec<String> = images.iter().map(|i| nnx_core::xlsx::base64_encode(i)).collect();
-    let text = chat_text_images(endpoint, &model, "You transcribe the text, numbers and dimensions written on a drawing, plan or document. Copy them exactly, one item per line. Do not explain, translate or add anything.", "Transcribe all the text on this image.", &b64s, timeout).map_err(|e| format!("ocr: {model}: {e}"))?;
+    let text = c_chat_text_images(conn, &model, "You transcribe the text, numbers and dimensions written on a drawing, plan or document. Copy them exactly, one item per line. Do not explain, translate or add anything.", "Transcribe all the text on this image.", &b64s, timeout).map_err(|e| format!("ocr: {model}: {e}"))?;
     let sides = deedread::sides_in_text(&text);
     let rect = match (sides.get("north"), sides.get("south"), sides.get("east"), sides.get("west")) {
         (Some(n), Some(s), Some(e), Some(w)) => deedread::rect_from_sides(*n, *s, *e, *w).map(|(wd, ln)| json!({ "width_m": wd, "length_m": ln })),
@@ -196,27 +364,51 @@ fn endpoint_of(args: &Value) -> String {
 
 /// `ai_status` and `ai_brief`. They run outside the application's lock: a slow model never freezes the other commands.
 pub fn handle(cmd: &str, args: &Value) -> Result<Value, String> {
-    let endpoint = endpoint_of(args);
+    // The key of the remote option lives in the Windows Credential Manager: these three never return it whole.
+    match cmd {
+        "ai_key_set" => {
+            let k = args.get("key").and_then(Value::as_str).ok_or("give the key")?;
+            crate::secret::save_key(k)?;
+            return Ok(json!({ "stored": true, "masked": crate::secret::mask(k.trim()) }));
+        }
+        "ai_key_clear" => {
+            crate::secret::clear_key()?;
+            return Ok(json!({ "stored": false }));
+        }
+        "ai_key_status" => {
+            return Ok(match crate::secret::key()? {
+                Some(k) => json!({ "stored": true, "masked": crate::secret::mask(&k) }),
+                None => json!({ "stored": false }),
+            });
+        }
+        _ => {}
+    }
+    let conn = conn_of(cmd, args)?;
+    let endpoint = conn.endpoint.clone();
     match cmd {
         "ai_status" => {
-            parse_endpoint(&endpoint)?;
-            Ok(match models(&endpoint) {
+            conn.check()?;
+            let listed = match &conn.api {
+                Some(a) => api_models(a),
+                None => models(&endpoint),
+            };
+            Ok(match listed {
                 Ok(m) => json!({ "online": true, "endpoint": endpoint, "models": m }),
                 Err(e) => json!({ "online": false, "endpoint": endpoint, "models": [], "error": e }),
             })
         }
         "ai_brief" => {
             let text = args.get("text").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).ok_or("describe the project first")?;
-            parse_endpoint(&endpoint)?;
+            conn.check()?;
             let timeout = args.get("timeout_s").and_then(Value::as_u64).unwrap_or(DEFAULT_READ_TIMEOUT_S);
             let fallback = |why: String| -> Value {
                 let mut d = briefai::from_keywords(text);
-                d.notes.insert(0, format!("the local model was not used ({why}): filled from the keywords found in the text"));
+                d.notes.insert(0, format!("the model was not used ({why}): filled from the keywords found in the text"));
                 json!({ "draft": d, "online": false, "model": null })
             };
-            let installed = match models(&endpoint) {
+            let installed = match c_models(&conn) {
                 Ok(m) => m,
-                Err(e) => return Ok(fallback(format!("Ollama is not reachable at {endpoint}: {e}"))),
+                Err(e) => return Ok(fallback(format!("{} is not reachable: {e}", conn.who()))),
             };
             let wanted = args.get("model").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
             let (model, chosen_note) = match (wanted, installed.first()) {
@@ -225,7 +417,7 @@ pub fn handle(cmd: &str, args: &Value) -> Result<Value, String> {
                 (None, Some(first)) => (first.clone(), None),
                 (_, None) => return Ok(fallback("no model is installed: run `ollama pull <model>`".into())),
             };
-            match chat_json(&endpoint, &model, &briefai::system_prompt(), text, &briefai::schema(), timeout).and_then(|v| briefai::from_model_json(&v, &model)) {
+            match c_chat_json_images(&conn, &model, &briefai::system_prompt(), text, &[], &briefai::schema(), timeout).and_then(|v| briefai::from_model_json(&v, &model)) {
                 Ok(draft) => {
                     let mut d = briefai::reconcile(draft, text);
                     if let Some(n) = chosen_note {
@@ -236,9 +428,9 @@ pub fn handle(cmd: &str, args: &Value) -> Result<Value, String> {
                 Err(e) => Ok(fallback(format!("{model}: {e}"))),
             }
         }
-        "ai_sketch" => ai_sketch(&endpoint, args),
-        "ai_ocr" => ai_ocr(&endpoint, args),
-        "ai_deed" => ai_deed(&endpoint, args),
+        "ai_sketch" => ai_sketch(&conn, args),
+        "ai_ocr" => ai_ocr(&conn, args),
+        "ai_deed" => ai_deed(&conn, args),
         other => Err(format!("unknown command '{other}'")),
     }
 }
@@ -276,7 +468,7 @@ fn vision_model(installed: &[String], args: &Value, label: &str) -> Result<Strin
 /// `ai_deed`: a land title deed or a survey sketch (PNG, JPEG, BMP or a scanned PDF) transcribed by a vision model on this computer
 /// into an unconfirmed `DeedReading`. Arguments: `path` or `file_b64`, optional `tolerance_pct`, `model`, `endpoint`, `timeout_s`.
 /// There is no keyword fallback: an unreachable server or a missing vision model is an error that says so.
-fn ai_deed(endpoint: &str, args: &Value) -> Result<Value, String> {
+fn ai_deed(conn: &Conn, args: &Value) -> Result<Value, String> {
     use nnx_core::{deedread, sketchread};
     let bytes = match (args.get("file_b64").and_then(Value::as_str).filter(|t| !t.trim().is_empty()), args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty())) {
         (Some(b), _) => nnx_core::xlsx::base64_decode(b).map_err(|e| format!("deed: {e}"))?,
@@ -293,12 +485,11 @@ fn ai_deed(endpoint: &str, args: &Value) -> Result<Value, String> {
         sketchread::image_size(&bytes).map_err(|e| format!("deed: {e}"))?;
         (vec![bytes], Vec::new())
     };
-    parse_endpoint(endpoint)?;
-    let installed = models(endpoint).map_err(|e| format!("deed: the local model server is not reachable at {endpoint}: {e}. A deed cannot be read without it: type the plot values on the brief instead"))?;
-    let model = vision_model(&installed, args, "deed")?;
+    conn.check()?;
+    let model = vision_for(conn, args, "deed", "A deed cannot be read without it: type the plot values on the brief instead")?;
     let timeout = args.get("timeout_s").and_then(Value::as_u64).unwrap_or(DEFAULT_READ_TIMEOUT_S * 3);
     let b64: Vec<String> = images.iter().map(|i| nnx_core::xlsx::base64_encode(i)).collect();
-    let v = chat_json_images(endpoint, &model, &deedread::system_prompt(), "Transcribe this deed.", &b64, &deedread::schema(), timeout).map_err(|e| format!("deed: {model}: {e}"))?;
+    let v = c_chat_json_images(conn, &model, &deedread::system_prompt(), "Transcribe this deed.", &b64, &deedread::schema(), timeout).map_err(|e| format!("deed: {model}: {e}"))?;
     let mut reading = deedread::from_model_json(&v, &model, tolerance_pct).map_err(|e| format!("deed: {model}: {e}"))?;
     notes.append(&mut reading.notes);
     reading.notes = notes;
@@ -320,7 +511,7 @@ fn ai_deed(endpoint: &str, args: &Value) -> Result<Value, String> {
 /// Arguments: `image_b64` (or `path`), `scale_p1` and `scale_p2` (pixels) with `scale_real_mm`, `origin_px` (the south-west corner of
 /// the buildable area, in pixels), optional `tolerance_pct`, `model`, `endpoint`, `timeout_s`. There is no keyword fallback: a sketch
 /// cannot be read without the model, so an unreachable server or a model that is not a vision model is an error that says so.
-fn ai_sketch(endpoint: &str, args: &Value) -> Result<Value, String> {
+fn ai_sketch(conn: &Conn, args: &Value) -> Result<Value, String> {
     use nnx_core::sketchread::{self, Frame, Scale};
     let bytes = match (args.get("image_b64").and_then(Value::as_str).filter(|t| !t.trim().is_empty()), args.get("path").and_then(Value::as_str).filter(|p| !p.trim().is_empty())) {
         (Some(b), _) => nnx_core::xlsx::base64_decode(b).map_err(|e| format!("sketch: {e}"))?,
@@ -334,12 +525,11 @@ fn ai_sketch(endpoint: &str, args: &Value) -> Result<Value, String> {
         Some(v) => Some(v.as_f64().ok_or("sketch: tolerance_pct must be a number")?),
     };
     let frame = Frame { width_px, height_px, scale, origin_px: arg_point(args, "origin_px")?, tolerance_pct };
-    parse_endpoint(endpoint)?;
-    let installed = models(endpoint).map_err(|e| format!("sketch: the local model server is not reachable at {endpoint}: {e}. A sketch cannot be read without it; the manual tracing tool on the Draft sketch tab still works"))?;
-    let model = vision_model(&installed, args, "sketch")?;
+    conn.check()?;
+    let model = vision_for(conn, args, "sketch", "A sketch cannot be read without it; the manual tracing tool on the Draft sketch tab still works")?;
     let timeout = args.get("timeout_s").and_then(Value::as_u64).unwrap_or(DEFAULT_READ_TIMEOUT_S * 3);
     let b64 = nnx_core::xlsx::base64_encode(&bytes);
-    let v = chat_json_images(endpoint, &model, &sketchread::system_prompt(width_px, height_px), "Read the rooms of this floor plan.", &[b64], &sketchread::schema(), timeout).map_err(|e| format!("sketch: {model}: {e}"))?;
+    let v = c_chat_json_images(conn, &model, &sketchread::system_prompt(width_px, height_px), "Read the rooms of this floor plan.", &[b64], &sketchread::schema(), timeout).map_err(|e| format!("sketch: {model}: {e}"))?;
     let reading = sketchread::from_model_json(&v, &model, &frame).map_err(|e| format!("sketch: {model}: {e}"))?;
     Ok(json!({ "reading": reading, "model": model, "image": { "width_px": width_px, "height_px": height_px }, "mm_per_px": scale.mm_per_px }))
 }
@@ -386,6 +576,19 @@ mod tests {
             seen
         });
         (port, h)
+    }
+
+    #[test]
+    fn an_api_address_must_be_https_and_the_remote_option_needs_consent_and_a_model() {
+        assert_eq!(parse_api_base("https://api.example.com/").unwrap(), "https://api.example.com");
+        assert_eq!(parse_api_base("https://api.example.com/v1").unwrap(), "https://api.example.com");
+        assert!(parse_api_base("http://api.example.com").unwrap_err().contains("https"));
+        assert!(parse_api_base("api.example.com").is_err());
+        assert!(parse_api_base("http://localhost:8080").is_ok());
+        let no_model = conn_of("ai_brief", &json!({ "provider": "api" })).err().unwrap();
+        assert!(no_model.contains("model identifier"), "{no_model}");
+        assert_eq!(image_mime("/9j/4AAQ"), "image/jpeg");
+        assert_eq!(image_mime("iVBORw0K"), "image/png");
     }
 
     fn ok(body: &str) -> Option<Vec<u8>> {

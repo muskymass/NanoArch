@@ -8,6 +8,7 @@ mod backend;
 mod editing;
 mod levels;
 mod s3;
+mod secret;
 mod ollama;
 mod dwg;
 mod voice;
@@ -91,7 +92,7 @@ fn respond(app: &Shared, body: &str) -> String {
         "code_library_list" => code_library_list(),
         "code_library_file" => code_library_file(&args),
         // The local model assistant talks to a server and may take a while: it runs outside the lock.
-        "ai_status" | "ai_brief" | "ai_sketch" | "ai_deed" | "ai_ocr" => ollama::handle(cmd, &args),
+        "ai_status" | "ai_brief" | "ai_sketch" | "ai_deed" | "ai_ocr" | "ai_key_set" | "ai_key_clear" | "ai_key_status" => ollama::handle(cmd, &args),
         // A recording is transcribed by a program on this computer; it may take a while, so it runs outside the lock.
         "voice_transcribe" => voice::handle(&args),
         // A real DWG: the DXF comes from the engine under the lock, then a converter program on this computer runs outside it.

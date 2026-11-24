@@ -289,8 +289,17 @@ main.hl{grid-template-columns:1fr 420px}main.hr{grid-template-columns:400px 1fr}
       <h2 data-i="h_ai"></h2>
       <div class="note" data-i="ai_note"></div>
       <textarea id="ai-text" rows="3" style="width:100%" data-ph="ai_ph"></textarea>
-      <div class="row"><div><label data-i="ai_endpoint"></label><input id="ai-endpoint" dir="ltr" value="http://localhost:11434"></div>
-      <div><label data-i="ai_model"></label><select id="ai-model"><option value=""></option></select></div></div>
+      <div class="row"><div><label data-i="ai_provider"></label><select id="ai-provider"><option value="local" data-i="ai_p_local"></option><option value="api" data-i="ai_p_api"></option></select></div></div>
+      <div id="ai-local-box"><div class="row"><div><label data-i="ai_endpoint"></label><input id="ai-endpoint" dir="ltr" value="http://localhost:11434"></div>
+      <div><label data-i="ai_model"></label><select id="ai-model"><option value=""></option></select></div></div></div>
+      <div id="ai-api-box" style="display:none">
+        <div class="row"><div><label data-i="ai_api_base"></label><input id="ai-api-base" dir="ltr" value="https://api.openai.com"></div>
+        <div><label data-i="ai_api_model"></label><input id="ai-api-model" dir="ltr" list="ai-api-models" autocomplete="off"><datalist id="ai-api-models"></datalist></div></div>
+        <div class="row"><div><label data-i="ai_api_key"></label><input id="ai-api-key" type="password" dir="ltr" autocomplete="off"></div></div>
+        <div class="bar" style="padding:6px 0;border:0;flex-wrap:wrap;gap:6px"><button id="ai-key-save" data-i="ai_key_save"></button><button id="ai-key-clear" data-i="ai_key_clear"></button><span id="ai-key-state" class="badge"></span></div>
+        <div class="note" data-i="ai_api_note"></div>
+        <label style="display:flex;gap:8px;align-items:flex-start"><input id="ai-consent" type="checkbox" style="width:auto;margin-top:4px"><span data-i="ai_consent"></span></label>
+      </div>
       <div class="bar" style="padding:6px 0;border:0;flex-wrap:wrap;gap:6px"><button id="ai-check" data-i="ai_check"></button><button id="ai-run" class="primary" data-i="ai_run"></button><span id="ai-status" class="badge"></span></div>
       <div id="ai-out"></div>
 
@@ -507,7 +516,7 @@ const T = {
 ar: {
   pan_brief:"المدخلات", pan_results:"النتائج", v_furn:"الأثاث والممرات", lock_wall:"قفل الجدار", locked:"قُفل", unlocked:"فُتح",
   h_tpl:"مشاريع جاهزة بنقرة", tpl_note:"تملأ الأرض والطراز والأدوار والغرف؛ الارتدادات تُحسب بقاعدة الوزارة. الأرقام نقطة بداية قابلة للتعديل (الغرف المظلّلة مساحاتها مقترحة).", tpl_sb:"مصدر الارتدادات", tpl_applied:"طُبّق القالب: راجع الأرقام ثم ولّد", sugg_tip:"مساحة مقترحة من التطبيق (أعلى من الحد الأدنى في الكود): راجعها",
-  h_ai:"مساعد الوصف (Ollama محلي، اختياري)", ai_note:"اكتب وصف المشروع بالعربية أو الإنجليزية، فيملأ الحقول لتراجعها. لا يُرسل النص إلا إلى خادم على جهازك؛ وإن لم يعمل Ollama تُستخرج الحقول من الكلمات المفتاحية.", ai_ph:"مثال: فيلا دورين وملحق في الجبيل على أرض 600م طراز نجدي حديث", ai_endpoint:"عنوان Ollama", ai_model:"النموذج", ai_check:"فحص الاتصال", ai_run:"املأ الموجز", ai_online:"متصل", ai_offline:"غير متصل", ai_src_kw:"من الكلمات المفتاحية", ai_src_model:"من النموذج", ai_review:"اقتراح — راجعه قبل التوليد", ai_applied:"طُبّقت الحقول", ai_rooms:"غرف مقترحة", ai_assumed:"مفترضة", ai_empty:"اكتب وصفاً أولاً",
+  h_ai:"مساعد الوصف (Ollama محلي، اختياري)", ai_note:"اكتب وصف المشروع بالعربية أو الإنجليزية، فيملأ الحقول لتراجعها. لا يُرسل النص إلا إلى خادم على جهازك؛ وإن لم يعمل Ollama تُستخرج الحقول من الكلمات المفتاحية.", ai_ph:"مثال: فيلا دورين وملحق في الجبيل على أرض 600م طراز نجدي حديث", ai_endpoint:"عنوان Ollama", ai_provider:"مصدر الذكاء الاصطناعي", ai_p_local:"محلي (Ollama على هذا الجهاز)", ai_p_api:"مفتاح API — GPT-6.2 Astra — Max", ai_api_base:"عنوان الـ API", ai_api_model:"معرّف النموذج (كما يكتبه المزوّد تماماً)", ai_api_key:"مفتاح API", ai_key_save:"احفظ المفتاح", ai_key_clear:"احذف المفتاح", ai_key_stored:"محفوظ في مخزن Windows", ai_key_none:"لا مفتاح محفوظ", ai_key_saved:"حُفظ المفتاح", ai_key_cleared:"حُذف المفتاح", ai_api_note:"يُحفظ المفتاح في مخزن بيانات الاعتماد في Windows ولا يُكتب في المشروع ولا يظهر كاملاً. اكتب معرّف النموذج كما يعرضه مزوّدك؛ زر «افحص» يعرض المعرّفات المتاحة لمفتاحك.", ai_consent:"أوافق على إرسال نص هذا المشروع وصوره إلى مزوّد الـ API خارج هذا الجهاز", ai_need_consent:"فعّل خانة الموافقة على الإرسال إلى مزوّد الـ API أولاً", ai_model:"النموذج", ai_check:"فحص الاتصال", ai_run:"املأ الموجز", ai_online:"متصل", ai_offline:"غير متصل", ai_src_kw:"من الكلمات المفتاحية", ai_src_model:"من النموذج", ai_review:"اقتراح — راجعه قبل التوليد", ai_applied:"طُبّقت الحقول", ai_rooms:"غرف مقترحة", ai_assumed:"مفترضة", ai_empty:"اكتب وصفاً أولاً",
   plot_shape:"شكل الأرض", shape_rect:"مستطيل", shape_poly:"مضلع (شبه منحرف، شطفة، حرف L...)", poly_note:"أدخل رؤوس حد الأرض بالأمتار مرتبة حول الحد. الضلع i يمتد من الرأس i إلى التالي. حدّد نوع كل ضلع وعرض شارعه، ثم حلّل: يُحسب الارتداد لكل ضلع ويُوضع أكبر مستطيل بناء.", tpl_trap:"شبه منحرف", tpl_chamfer:"شطفة ركنية", tpl_l:"حرف L", edge_kind:"نوع الضلع", street_w:"عرض الشارع (م)", edge_sb:"ارتداد يدوي (م)", poly_add:"+ رأس", poly_analyze:"حلّل الأرض", rule_villa:"فلل (الوزارة 4-1)", rule_apt:"عمارات (الوزارة 4-2)", rule_manual:"يدوي (أدخل ارتداد كل ضلع)", ek_front_street:"شارع أمامي", ek_side_street:"شارع جانبي", ek_neighbour:"جار", ek_plaza:"ساحة", site_area:"مساحة الأرض", site_bld:"مستطيل البناء", site_cov:"نسبة التغطية", site_unused:"مساحة قابلة للبناء غير مستغلة", site_src:"مصدر قواعد الارتداد", site_first:"حلّل الأرض أولاً (وأعد التحليل بعد أي تعديل)", v_site:"موقع عام",
   subtitle:"مصمم مخططات الفلل", prelim:"أولي — غير صالح للتنفيذ", h_project:"المشروع", title:"اسم المشروع", width:"عرض الأرض (م)", length:"عمق الأرض (م)",
   sb_front:"ارتداد أمامي (م)", sb_back:"ارتداد خلفي (م)", sb_side:"ارتداد جانبي (م)", sb_note:"أدخل الارتدادات من اشتراطات البلدية؛ لا قيم افتراضية.",
@@ -559,7 +568,7 @@ ar: {
 en: {
   pan_brief:"Brief", pan_results:"Results", v_furn:"Furniture and walkways", lock_wall:"Lock wall", locked:"Locked", unlocked:"Unlocked",
   h_tpl:"One-click starter projects", tpl_note:"Fills the plot, style, floors and rooms; the setbacks are computed by the Ministry rule. The figures are editable starting points (shaded room areas are suggestions).", tpl_sb:"Setbacks from", tpl_applied:"Template applied: review the figures, then generate", sugg_tip:"Suggested by the application (above the code minimum): review it",
-  h_ai:"Brief assistant (local Ollama, optional)", ai_note:"Describe the project in Arabic or English and the fields are filled for you to review. The text goes only to a server on this computer; if Ollama is not running the fields are read from keywords.", ai_ph:"e.g. A two-floor villa with an annex in Jubail on a 600 m2 plot, modern Najdi style", ai_endpoint:"Ollama address", ai_model:"Model", ai_check:"Check connection", ai_run:"Fill the brief", ai_online:"online", ai_offline:"offline", ai_src_kw:"from keywords", ai_src_model:"from the model", ai_review:"Suggestion - review it before generating", ai_applied:"Fields applied", ai_rooms:"Proposed rooms", ai_assumed:"assumed", ai_empty:"Write a description first",
+  h_ai:"Brief assistant (local Ollama, optional)", ai_note:"Describe the project in Arabic or English and the fields are filled for you to review. The text goes only to a server on this computer; if Ollama is not running the fields are read from keywords.", ai_ph:"e.g. A two-floor villa with an annex in Jubail on a 600 m2 plot, modern Najdi style", ai_endpoint:"Ollama address", ai_provider:"AI source", ai_p_local:"Local (Ollama on this computer)", ai_p_api:"API key — GPT-6.2 Astra — Max", ai_api_base:"API address", ai_api_model:"Model identifier (exactly as the provider names it)", ai_api_key:"API key", ai_key_save:"Save key", ai_key_clear:"Delete key", ai_key_stored:"Stored in the Windows credential store", ai_key_none:"No key stored", ai_key_saved:"Key saved", ai_key_cleared:"Key deleted", ai_api_note:"The key is kept in the Windows Credential Manager. It is never written to a project and never shown in full. Type the model identifier as your provider lists it; Check lists the identifiers your key can use.", ai_consent:"I agree that this project's text and images are sent to the API provider, outside this computer", ai_need_consent:"Tick the consent box for sending to the API provider first", ai_model:"Model", ai_check:"Check connection", ai_run:"Fill the brief", ai_online:"online", ai_offline:"offline", ai_src_kw:"from keywords", ai_src_model:"from the model", ai_review:"Suggestion - review it before generating", ai_applied:"Fields applied", ai_rooms:"Proposed rooms", ai_assumed:"assumed", ai_empty:"Write a description first",
   plot_shape:"Plot shape", shape_rect:"Rectangle", shape_poly:"Polygon (trapezoid, chamfer, L...)", poly_note:"Enter the plot boundary vertices in metres, in order around the boundary. Edge i runs from vertex i to the next. Set each edge's kind and street width, then analyse: every edge gets its own setback and the largest buildable rectangle is placed.", tpl_trap:"Trapezoid", tpl_chamfer:"Corner chamfer", tpl_l:"L shape", edge_kind:"Edge kind", street_w:"Street width (m)", edge_sb:"Manual setback (m)", poly_add:"+ Vertex", poly_analyze:"Analyse plot", rule_villa:"Villa (Ministry 4-1)", rule_apt:"Apartment (Ministry 4-2)", rule_manual:"Manual (enter every edge's setback)", ek_front_street:"Front street", ek_side_street:"Side street", ek_neighbour:"Neighbour", ek_plaza:"Plaza", site_area:"Plot area", site_bld:"Building rectangle", site_cov:"Coverage", site_unused:"Buildable area left unused", site_src:"Setback rule source", site_first:"Analyse the plot first (and again after any change)", v_site:"Site plan",
   subtitle:"Villa plan designer", prelim:"Preliminary - not for construction", h_project:"Project", title:"Project name", width:"Plot width (m)", length:"Plot depth (m)",
   sb_front:"Front setback (m)", sb_back:"Rear setback (m)", sb_side:"Side setback (m)", sb_note:"Enter setbacks from the municipality's requirements; no defaults.",
@@ -1837,13 +1846,36 @@ async function applyTemplate(id) {
 call("templates").then(r => { TPL.list = r.templates; renderTemplates(); }).catch(() => {});
 
 // ---------------------------------------------------------------- local brief assistant (Ollama, optional)
-function aiArgs() { return { endpoint: $("ai-endpoint").value.trim() || undefined, model: $("ai-model").value || undefined }; }
+// Two sources: a model on this computer (Ollama) or an OpenAI-compatible API reached with a key kept in the Windows Credential Manager.
+// The API sends the project's text and images off this computer, so every such call carries the consent box's state; the backend refuses without it.
+const aiIsApi = () => $("ai-provider").value === "api";
+function aiArgs() {
+  if (aiIsApi()) {
+    if (!$("ai-consent").checked) throw new Error(t("ai_need_consent"));
+    return { provider: "api", api_base: $("ai-api-base").value.trim() || undefined, api_model: $("ai-api-model").value.trim() || undefined, consent: true };
+  }
+  return { endpoint: $("ai-endpoint").value.trim() || undefined, model: $("ai-model").value || undefined };
+}
+function aiPrefsSave() { try { localStorage.setItem("nanoarch.ai", JSON.stringify({ p: $("ai-provider").value, base: $("ai-api-base").value, model: $("ai-api-model").value })); } catch (e) { /* storage may be unavailable */ } }
+function aiShow() { const api = aiIsApi(); $("ai-local-box").style.display = api ? "none" : ""; $("ai-api-box").style.display = api ? "" : "none"; aiPrefsSave(); if (api) aiKeyState().catch(() => {}); }
+async function aiKeyState() { const r = await call("ai_key_status", {}); $("ai-key-state").textContent = r.stored ? `${t("ai_key_stored")} · ${r.masked}` : t("ai_key_none"); }
 async function aiCheck() {
+  if (aiIsApi()) {
+    const r = await call("ai_status", { provider: "api", api_base: $("ai-api-base").value.trim() || undefined, api_model: $("ai-api-model").value.trim() || undefined });
+    $("ai-api-models").innerHTML = (r.models || []).map(m => `<option value="${esc(m)}"></option>`).join("");
+    $("ai-status").textContent = r.online ? `${t("ai_online")} · ${(r.models || []).length}` : t("ai_offline"); $("ai-status").title = r.error || ""; return;
+  }
   const r = await call("ai_status", aiArgs()), sel = $("ai-model"), keep = sel.value;
   sel.innerHTML = `<option value=""></option>` + (r.models || []).map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join(""); if ((r.models || []).includes(keep)) sel.value = keep;
   $("ai-status").textContent = r.online ? `${t("ai_online")} · ${(r.models || []).length}` : t("ai_offline"); $("ai-status").title = r.error || "";
 }
 $("ai-check").onclick = () => busy(aiCheck);
+$("ai-provider").onchange = aiShow;
+["ai-api-base", "ai-api-model"].forEach(id => { $(id).onchange = aiPrefsSave; });
+$("ai-key-save").onclick = () => busy(async () => { const k = $("ai-api-key").value.trim(); if (!k) throw new Error(t("ai_api_key")); await call("ai_key_set", { key: k }); $("ai-api-key").value = ""; await aiKeyState(); toast(t("ai_key_saved")); });
+$("ai-key-clear").onclick = () => busy(async () => { await call("ai_key_clear", {}); await aiKeyState(); toast(t("ai_key_cleared")); });
+try { const p = JSON.parse(localStorage.getItem("nanoarch.ai") || "null"); if (p) { if (p.p === "api") $("ai-provider").value = "api"; if (p.base) $("ai-api-base").value = p.base; if (p.model) $("ai-api-model").value = p.model; } } catch (e) { /* ignore */ }
+aiShow();
 $("ai-run").onclick = () => busy(async () => {
   const text = $("ai-text").value.trim(); if (!text) throw new Error(t("ai_empty"));
   const r = await call("ai_brief", { ...aiArgs(), text }), d = r.draft, ar = lang === "ar";
