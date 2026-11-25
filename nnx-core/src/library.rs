@@ -94,6 +94,8 @@ pub struct Hit {
     /// How many of the query's words the page contains, and whether it has all of them.
     pub found: usize,
     pub all: bool,
+    /// The query's words appear together, in order, on the page.
+    pub phrase: bool,
     pub excerpt: String,
 }
 
@@ -238,12 +240,13 @@ impl Library {
         Ok((entry, text.clone()))
     }
 
-    /// Pages that hold at least half of the query's words, best first (all words, then more words, then earlier pages).
+    /// Pages that hold at least half of the query's words, best first (the whole phrase, then all words, then how densely the words recur on the page).
     pub fn search(&self, query: &str, kind: Option<Kind>, limit: usize) -> Result<Vec<Hit>, LibraryError> {
         let words = terms(query);
         if words.is_empty() {
             return Ok(Vec::new());
         }
+        let phrase_text = fold(query).split_whitespace().collect::<Vec<_>>().join(" ");
         let mut hits = Vec::new();
         for e in self.list()?.into_iter().filter(|e| kind.is_none_or(|k| e.kind == k)) {
             let doc = self.doc(&e.id)?;
@@ -254,14 +257,18 @@ impl Library {
                 if found == 0 || found * 2 < words.len() {
                     continue;
                 }
-                let first = at.iter().flatten().copied().min().unwrap_or(0);
+                let phrase_at = if words.len() > 1 { folded.find(&phrase_text) } else { None };
+                let first = phrase_at.unwrap_or_else(|| at.iter().flatten().copied().min().unwrap_or(0));
                 // `folded` may differ in length from `text` (diacritics dropped): cut the excerpt from the folded text's own characters.
                 let start = folded[..first].chars().count().saturating_sub(100);
                 let excerpt: String = text.chars().skip(start).take(300).collect();
-                hits.push(Hit { id: e.id.clone(), citation: e.citation(Some(i + 1)), kind: e.kind, page: i + 1, found, all: found == words.len(), excerpt });
+                let occurrences: usize = words.iter().map(|w| folded.matches(w.as_str()).count()).sum();
+                let density = occurrences * 100_000 / folded.len().max(1);
+                hits.push((density, Hit { id: e.id.clone(), citation: e.citation(Some(i + 1)), kind: e.kind, page: i + 1, found, all: found == words.len(), phrase: phrase_at.is_some(), excerpt }));
             }
         }
-        hits.sort_by(|a, b| b.all.cmp(&a.all).then(b.found.cmp(&a.found)).then(a.id.cmp(&b.id)).then(a.page.cmp(&b.page)));
+        hits.sort_by(|(da, a), (db, b)| b.phrase.cmp(&a.phrase).then(b.all.cmp(&a.all)).then(db.cmp(da)).then(b.found.cmp(&a.found)).then(a.id.cmp(&b.id)).then(a.page.cmp(&b.page)));
+        let mut hits: Vec<Hit> = hits.into_iter().map(|(_, h)| h).collect();
         hits.truncate(limit);
         Ok(hits)
     }
@@ -382,6 +389,10 @@ mod tests {
         assert_eq!(hits[0].citation, "SBC 201 (2018), p. 2");
         assert!(hits[0].excerpt.contains("غرفة النوم"));
         assert_eq!(e.pages, 3);
+        let r = Library::open(tmp("rank")).unwrap();
+        r.add(new("R", &["door width and also corridor mention", "x", "the corridor width must be 1200 mm"])).unwrap();
+        let h = r.search("corridor width", None, 5).unwrap();
+        assert_eq!((h[0].page, h[0].phrase, h[1].page, h[1].phrase), (3, true, 1, false), "the page with the whole phrase comes first");
         let none = lib.search("elevator", None, 5).unwrap();
         assert!(none.is_empty());
         assert_eq!(lib.search("stairs width", Some(Kind::Metric), 5).unwrap().len(), 0);
