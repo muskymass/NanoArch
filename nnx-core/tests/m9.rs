@@ -102,6 +102,26 @@ fn four_walls_make_one_room_with_its_rectangle_and_area_and_a_second_pass_change
 }
 
 #[test]
+fn a_drafted_room_has_a_net_area_between_the_wall_faces_and_it_follows_the_walls() {
+    let mut doc = blank();
+    let walls = box_room(&mut doc);
+    sync(&mut doc, "rooms");
+    let room = |doc: &Document| doc.model.elements.values().find(|e| e.kind == "Space").unwrap().typed::<Space>().unwrap();
+    // 6 x 4 m between the wall centre lines; the walls are 200 mm, so each side comes in by 100 mm: 5.8 x 3.8 m.
+    assert_eq!((room(&doc).area, room(&doc).net_area), (24.0, Some(22.04)));
+    assert_eq!(annot::net_area_of(&doc.model, level(&doc), &[1000, 1000, 6000, 4000]), Some(22.04));
+    // A second pass has nothing to do.
+    assert!(sync(&mut doc, "again").cmds.is_empty());
+    // One wall made 400 mm thick takes another 100 mm off that side: 5.8 x 3.7 m. The room is the same room, its net area follows.
+    doc.commit("thicker", Origin::User, vec![Command::SetProp { id: walls[0], key: "thickness".into(), value: Some(json!(400)) }]).unwrap_or_else(|e| panic!("{e}"));
+    let s = sync(&mut doc, "after the thicker wall");
+    assert!(s.added.is_empty() && s.removed.is_empty(), "{s:?}");
+    assert_eq!((room(&doc).area, room(&doc).net_area), (24.0, Some(21.46)));
+    // With no wall on any side there is nothing to take off.
+    assert_eq!(annot::net_area_of(&doc.model, level(&doc), &[20_000, 20_000, 3000, 3000]), None);
+}
+
+#[test]
 fn a_partition_makes_two_rooms_and_removing_it_takes_them_back_to_one_with_the_tag_gone_too() {
     let mut doc = blank();
     box_room(&mut doc);
@@ -339,7 +359,8 @@ fn a_room_tag_shows_the_name_the_area_and_the_level_elevation_and_replaces_the_d
     assert!(annot::tag_commands(&doc.model, &[room]).unwrap().0.is_empty(), "a room is tagged once");
     assert!(annot::untagged_rooms(&doc.model, level(&doc)).is_empty());
     let svg = drawing::plan_svg(&doc.model, level(&doc), &DrawOpts { labels, ..opts() }).unwrap();
-    assert!(svg.contains("class=\"tag\"") && svg.contains(">Majlis</text>") && svg.contains(">24.00 m²</text>") && svg.contains(">±0.00 m</text>"), "{svg}");
+    assert!(svg.contains("class=\"tag\"") && svg.contains(">Majlis</text>") && svg.contains(">22.04 m²</text>") && svg.contains(">±0.00 m</text>"), "{svg}");
+    // The tag shows the NET area: 6 x 4 m between the wall centre lines, 5.8 x 3.8 m between the faces of the 200 mm walls.
     assert!(!svg.contains("class=\"name\""), "the tagged room has no default label any more");
     // The tag follows its room: a different area shows at once.
     let tag = doc.model.elements.values().find(|e| e.kind == "Tag").unwrap().id;

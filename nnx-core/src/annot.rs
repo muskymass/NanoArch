@@ -454,7 +454,10 @@ fn split_generated(model: &Model, level: Option<Id>, out: &mut RoomSync) {
                     extra.insert("splitFrom".into(), v.clone());
                 }
                 let area = ((r[2] as f64 * r[3] as f64) / 1e6 * 100.0).round() / 100.0;
-                Space { func, requirement_key: k, area, target_area: area, x: r[0], y: r[1], w: r[2], h: r[3], boundary: vec![[r[0], r[1]], [r[0] + r[2], r[1]], [r[0] + r[2], r[1] + r[3]], [r[0], r[1] + r[3]]], net_area: None, glazing_ratio: None, extra }
+                // A part measures as the room it came from did: net between the wall faces when that room had a net area, gross otherwise.
+                // Giving a net area to the parts of a room that had none would change the floor quantities by the mere act of dividing.
+                let net_area = u.orig.net_area.and_then(|_| net_area_of(model, u.level, r));
+                Space { func, requirement_key: k, area, target_area: area, x: r[0], y: r[1], w: r[2], h: r[3], boundary: vec![[r[0], r[1]], [r[0] + r[2], r[1]], [r[0] + r[2], r[1] + r[3]], [r[0], r[1] + r[3]]], net_area, glazing_ratio: None, extra }
             };
             taken.insert(sp.requirement_key.clone());
             made.push((sp.requirement_key.clone(), *r));
@@ -520,6 +523,38 @@ pub fn enclosed_rects(model: &Model, level: Option<Id>) -> (Vec<[i64; 4]>, usize
     }
     lines.extend(model.elements.values().filter(|e| e.kind == RoomSeparator::KIND && on_level(e, level)).filter_map(|e| e.typed::<RoomSeparator>().ok()).map(|s| (s.x1, s.y1, s.x2, s.y2)));
     regions(&lines)
+}
+
+/// Net floor area (m2, two decimals) of a room rectangle `r` ([x, y, w, h]) whose sides are wall centre lines: every side is drawn in by
+/// half the thickness of the walls lying on it, weighted by the share of the side they cover. This is the rule `walls::plan` applies to
+/// generated layouts, so a drafted room and a generated one mean the same by "net". A side with no wall on it (a room separator) is not
+/// drawn in. `None` when no wall lies on any side: there is nothing to take off, and the gross area stands.
+pub fn net_area_of(model: &Model, level: Option<Id>, r: &[i64; 4]) -> Option<f64> {
+    let (x0, y0, x1, y1) = (r[0], r[1], r[0] + r[2], r[1] + r[3]);
+    // Covered length times half thickness, for the sides y = y0, y = y1, x = x0, x = x1.
+    let mut inset = [0f64; 4];
+    let mut any = false;
+    for w in model.elements.values().filter(|e| e.kind == Wall::KIND && on_level(e, level)).filter_map(|e| e.typed::<Wall>().ok()) {
+        let (side, cover) = if w.y1 == w.y2 {
+            (if w.y1 == y0 { Some(0) } else if w.y1 == y1 { Some(1) } else { None }, w.x1.max(w.x2).min(x1) - w.x1.min(w.x2).max(x0))
+        } else if w.x1 == w.x2 {
+            (if w.x1 == x0 { Some(2) } else if w.x1 == x1 { Some(3) } else { None }, w.y1.max(w.y2).min(y1) - w.y1.min(w.y2).max(y0))
+        } else {
+            (None, 0)
+        };
+        if let Some(s) = side
+            && cover > 0
+        {
+            inset[s] += cover as f64 * w.thickness as f64 / 2.0;
+            any = true;
+        }
+    }
+    if !any {
+        return None;
+    }
+    let (w, h) = (r[2] as f64, r[3] as f64);
+    let net = ((w - inset[2] / h - inset[3] / h) * (h - inset[0] / w - inset[1] / w)).max(0.0) / 1e6;
+    Some((net * 100.0).round() / 100.0)
 }
 
 /// The rectangles (x, y, w, h) that the lines (x1, y1, x2, y2, each horizontal or vertical) enclose, and how many enclosed regions are not
@@ -608,6 +643,19 @@ pub fn rooms_sync(model: &Model, level: Option<Id>) -> RoomSync {
             out.removed.push(key.clone());
         }
     }
+    // A computed room that stays keeps its net area in step with the walls round it: a wall made thicker or thinner, a wall drawn on a
+    // separator's line. Without this the net area would be the one of the day the room was found.
+    for (id, src, _, r) in &existing {
+        if *src == Source::Computed
+            && rects.contains(r)
+            && let Some(Ok(s)) = model.get(id).map(|e| e.typed::<Space>())
+        {
+            let net = net_area_of(model, level, r);
+            if net != s.net_area {
+                out.cmds.push(Command::SetProp { id: *id, key: "netArea".into(), value: net.map(|n| serde_json::json!(n)) });
+            }
+        }
+    }
     let mut keys: BTreeSet<String> = model.elements.values().filter(|e| e.kind == Space::KIND).filter_map(|e| e.props.get("requirementKey").and_then(|v| v.as_str()).map(str::to_string)).chain(existing.iter().map(|x| x.2.clone())).collect();
     let overlaps = |a: &[i64; 4], b: &[i64; 4]| a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3];
     for r in &rects {
@@ -621,7 +669,7 @@ pub fn rooms_sync(model: &Model, level: Option<Id>) -> RoomSync {
         let key = (1..).map(|i| format!("R{i}")).find(|k| !keys.contains(k)).unwrap_or_default();
         keys.insert(key.clone());
         let area = ((r[2] as f64 * r[3] as f64) / 1e6 * 100.0).round() / 100.0;
-        let sp = Space { func: "room".into(), requirement_key: key.clone(), area, target_area: area, x: r[0], y: r[1], w: r[2], h: r[3], boundary: vec![[r[0], r[1]], [r[0] + r[2], r[1]], [r[0] + r[2], r[1] + r[3]], [r[0], r[1] + r[3]]], net_area: None, glazing_ratio: None, extra: Default::default() };
+        let sp = Space { func: "room".into(), requirement_key: key.clone(), area, target_area: area, x: r[0], y: r[1], w: r[2], h: r[3], boundary: vec![[r[0], r[1]], [r[0] + r[2], r[1]], [r[0] + r[2], r[1] + r[3]], [r[0], r[1] + r[3]]], net_area: net_area_of(model, level, r), glazing_ratio: None, extra: Default::default() };
         let mut el = element_of(&sp, Source::Computed);
         el.level_id = level;
         out.cmds.push(Command::Create(el));

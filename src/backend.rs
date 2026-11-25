@@ -461,6 +461,8 @@ impl App {
             "folder_import" => Self::folder_import(args),
             "sketch_accept" => Self::sketch_accept(args),
             "raster_detect" => Self::raster_detect(args),
+            "raster_walls" => Self::raster_walls(args),
+            "raster_wall_colours" => Self::raster_wall_colours(args),
             "auto_run" => self.auto_run(args),
             "deed_accept" => Self::deed_accept(args),
             "prefs_learn" => Self::prefs_learn(args),
@@ -2600,7 +2602,7 @@ impl App {
             .flat_map(|d| d.model.elements.values())
             .filter(|e| level.is_none() || e.level_id == level)
             .filter_map(|e| e.typed::<nnx_core::typed::Space>().ok())
-            .map(|s| json!({ "key": s.requirement_key, "locked": locked.contains(&s.requirement_key), "name": nnx_core::annot::room_name(&s, &labels).unwrap_or(s.requirement_key.clone()), "func": s.func, "area": s.area, "target": s.target_area }))
+            .map(|s| json!({ "key": s.requirement_key, "locked": locked.contains(&s.requirement_key), "name": nnx_core::annot::room_name(&s, &labels).unwrap_or(s.requirement_key.clone()), "func": s.func, "area": s.area, "net_area": s.net_area, "target": s.target_area }))
             .collect()
     }
 
@@ -3464,6 +3466,31 @@ impl App {
         };
         let p = rasterplan::Params { wall_px: opt("wall_px")?, gap_px: opt("gap_px")?, min_room_px: opt("min_room_px")? };
         let found = if rgb.is_some() { rasterplan::detect_rgb(&gray, w, h, &p) } else { rasterplan::detect(&gray, w, h, &p) }.map_err(|e| format!("plan reading: {e}"))?;
+        serde_json::to_value(found).map_err(|e| e.to_string())
+    }
+
+    /// The RGB bitmap of a plan as the page sends it: `rgb_b64` (three bytes per pixel), `width`, `height`.
+    fn raster_rgb(args: &Value) -> Result<(Vec<u8>, u32, u32), String> {
+        let dim = |k: &str| args.get(k).and_then(Value::as_u64).filter(|v| *v >= 1 && *v <= 20_000).map(|v| v as u32).ok_or_else(|| format!("plan reading: '{k}' is missing or not a size in pixels"));
+        let (w, h) = (dim("width")?, dim("height")?);
+        let b64 = args.get("rgb_b64").and_then(Value::as_str).ok_or("plan reading: the colour bitmap (rgb_b64) is missing")?;
+        Ok((nnx_core::xlsx::base64_decode(b64).map_err(|e| format!("plan reading: {e}"))?, w, h))
+    }
+
+    /// The colours a coloured plan may draw its walls in (`nnx_core::rasterwalls`): thick, dark, saturated. The user picks among them.
+    fn raster_wall_colours(args: &Value) -> Result<Value, String> {
+        let (rgb, w, h) = Self::raster_rgb(args)?;
+        let c = nnx_core::rasterwalls::wall_colour_candidates(&rgb, w, h).map_err(|e| format!("plan reading: {e}"))?;
+        Ok(json!({ "colours": c }))
+    }
+
+    /// Walls and openings of a coloured plan as segments, in image pixels, with the scale they were read at (`nnx_core::rasterwalls`).
+    /// `params` carries the scale (`mm_per_px`) and the wall colours, both required, and the optional reading settings. Nothing is put in
+    /// the model here: a plan has no heights, so building these walls is a separate step that asks for them.
+    fn raster_walls(args: &Value) -> Result<Value, String> {
+        let (rgb, w, h) = Self::raster_rgb(args)?;
+        let p: nnx_core::rasterwalls::WallParams = serde_json::from_value(args.get("params").cloned().ok_or("plan reading: 'params' (the scale and the wall colours) is missing")?).map_err(|e| format!("plan reading: the settings are not valid: {e}"))?;
+        let found = nnx_core::rasterwalls::read_walls(&rgb, w, h, &p).map_err(|e| format!("plan reading: {e}"))?;
         serde_json::to_value(found).map_err(|e| e.to_string())
     }
 
@@ -5681,6 +5708,39 @@ mod tests {
         assert_eq!(r["rooms"].as_array().unwrap().len(), 2, "{r}");
         assert!(app.handle("raster_detect", &json!({ "width": 240, "height": 160 })).unwrap_err().contains("bitmap"));
         assert!(app.handle("raster_detect", &json!({ "width": 10, "height": 10, "gray_b64": "AAAA" })).unwrap_err().contains("plan reading"));
+    }
+
+    #[test]
+    fn a_coloured_plan_is_read_into_walls_and_openings_only_with_a_scale_and_wall_colours() {
+        // The same two rooms in a wall colour on a light ground, with a 20 px door gap in the partition.
+        let (w, h, wall) = (240usize, 160usize, [28u8, 124, 108]);
+        let mut g = vec![235u8; w * h * 3];
+        let mut rect = |x0: usize, y0: usize, x1: usize, y1: usize, c: [u8; 3]| {
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    g[(y * w + x) * 3..(y * w + x) * 3 + 3].copy_from_slice(&c);
+                }
+            }
+        };
+        rect(20, 20, 220, 26, wall);
+        rect(20, 134, 220, 140, wall);
+        rect(20, 20, 26, 140, wall);
+        rect(214, 20, 220, 140, wall);
+        rect(117, 20, 123, 140, wall);
+        rect(117, 70, 123, 90, [235, 235, 235]);
+        let b64 = nnx_core::xlsx::base64_encode(&g);
+        let mut app = App::default();
+        let c = app.handle("raster_wall_colours", &json!({ "width": w, "height": h, "rgb_b64": b64 })).unwrap();
+        assert_eq!(c["colours"].as_array().unwrap().len(), 1, "{c}");
+        let r = app.handle("raster_walls", &json!({ "width": w, "height": h, "rgb_b64": b64, "params": { "mm_per_px": 50.0, "wall_colours": [wall] } })).unwrap();
+        assert_eq!(r["walls"].as_array().unwrap().len(), 5, "{r}");
+        assert_eq!(r["openings"].as_array().unwrap().len(), 1, "{r}");
+        assert_eq!(r["openings"][0]["hi_px"].as_f64().unwrap() - r["openings"][0]["lo_px"].as_f64().unwrap(), 20.0);
+        // Nothing is read without the scale, the wall colours or the settings object, and the reply says which is missing.
+        assert!(app.handle("raster_walls", &json!({ "width": w, "height": h, "rgb_b64": b64 })).unwrap_err().contains("params"));
+        assert!(app.handle("raster_walls", &json!({ "width": w, "height": h, "rgb_b64": b64, "params": { "mm_per_px": 0.0, "wall_colours": [wall] } })).unwrap_err().contains("scale"));
+        assert!(app.handle("raster_walls", &json!({ "width": w, "height": h, "rgb_b64": b64, "params": { "mm_per_px": 50.0, "wall_colours": [] } })).unwrap_err().contains("colour"));
+        assert!(app.handle("raster_walls", &json!({ "width": w, "height": h })).unwrap_err().contains("rgb_b64"));
     }
 
     fn brief2() -> Value {
@@ -10240,7 +10300,9 @@ COL-1,10,10
         app.handle("draft_set", &json!({ "id": small, "key": "name", "value": "Majlis" })).unwrap();
         let t = app.handle("draft_tag", &json!({})).unwrap();
         let svg = t["svg"].as_str().unwrap();
-        assert!(svg.contains(">Majlis</text>") && svg.contains(">8.00 m²</text>") && svg.contains(">16.00 m²</text>"));
+        // The tags show the NET area: each room comes in by half of the 200 mm walls on its three walled sides, and not at all on the
+        // separator, which has no thickness: 1.9 x 3.8 m and 3.9 x 3.8 m.
+        assert!(svg.contains(">Majlis</text>") && svg.contains(">7.22 m²</text>") && svg.contains(">14.82 m²</text>"), "{svg}");
         // Moving the separator re-divides the space in the same step; deleting it joins the two again.
         let sep = r["separator"].as_str().unwrap().to_string();
         let moved = app.handle("draft_xform", &json!({ "ids": [sep], "xf": { "op": "move", "dx": 1000, "dy": 0 } })).unwrap();
