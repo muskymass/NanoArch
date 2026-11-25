@@ -388,7 +388,7 @@ main.hl{grid-template-columns:1fr 420px}main.hr{grid-template-columns:400px 1fr}
   <section class="col">
     <div class="tabs">
       <div class="tg" data-g="design"><div class="tgl" data-i="tg_design"></div><div class="tgb"><button class="tab on" data-tab="notes" data-i="t_notes"></button><button class="tab" data-tab="sketch" data-i="t_sketch"></button><button class="tab" data-tab="bim" data-i="t_bim"></button><button class="tab" data-tab="ol" id="tab-ol"></button><button class="tab" data-tab="pr" id="tab-pr"></button></div></div>
-      <div class="tg" data-g="code"><div class="tgl" data-i="tg_code"></div><div class="tgb"><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="ov" id="tab-ov"></button><button class="tab" data-tab="cp" id="tab-cp"></button></div></div>
+      <div class="tg" data-g="code"><div class="tgl" data-i="tg_code"></div><div class="tgb"><button class="tab" data-tab="sbc" data-i="t_sbc"></button><button class="tab" data-tab="rules" data-i="t_rules"></button><button class="tab" data-tab="ov" id="tab-ov"></button><button class="tab" data-tab="cp" id="tab-cp"></button><button class="tab" data-tab="lib" data-i="t_lib"></button></div></div>
       <div class="tg" data-g="eng"><div class="tgl" data-i="tg_eng"></div><div class="tgb"><button class="tab" data-tab="str" data-i="t_str"></button><button class="tab" data-tab="mep" data-i="t_mep"></button><button class="tab" data-tab="mx" id="tab-mx"></button><button class="tab" data-tab="an" id="tab-an"></button></div></div>
       <div class="tg" data-g="cost"><div class="tgl" data-i="tg_cost"></div><div class="tgb"><button class="tab" data-tab="qto" data-i="t_qto"></button><button class="tab" data-tab="boq" data-i="t_boq"></button><button class="tab" data-tab="sched" data-i="t_sched"></button><button class="tab" data-tab="ex" id="tab-ex"></button></div></div>
       <div class="tg" data-g="out"><div class="tgl" data-i="tg_out"></div><div class="tgb"><button class="tab" data-tab="vr" id="tab-vr"></button><button class="tab" data-tab="dv" id="tab-dv"></button></div></div>
@@ -507,8 +507,11 @@ main.hl{grid-template-columns:1fr 420px}main.hr{grid-template-columns:400px 1fr}
         <label class="note" style="display:block;margin:8px 0"><input type="checkbox" id="rules-sourced" checked> <span data-i="use_sourced"></span></label>
         <div class="bar" style="padding:10px 0;border:0"><button id="runrules" class="primary" data-i="run_rules"></button></div>
         <div id="rulesout"></div>
+      </div>
+      <div class="pane" id="p-lib">
         <h2 data-i="lib_h"></h2>
         <div class="note" data-i="lib_note"></div>
+        <div id="libx"></div><datalist id="lib-sources"></datalist>
         <div class="bar" style="padding:6px 0;border:0;gap:6px;flex-wrap:wrap"><input id="lib-q" data-ph="lib_ph" style="flex:1;min-width:220px"><button id="lib-go" data-i="lib_go"></button></div>
         <div id="libout"></div>
       </div>
@@ -552,7 +555,7 @@ ar: {
   qty:"الكمية", unit:"الوحدة", el:"عناصر", code:"البند", missing:"معدلات ناقصة", days:"يوم عمل", finish:"الانتهاء", saved:"تم الحفظ", cancelled:"أُلغي", error:"خطأ",
   fi_ai:"حلّل بالذكاء الاصطناعي", fi_ai_set:"مصدر الذكاء الاصطناعي ومفتاح API", fi_ai_src_local:"المصدر: محلي", fi_ai_src_api:"المصدر: API (يُرسل خارج الجهاز)", fi_ai_note:"يقرأ النموذج المختار (محلي أو API) نصوص الملفات والرسومات المصوّرة ويقترح قيماً. ما يقرؤه النموذج غير مؤكد: راجعه ثم اضغط «طبّق».", fi_ai_off:"خادم النموذج المحلي غير متاح (Ollama)", fi_apply:"طبّق", fi_ai_none:"لم يجد النموذج قيمة جديدة", fi_ai_busy:"جارٍ القراءة", fi_ai_area:"المساحة", fi_ai_dims:"الأبعاد", fi_ai_city:"المدينة",
   fi_h:"استيراد مجلد مشروع", fi_note:"اكتب اسم المشروع واختر المجلد الذي فيه الرسومات. يقرأ البرنامج كل ملف بما يناسبه (جداول المساحات Excel، وحدود الأرض DXF، ونماذج IFC) ويملأ الموجز بما وجده فقط. الصور وملفات PDF تحتاج مقياساً وقراءة منك في الرسم الأولي، وما لا يوجد في أي ملف يبقى ناقصاً ويُذكر.", fi_name:"اسم المشروع", fi_pick:"اختر المجلد واستورد", fi_open:"افتح في الرسم الأولي", fi_missing:"ما ينقص الموجز", fi_files:"الملفات", fi_none:"لا ينقص شيء من أسئلة الموجز", fi_need_name:"اكتب اسم المشروع أولاً", fi_st:{ read: "قُرئ", needs_you: "يحتاج منك", skipped: "تُخطّي", unsupported: "غير مدعوم" },
-  lib_ocr:"اقرأ الصفحة بالذكاء الاصطناعي", lib_h:"مكتبة الكود", lib_note:"يبحث في ملفات الكود السعودي PDF ويعرض البند والصفحة ونصّها لتتحقق منها بنفسك. لا يُملأ أي رقم تلقائياً.", lib_ph:"كلمات البحث (مثل: مساحة غرفة النوم)", lib_go:"ابحث في الكود", lib_use:"استخدم كمصدر", lib_none:"لا نتائج في ملفات المكتبة", lib_busy:"جارٍ قراءة الملف", lib_page:"ص", lib_find:"ابحث في الكود",
+  lib_ocr:"اقرأ الصفحة بالذكاء الاصطناعي", lib_h:"مكتبة المصادر: أكواد ومواصفات ومقاييس", lib_note:"استورد ملف PDF أو نصاً أو رابطاً ليصير مصدراً تبحث فيه وتستشهد به أثناء العمل، وتبحث أيضاً في ملفات الكود السعودي في مجلد الكود. يعرض البرنامج الصفحة ونصّها لتتحقق منها بنفسك، ولا يملأ أي رقم تلقائياً.", lib_ph:"كلمات البحث (مثل: مساحة غرفة النوم)", lib_go:"ابحث في الكود", lib_use:"استخدم كمصدر", lib_none:"لا نتائج في ملفات المكتبة", lib_busy:"جارٍ قراءة الملف", lib_page:"ص", lib_find:"ابحث في الكود",
   checked:"فُحص", findings:"مخالفات", skipped:"قواعد لم تُفحص", lim_value:"القيمة", lim_source:"المصدر (بند وطبعة ورقم صفحة)", lim_run:"شغّل بهذه القيمة", lim_need:"أدخل القيمة ومصدرها معاً", lim_clear:"أزل القيم المدخلة", func:{majlis:"مجلس",living:"صالة",dining:"طعام",kitchen:"مطبخ",bedroom:"نوم",bathroom:"حمام",lift:"مصعد",courtyard:"فناء",other:"أخرى"},
   zone:{public:"عام",private:"خاص",service:"خدمات"}, days7:["اثنين","ثلاثاء","أربعاء","خميس","جمعة","سبت","أحد"], pick_days:"اختر أيام العمل", sync_done:"المزامنة: جديد {c}، محذوف {r}، بلا تغيير {u}",
   unsaved:"غير محفوظ", saved_state:"محفوظ", assump_h:"افتراضات التصميم (قيم مؤقتة)", assump_note:"هذه قيم افتراضية استعملتها المحركات لأنك لم تحدد غيرها. ليست قيماً نظامية؛ استبدلها بقيم مشروعك أو SBC.",
@@ -569,7 +572,7 @@ ar: {
   dxf_views:"مع الواجهات والمقاطع", rep_pdf:"تقرير هندسي (PDF)", rep_xlsx:"تقرير هندسي (Excel)", v_4d:"4D", v_4d_need:"احسب الجدول الزمني أولاً (تبويب الجدول)", v_play:"تشغيل", v_pause:"إيقاف", v_day:"اليوم", s_wbs:"WBS", s_phase:"المرحلة", s_active:"قيد التنفيذ", phase:{"Substructure":"الأساسات","Superstructure":"الهيكل","Insulation":"العزل","MEP rough-in":"تمديدات الكهروميكانيك","Finishing":"التشطيبات","Commissioning":"الاختبار والتشغيل"},
   t_str:"الجداول الإنشائية", str_note:"أحمال الأعمدة بالمساحة المساهمة، والقواعد مقابل تحمل التربة (من المدخلات الإنشائية)، والميدات الرابطة، والخرسانة وجدول ثني الحديد. الحديد يُجدول من نماذج تحددها أنت (أقطار وأعداد وتباعد وغطاء)؛ التطبيق لا يصمم التسليح. أولي ولا يغني عن مهندس إنشائي مرخّص.", str_example:"املأ بقيم اصطناعية (للاختبار فقط)", str_run:"احسب الجداول", str_cols:"الأعمدة", str_fnd:"القواعد", str_tb:"الميدات الرابطة", str_conc:"الخرسانة (م³)", str_bbs:"جدول ثني الحديد", s_trib:"المساحة المساهمة (م²)", s_axial:"الحمل المحوري (kN)", s_req:"المطلوب (م²)", s_prov:"المقاس القائم", s_status:"الحالة", s_span:"البحر (مم)", s_clear:"الصافي (مم)", s_size:"المقطع", s_vol:"الحجم (م³)", s_mark:"العلامة", s_dia:"القطر", s_num:"العدد", s_cut:"طول القص (مم)", s_kg:"كغ", s_soil:"تحمل التربة (kPa)", s_csv_members:"تصدير العناصر (CSV)", s_csv_conc:"تصدير الخرسانة (CSV)", s_csv_bbs:"تصدير ثني الحديد (CSV)", m_btu:"BTU/ساعة", m_tons:"طن تبريد", m_air:"تدفق الهواء (L/s)", m_kva:"kVA", m_board:"اللوحة", m_boards:"لوحات التوزيع", m_routes:"المسارات المولّدة", m_sys:"النظام", m_role:"الدور", m_from:"من", m_to:"إلى", m_slope:"ميل %",
   t_bim:"BIM والتعارضات", bim_note:"أدخل المجاري والأنابيب والمصارف (مم؛ الارتفاع فوق سطح أرضية الدور). التطبيق لا يرسم مساراتها. يُفحص تقاطعها مع الكمرات والأعمدة والقواعد بالهندسة الفعلية، وتُلوَّن العناصر المتعارضة بالأحمر في العرض ثلاثي الأبعاد.", run_sys:"النظام", sys_duct:"مجرى تكييف", sys_pipe:"أنبوب", sys_drain:"مصرف", run_from:"من (x, y, z)", run_to:"إلى (x, y, z)", run_size:"العرض × الارتفاع (مم)", run_level:"الدور (رقم)", run_add:"أضف", run_none:"لا مجاري ولا أنابيب بعد", clash_run:"افحص التعارضات", clash_h:"التعارضات", clash_none:"لا تعارض", clash_new:"تعارض جديد: {n}", d_architectural:"معماري", d_structural:"إنشائي", d_electrical:"كهرباء", d_plumbing:"سباكة", d_hvac:"تكييف", v_plan:"المخطط", v_north:"واجهة شمالية", v_south:"واجهة جنوبية", v_east:"واجهة شرقية", v_west:"واجهة غربية", v_aa:"مقطع A-A", v_bb:"مقطع B-B", sec_at:"موضع المقطع (م)", p_parapet:"ارتفاع الجدار الاستنادي للسطح (م)",
-  t_sbc:"المشروع والكود", sbc_note:"تفاصيل المشروع وحدود البلدية (الارتدادات ونسبة البناء) تُدخل من أنظمة البلدية مع مصدرها. فحص الكود أولي ولا يغني عن الجهة المعتمدة.", bt:"نوع المبنى", bt_villa:"فيلا", bt_house:"منزل", bt_palace:"قصر", bt_apartment_building:"عمارة سكنية", p_style:"الطراز المعماري", p_climate:"المنطقة المناخية", p_smart:"التقنيات الذكية (مفصولة بفاصلة)",
+  t_sbc:"المشروع والكود", t_lib:"مكتبة المصادر", sbc_note:"تفاصيل المشروع وحدود البلدية (الارتدادات ونسبة البناء) تُدخل من أنظمة البلدية مع مصدرها. فحص الكود أولي ولا يغني عن الجهة المعتمدة.", bt:"نوع المبنى", bt_villa:"فيلا", bt_house:"منزل", bt_palace:"قصر", bt_apartment_building:"عمارة سكنية", p_style:"الطراز المعماري", p_climate:"المنطقة المناخية", p_smart:"التقنيات الذكية (مفصولة بفاصلة)",
   lim_h:"حدود البلدية", lim_f:"أدنى ارتداد أمامي (م)", lim_b:"أدنى ارتداد خلفي (م)", lim_s:"أدنى ارتداد جانبي (م)", lim_c:"أقصى نسبة بناء (%)", lim_src:"مصدر هذه الحدود (النظام، المادة، البلدية)", lim_enforce:"ارفض أي تعديل يضيف مخالفة", proj_save:"احفظ تفاصيل المشروع", proj_saved:"حُفظت تفاصيل المشروع", plan_outdated:"تغيرت الارتدادات بعد توليد المخطط: ولّد البدائل من جديد ليتبعها المخطط.",
   edge_x0:"يسار", edge_x1:"يمين", edge_y0:"أسفل", edge_y1:"أعلى", i_grow:"غيّر الضلع (مم)", i_swap:"بدّل المكان مع", i_merge:"احذف وادمج في", i_nb:"جار", i_nb_none:"لا جار يشاركه ضلعاً كاملاً: لا تبديل ولا دمج.",
   export_dxf:"تصدير DXF", export_dxf_all:"DXF كل الأدوار", export_dwg:"تصدير DWG", dwg_conv:"مسار برنامج التحويل (ODAFileConverter أو dxf2dwg):", dwg_done:"DWG: {b} بايتاً ({s}) عبر {c}.", dxf_done:"DXF: {n} كياناً على {l} طبقة. الأبعاد بالمليمتر والتصدير أولي.",
@@ -604,7 +607,7 @@ en: {
   qty:"Quantity", unit:"Unit", el:"Elements", code:"Item", missing:"Missing rates", days:"working days", finish:"Finish", saved:"Saved", cancelled:"Cancelled", error:"Error",
   fi_ai:"Analyse with AI", fi_ai_set:"AI source and API key", fi_ai_src_local:"Source: local", fi_ai_src_api:"Source: API (sent off this computer)", fi_ai_note:"The chosen model (local or API) reads the files' text and the photographed drawings and proposes values. What the model reads is unconfirmed: check it, then press Apply.", fi_ai_off:"The local model server (Ollama) is not available", fi_apply:"Apply", fi_ai_none:"The model found no new value", fi_ai_busy:"Reading", fi_ai_area:"Area", fi_ai_dims:"Dimensions", fi_ai_city:"City",
   fi_h:"Import a project folder", fi_note:"Type the project name and pick the folder that holds the drawings. Each file is read with the importer that fits it (Excel area schedules, DXF plot boundaries, IFC models) and the brief is filled with what was found only. Images and PDFs need a scale and a reading from you in the draft sketch, and anything no file holds stays missing and is listed.", fi_name:"Project name", fi_pick:"Pick the folder and import", fi_open:"Open in the draft sketch", fi_missing:"What the brief still lacks", fi_files:"Files", fi_none:"No brief question is left open", fi_need_name:"Type the project name first", fi_st:{ read: "Read", needs_you: "Needs you", skipped: "Skipped", unsupported: "Not supported" },
-  lib_ocr:"Read the page with AI", lib_h:"Code library", lib_note:"Searches the Saudi Building Code PDFs and shows the clause, page and its text for you to check. No number is ever filled in automatically.", lib_ph:"Search words (e.g. bedroom minimum area)", lib_go:"Search the code", lib_use:"Use as source", lib_none:"No results in the library files", lib_busy:"Reading file", lib_page:"p.", lib_find:"Search the code",
+  lib_ocr:"Read the page with AI", lib_h:"Source library: codes, specifications and measures", lib_note:"Import a PDF, a text file or a link to make it a source you search and cite while working; the Saudi Building Code PDFs in the code folder are searched too. The page and its text are shown for you to check. No number is ever filled in automatically.", lib_ph:"Search words (e.g. bedroom minimum area)", lib_go:"Search the code", lib_use:"Use as source", lib_none:"No results in the library files", lib_busy:"Reading file", lib_page:"p.", lib_find:"Search the code",
   checked:"Checked", findings:"Findings", skipped:"Rules not run", lim_value:"Value", lim_source:"Source (clause, edition, page)", lim_run:"Run with this value", lim_need:"Enter the value and its source together", lim_clear:"Clear entered values", func:{majlis:"Majlis",living:"Living",dining:"Dining",kitchen:"Kitchen",bedroom:"Bedroom",bathroom:"Bathroom",lift:"Lift",courtyard:"Courtyard",other:"Other"},
   zone:{public:"Public",private:"Private",service:"Service"}, days7:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], pick_days:"Choose the working days", sync_done:"Sync: created {c}, removed {r}, unchanged {u}",
   unsaved:"Unsaved", saved_state:"Saved", assump_h:"Design assumptions (placeholders)", assump_note:"Defaults the engines used because you gave no value. They are not code values; replace them with your project or SBC values.",
@@ -621,7 +624,7 @@ en: {
   dxf_views:"with elevations and sections", rep_pdf:"Engineering report (PDF)", rep_xlsx:"Engineering report (Excel)", v_4d:"4D", v_4d_need:"Compute the schedule first (Schedule tab)", v_play:"Play", v_pause:"Pause", v_day:"Day", s_wbs:"WBS", s_phase:"Phase", s_active:"active", phase:{"Substructure":"Substructure","Superstructure":"Superstructure","Insulation":"Insulation","MEP rough-in":"MEP rough-in","Finishing":"Finishing","Commissioning":"Commissioning"},
   t_str:"Structural schedules", str_note:"Column loads by tributary area, footings against the soil bearing value (from the structural inputs), tie beams, concrete and the bar bending schedule. Steel is scheduled from templates YOU give (diameters, counts, spacing, cover); the application does not design reinforcement. Preliminary: a licensed structural engineer must check it.", str_example:"Fill with synthetic values (testing only)", str_run:"Compute schedules", str_cols:"Columns", str_fnd:"Footings", str_tb:"Tie beams", str_conc:"Concrete (m³)", str_bbs:"Bar bending schedule", s_trib:"Tributary area (m²)", s_axial:"Axial load (kN)", s_req:"Required (m²)", s_prov:"Provided", s_status:"Status", s_span:"Span (mm)", s_clear:"Clear (mm)", s_size:"Section", s_vol:"Volume (m³)", s_mark:"Mark", s_dia:"Dia", s_num:"No.", s_cut:"Cut length (mm)", s_kg:"kg", s_soil:"Soil bearing (kPa)", s_csv_members:"Export members (CSV)", s_csv_conc:"Export concrete (CSV)", s_csv_bbs:"Export bar schedule (CSV)", m_btu:"Btu/hr", m_tons:"Tons", m_air:"Airflow (L/s)", m_kva:"kVA", m_board:"Board", m_boards:"Distribution boards", m_routes:"Generated routes", m_sys:"System", m_role:"Role", m_from:"From", m_to:"To", m_slope:"Slope %",
   t_bim:"BIM and clashes", bim_note:"Enter the ducts, pipes and drains (mm; heights above the level's floor top). The application does not route them. Their intersections with beams, columns and footings are tested on the real geometry, and the clashing elements turn red in the 3D view.", run_sys:"System", sys_duct:"HVAC duct", sys_pipe:"Pipe", sys_drain:"Drain", run_from:"From (x, y, z)", run_to:"To (x, y, z)", run_size:"Width x height (mm)", run_level:"Level (number)", run_add:"Add", run_none:"No ducts or pipes yet", clash_run:"Detect clashes", clash_h:"Clashes", clash_none:"No clash", clash_new:"New clashes: {n}", d_architectural:"Architectural", d_structural:"Structural", d_electrical:"Electrical", d_plumbing:"Plumbing", d_hvac:"HVAC", v_plan:"Plan", v_north:"North elevation", v_south:"South elevation", v_east:"East elevation", v_west:"West elevation", v_aa:"Section A-A", v_bb:"Section B-B", sec_at:"Section position (m)", p_parapet:"Roof parapet height (m)",
-  t_sbc:"Project and code", sbc_note:"Project details and the municipality's limits (setbacks, plot coverage) are entered from the municipal regulations with their source. The code check is preliminary and does not replace the approving authority.", bt:"Building type", bt_villa:"Villa", bt_house:"House", bt_palace:"Palace", bt_apartment_building:"Apartment building", p_style:"Architectural style", p_climate:"Climate zone", p_smart:"Smart technology (comma separated)",
+  t_sbc:"Project and code", t_lib:"Source library", sbc_note:"Project details and the municipality's limits (setbacks, plot coverage) are entered from the municipal regulations with their source. The code check is preliminary and does not replace the approving authority.", bt:"Building type", bt_villa:"Villa", bt_house:"House", bt_palace:"Palace", bt_apartment_building:"Apartment building", p_style:"Architectural style", p_climate:"Climate zone", p_smart:"Smart technology (comma separated)",
   lim_h:"Municipal limits", lim_f:"Minimum front setback (m)", lim_b:"Minimum rear setback (m)", lim_s:"Minimum side setback (m)", lim_c:"Maximum coverage (%)", lim_src:"Source of these limits (regulation, article, municipality)", lim_enforce:"Refuse any edit that adds a violation", proj_save:"Save project details", proj_saved:"Project details saved", plan_outdated:"The setbacks changed after the plan was generated: generate again so the plan follows them.",
   edge_x0:"Left", edge_x1:"Right", edge_y0:"Bottom", edge_y1:"Top", i_grow:"Change the side (mm)", i_swap:"Swap places with", i_merge:"Delete and merge into", i_nb:"neighbour", i_nb_none:"No neighbour shares a full wall: no swap or merge.",
   export_dxf:"Export DXF", export_dxf_all:"DXF all levels", export_dwg:"Export DWG", dwg_conv:"Path of the converter program (ODAFileConverter or dxf2dwg):", dwg_done:"DWG: {b} bytes ({s}) via {c}.", dxf_done:"DXF: {n} entities on {l} layers. Millimetres; preliminary export.",
@@ -644,7 +647,7 @@ function applyLang() {
   $("lang").textContent = lang === "ar" ? "English" : "العربية";
   if (state.levels) setLevels(state.levels);
   $("to3d").textContent = (typeof V3 !== "undefined" && V3.on) ? t("to2d") : t("to3d");
-  renderRooms(); renderWorkdays(); renderRates(); try { renderTemplates(); polyRender(); anBuild(); aiShow(); } catch (e) { /* not loaded yet */ }
+  renderRooms(); renderWorkdays(); renderRates(); try { renderTemplates(); polyRender(); anBuild(); aiShow(); libxRender(); } catch (e) { /* not loaded yet */ }
   try { $("tab-cp").textContent = L("الامتثال والكود", "Compliance"); cpBuild(); } catch (e) { /* not loaded yet */ }
   try { sxBuild(); } catch (e) { /* not loaded yet */ }
   try { $("tab-mx").textContent = L("MEP متقدم", "Advanced MEP"); mxBuild(); } catch (e) { /* not loaded yet */ }
@@ -1662,10 +1665,12 @@ async function libSearch(query) {
 }
 $("lib-go").onclick = () => busy(async () => {
   const q = $("lib-q").value.trim(); if (!q) return;
-  const hits = await libSearch(q);
+  await libxSearch(q);
+  let hits = [];
+  try { hits = await libSearch(q); } catch (e) { if (!LX.entries.length) throw e; }
   $("libout").innerHTML = hits.length
     ? `<ul class="clean">${hits.map((h, i) => `<li class="${h.all ? "ok" : "hint"}"><b dir="ltr">${esc(h.file)} · ${t("lib_page")} ${h.page}</b><div>${esc(h.excerpt)}</div>${LIB.target ? `<button class="lib-use" data-i="${i}">${t("lib_use")}</button>` : ""}<button class="lib-ocr" data-i="${i}">${t("lib_ocr")}</button><div class="lib-ocr-out" id="lib-ocr-${i}"></div></li>`).join("")}</ul>`
-    : `<div class="warn">${t("lib_none")}</div>`;
+    : (LX.hits ? "" : `<div class="warn">${t("lib_none")}</div>`);
   document.querySelectorAll("#libout .lib-ocr").forEach(b => b.onclick = () => busy(async () => {
     const h = hits[+b.dataset.i], box = $(`lib-ocr-${b.dataset.i}`); box.textContent = t("fi_ai_busy");
     const page = await LIB.docs[h.file].getPage(h.page), vp = page.getViewport({ scale: 2 }), cv = document.createElement("canvas");
@@ -1676,6 +1681,80 @@ $("lib-go").onclick = () => busy(async () => {
   }));
   document.querySelectorAll("#libout .lib-use").forEach(b => b.onclick = () => { const h = hits[+b.dataset.i]; LIB.target.value = `${h.file}, ${t("lib_page")} ${h.page}`; });
 });
+// ---------------------------------------------------------------- the reference library (imported codes, specifications and measures)
+// The user imports a PDF, a text/HTML file or a link; the page texts are kept in the library folder (not in a project) and searched while
+// working. A hit gives the entry's citation (title, edition, page) to use as the source of a value. The edition and issuer are typed by the
+// user: an empty one stays empty and the citation leaves it out.
+const LX = { entries: [], hits: 0 };
+const lxKinds = () => ({ code: L("كود", "Code"), spec: L("مواصفة", "Specification"), metric: L("مقياس", "Measure"), other: L("أخرى", "Other") });
+const lxCite = e => e.title + (e.edition ? ` (${e.edition})` : "");
+async function libxLoad() {
+  try { LX.entries = (await call("library_list")).entries; } catch (e) { LX.entries = []; }
+  $("lib-sources").innerHTML = LX.entries.map(e => `<option value="${esc(lxCite(e))}"></option>`).join("");
+  libxRender();
+}
+function libxRender() {
+  const box = $("libx"); if (!box) return;
+  const ids = ["lx-kind", "lx-title", "lx-issuer", "lx-edition", "lx-url", "lx-filter"], keep = ids.map(i => $(i) && $(i).value), k = lxKinds();
+  box.innerHTML = `<div class="row"><div><label>${L("النوع", "Kind")}</label><select id="lx-kind">${Object.entries(k).map(([v, n]) => `<option value="${v}">${n}</option>`).join("")}</select></div>
+      <div><label>${L("العنوان (يصير نص المصدر)", "Title (becomes the source text)")}</label><input id="lx-title"></div></div>
+    <div class="row"><div><label>${L("الجهة المصدرة (اختياري)", "Issuer (optional)")}</label><input id="lx-issuer"></div><div><label>${L("الإصدار أو السنة (اختياري)", "Edition or year (optional)")}</label><input id="lx-edition" dir="ltr"></div></div>
+    <div class="bar" style="padding:6px 0;border:0;gap:6px;flex-wrap:wrap"><button id="lx-file">${L("استيراد ملف (PDF أو نص أو HTML)", "Import a file (PDF, text or HTML)")}</button>
+      <input id="lx-url" dir="ltr" placeholder="https://" style="flex:1;min-width:200px"><button id="lx-link">${L("استيراد من رابط", "Import from a link")}</button></div>
+    <div class="note" id="lx-msg">${L("يُقرأ نص كل صفحة ويُحفظ في مكتبتك على هذا الجهاز. الرابط يجب أن يكون https لعنوان عام، ولا يُرسل شيء من مشروعك. الملف الممسوح ضوئياً لا نص فيه.", "The text of each page is read and kept in your library on this computer. A link must be https to a public address, and nothing of your project is sent. A scanned file has no text.")}</div>
+    <div class="bar" style="padding:2px 0;border:0;gap:6px"><b>${L("مكتبتي", "My library")} (${LX.entries.length})</b>
+      <select id="lx-filter"><option value="all">${L("كل الأنواع", "All kinds")}</option>${Object.entries(k).map(([v, n]) => `<option value="${v}">${n}</option>`).join("")}</select></div>
+    <ul class="clean" id="lx-list">${LX.entries.map(e => `<li><span class="badge">${esc(k[e.kind] || e.kind)}</span> <b>${esc(e.title)}</b>${e.edition ? ` <span dir="ltr">(${esc(e.edition)})</span>` : ` <span class="hint">${L("الإصدار غير مذكور", "edition not stated")}</span>`}${e.issuer ? ` · ${esc(e.issuer)}` : ""}
+      <span class="hint"> · ${e.pages} ${L("صفحة", "p.")} · ${e.origin.type === "link" ? esc(e.origin.url) : esc(e.origin.name)}</span>
+      <button class="lx-use" data-id="${esc(e.id)}">${L("استعمله مصدراً", "Use as source")}</button><button class="lx-del" data-id="${esc(e.id)}">${L("حذف", "Delete")}</button></li>`).join("") || `<li class="hint">${L("المكتبة فارغة. استورد أول مصدر.", "The library is empty. Import a first source.")}</li>`}</ul><div id="libx-out"></div>`;
+  ids.forEach((i, n) => { if (keep[n] != null) $(i).value = keep[n]; });
+  $("lx-file").onclick = () => busy(async () => { const r = await call("library_pick"); if (r.picked) await libxIngest(r.picked, { type: "file", name: r.picked.name }); });
+  $("lx-link").onclick = () => busy(async () => {
+    const url = $("lx-url").value.trim(); if (!url) { toast(L("اكتب الرابط أولاً", "Type the link first")); return; }
+    $("lx-msg").textContent = L("جارٍ جلب الرابط…", "Fetching the link…");
+    const f = (await call("library_fetch", { url })).fetched; await libxIngest(f, { type: "link", url });
+  });
+  box.querySelectorAll(".lx-del").forEach(b => b.onclick = () => busy(async () => { await call("library_remove", { id: b.dataset.id }); await libxLoad(); }));
+  box.querySelectorAll(".lx-use").forEach(b => b.onclick = () => { const e = LX.entries.find(x => x.id === b.dataset.id); if (e) lxUse(lxCite(e)); });
+}
+// Puts a citation into the field that asked for a source (or on the clipboard when none did).
+function lxUse(text) {
+  if (LIB.target) { LIB.target.value = text; LIB.target.dispatchEvent(new Event("input", { bubbles: true })); toast(L("وُضع المصدر في الحقل", "Source placed in the field")); return; }
+  try { navigator.clipboard.writeText(text); toast(L("نُسخ المصدر: ", "Source copied: ") + text); } catch (e) { toast(text); }
+}
+// Text of every page of a PDF (up to 3000 pages), progress shown in the message line.
+async function lxPdfPages(b64) {
+  const pdf = await (await skPdfLib()).getDocument({ data: b64bytes(b64) }).promise, out = [];
+  for (let n = 1; n <= Math.min(pdf.numPages, 3000); n++) {
+    if (n % 20 === 1) $("lx-msg").textContent = `${L("قراءة الصفحة", "Reading page")} ${n}/${pdf.numPages}`;
+    out.push(arFix((await (await pdf.getPage(n)).getTextContent()).items.map(i => i.str).join(" ")));
+  }
+  return out;
+}
+async function libxIngest(p, origin) {
+  const pages = p.kind === "pdf" ? await lxPdfPages(p.b64) : p.pages;
+  const title = $("lx-title").value.trim() || p.title || String(p.name || "").replace(/\.[a-z0-9]+$/i, "");
+  const r = await call("library_add", { kind: $("lx-kind").value, title, issuer: $("lx-issuer").value, edition: $("lx-edition").value, origin, pages });
+  ["lx-title", "lx-issuer", "lx-edition", "lx-url"].forEach(i => { $(i).value = ""; });
+  await libxLoad(); $("lx-msg").textContent = `${L("أُضيف", "Added")}: ${r.entry.title} · ${r.entry.pages} ${L("صفحة", "p.")}`;
+}
+async function libxSearch(q) {
+  const r = await call("library_search", { query: q, kind: $("lx-filter") ? $("lx-filter").value : "all" }), k = lxKinds();
+  LX.hits = r.hits.length;
+  $("libx-out").innerHTML = r.hits.length ? `<h2>${L("من مكتبتي", "From my library")}</h2><ul class="clean">${r.hits.map((h, i) => `<li class="${h.all ? "ok" : "hint"}"><span class="badge">${esc(k[h.kind] || h.kind)}</span> <b dir="ltr">${esc(h.citation)}</b><div>${esc(h.excerpt)}</div>
+    <button class="lx-hit-use" data-i="${i}">${LIB.target ? L("ضعه مصدراً للحقل", "Use as the field's source") : L("انسخ المصدر", "Copy the source")}</button><button class="lx-hit-page" data-i="${i}">${L("نص الصفحة كاملاً", "Whole page text")}</button><div class="lx-page" id="lx-page-${i}"></div></li>`).join("")}</ul>` : "";
+  document.querySelectorAll("#libx-out .lx-hit-use").forEach(b => b.onclick = () => lxUse(r.hits[+b.dataset.i].citation));
+  document.querySelectorAll("#libx-out .lx-hit-page").forEach(b => b.onclick = () => busy(async () => {
+    const h = r.hits[+b.dataset.i], pg = await call("library_page", { id: h.id, page: h.page }); $(`lx-page-${b.dataset.i}`).textContent = pg.text;
+  }));
+}
+// Any source field offers the library's entries as suggestions.
+document.addEventListener("focusin", e => {
+  const t = e.target;
+  if (t && t.tagName === "INPUT" && !t.hasAttribute("list") && /(^|-)(src|asrc)\b|\blim-s\b/.test((t.id || "") + " " + (t.className || ""))) t.setAttribute("list", "lib-sources");
+});
+document.querySelector('[data-tab="lib"]').addEventListener("click", () => busy(libxLoad));
+libxLoad();
 $("lib-q").onkeydown = e => { if (e.key === "Enter") $("lib-go").click(); };
 $("runrules").onclick = () => busy(async () => {
   const r = await call("check_rules", { pack: $("pack").value, sourced: $("rules-sourced").checked, limits: Object.entries(RULE_LIMITS).map(([rule, l]) => ({ rule, ...l })) });
@@ -1683,7 +1762,7 @@ $("runrules").onclick = () => busy(async () => {
     <h2>${t("findings")} (${r.findings.length})</h2><ul class="clean">${r.findings.map(f => `<li class="${f.severity === "error" ? "bad" : "warn"}">${esc(f.rule)} [${esc(f.clause)}] ${esc(f.message)}</li>`).join("") || `<li class="ok">${t("none")}</li>`}</ul>
     <h2>${t("skipped")} (${r.skipped.length})</h2><ul class="clean">${r.skipped.map(s => `<li class="warn">${esc(s.rule)}: ${esc(s.reason)}<div class="bar" style="padding:4px 0;border:0;gap:6px;flex-wrap:wrap"><input type="number" step="any" class="lim-v" data-rule="${esc(s.rule)}" data-param="${esc(s.param)}" placeholder="${t("lim_value")}" style="width:90px" dir="ltr"><input type="text" class="lim-s" data-rule="${esc(s.rule)}" placeholder="${t("lim_source")}" style="flex:1;min-width:200px"><button class="lim-go" data-rule="${esc(s.rule)}">${t("lim_run")}</button><button class="lib-find" data-q="${esc(`${s.rule} ${s.param}`.replace(/[_.]+/g, " "))}">${t("lib_find")}</button></div>${(s.elements || []).length ? `<ul class="clean">${s.elements.map(x => `<li class="hint">${esc(x.name)} · ${x.area} m² · ${x.glazing_ratio == null ? "—" : x.glazing_ratio}</li>`).join("")}</ul>` : ""}</li>`).join("")}</ul>${Object.keys(RULE_LIMITS).length ? `<div class="bar" style="padding:6px 0;border:0"><button id="lim-clear">${t("lim_clear")}</button></div>` : ""}`;
   document.querySelectorAll("#rulesout .lib-find").forEach(b => b.onclick = () => {
-    LIB.target = b.parentElement.querySelector(".lim-s"); $("lib-q").value = b.dataset.q; $("lib-go").click(); $("lib-q").scrollIntoView({ block: "center" });
+    LIB.target = b.parentElement.querySelector(".lim-s"); document.querySelector('[data-tab="lib"]').click(); $("lib-q").value = b.dataset.q; $("lib-go").click();
   });
   document.querySelectorAll("#rulesout .lim-go").forEach(b => b.onclick = () => {
     const rule = b.dataset.rule, row = b.parentElement;

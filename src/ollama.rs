@@ -396,7 +396,10 @@ pub fn handle(cmd: &str, args: &Value) -> Result<Value, String> {
         _ => {}
     }
     let conn = conn_of(cmd, args)?;
-    let endpoint = conn.endpoint.clone();
+    let endpoint = match &conn.api {
+        Some(a) => a.base.clone(),
+        None => conn.endpoint.clone(),
+    };
     match cmd {
         "ai_status" => {
             conn.check()?;

@@ -8,6 +8,7 @@ mod backend;
 mod editing;
 mod levels;
 mod s3;
+mod library;
 mod secret;
 mod ollama;
 mod dwg;
@@ -91,6 +92,8 @@ fn respond(app: &Shared, body: &str) -> String {
         // The code library (the Saudi Building Code PDFs): the page reads a file only to look a clause up while the user works.
         "code_library_list" => code_library_list(),
         "code_library_file" => code_library_file(&args),
+        // The reference library the user fills with PDFs and links: stored in its own folder, independent of any project.
+        "library_list" | "library_add" | "library_remove" | "library_search" | "library_page" | "library_pick" | "library_fetch" => library::handle(cmd, &args),
         // The local model assistant talks to a server and may take a while: it runs outside the lock.
         "ai_status" | "ai_brief" | "ai_sketch" | "ai_deed" | "ai_ocr" | "ai_key_set" | "ai_key_clear" | "ai_key_status" => ollama::handle(cmd, &args),
         // A recording is transcribed by a program on this computer; it may take a while, so it runs outside the lock.

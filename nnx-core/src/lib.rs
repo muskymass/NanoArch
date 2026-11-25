@@ -56,6 +56,7 @@ pub mod insulation;
 pub mod elecbill;
 pub mod energycert;
 pub mod insulopt;
+pub mod library;
 pub mod layout;
 pub mod lighting;
 pub mod mep;
