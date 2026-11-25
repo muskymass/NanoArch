@@ -1719,7 +1719,7 @@ function libxRender() {
 }
 // Puts a citation into the field that asked for a source (or on the clipboard when none did).
 function lxUse(text) {
-  if (LIB.target) { LIB.target.value = text; LIB.target.dispatchEvent(new Event("input", { bubbles: true })); toast(L("وُضع المصدر في الحقل", "Source placed in the field")); return; }
+  if (LIB.target) { LIB.target.dir = "auto"; LIB.target.value = text; LIB.target.dispatchEvent(new Event("input", { bubbles: true })); toast(L("وُضع المصدر في الحقل", "Source placed in the field")); return; }
   try { navigator.clipboard.writeText(text); toast(L("نُسخ المصدر: ", "Source copied: ") + text); } catch (e) { toast(text); }
 }
 // Text of every page of a PDF (up to 3000 pages), progress shown in the message line.
@@ -1741,7 +1741,7 @@ async function libxIngest(p, origin) {
 async function libxSearch(q) {
   const r = await call("library_search", { query: q, kind: $("lx-filter") ? $("lx-filter").value : "all" }), k = lxKinds();
   LX.hits = r.hits.length;
-  $("libx-out").innerHTML = r.hits.length ? `<h2>${L("من مكتبتي", "From my library")}</h2><ul class="clean">${r.hits.map((h, i) => `<li class="${h.all ? "ok" : "hint"}"><span class="badge">${esc(k[h.kind] || h.kind)}</span> <b dir="ltr">${esc(h.citation)}</b><div>${esc(h.excerpt)}</div>
+  $("libx-out").innerHTML = r.hits.length ? `<h2>${L("من مكتبتي", "From my library")}</h2><ul class="clean">${r.hits.map((h, i) => `<li class="${h.all ? "ok" : "hint"}"><span class="badge">${esc(k[h.kind] || h.kind)}</span> <b dir="auto">${esc(h.citation)}</b><div>${esc(h.excerpt)}</div>
     <button class="lx-hit-use" data-i="${i}">${LIB.target ? L("ضعه مصدراً للحقل", "Use as the field's source") : L("انسخ المصدر", "Copy the source")}</button><button class="lx-hit-page" data-i="${i}">${L("نص الصفحة كاملاً", "Whole page text")}</button><div class="lx-page" id="lx-page-${i}"></div></li>`).join("")}</ul>` : "";
   document.querySelectorAll("#libx-out .lx-hit-use").forEach(b => b.onclick = () => lxUse(r.hits[+b.dataset.i].citation));
   document.querySelectorAll("#libx-out .lx-hit-page").forEach(b => b.onclick = () => busy(async () => {
@@ -1751,7 +1751,7 @@ async function libxSearch(q) {
 // Any source field offers the library's entries as suggestions.
 document.addEventListener("focusin", e => {
   const t = e.target;
-  if (t && t.tagName === "INPUT" && !t.hasAttribute("list") && /(^|-)(src|asrc)\b|\blim-s\b/.test((t.id || "") + " " + (t.className || ""))) t.setAttribute("list", "lib-sources");
+  if (t && t.tagName === "INPUT" && !t.hasAttribute("list") && /(^|-)(src|asrc)\b|\blim-s\b/.test((t.id || "") + " " + (t.className || ""))) { t.setAttribute("list", "lib-sources"); if (!t.hasAttribute("dir")) t.dir = "auto"; }
 });
 document.querySelector('[data-tab="lib"]').addEventListener("click", () => busy(libxLoad));
 libxLoad();
@@ -1771,9 +1771,9 @@ async function rulesSuggest(skipped) {
     }
     if (!found.length) continue;
     const box = document.createElement("div"); box.className = "hint";
-    box.innerHTML = `<b>${L("اقتراح من مكتبتك — اقرأ الصفحة قبل إدخال القيمة", "Suggested from your library: read the page before entering the value")}</b>${found.map((h, n) => `<div><span dir="ltr">${esc(h.citation)}</span> <span class="hint">${esc(h.excerpt.slice(0, 140))}…</span> <button class="rs-use" data-n="${n}">${L("ضعه مصدراً", "Use as source")}</button></div>`).join("")}`;
+    box.innerHTML = `<b>${L("اقتراح من مكتبتك — اقرأ الصفحة قبل إدخال القيمة", "Suggested from your library: read the page before entering the value")}</b>${found.map((h, n) => `<div><span dir="auto">${esc(h.citation)}</span> <span class="hint">${esc(h.excerpt.slice(0, 140))}…</span> <button class="rs-use" data-n="${n}">${L("ضعه مصدراً", "Use as source")}</button></div>`).join("")}`;
     rows[i].closest("li").appendChild(box);
-    box.querySelectorAll(".rs-use").forEach(b => b.onclick = () => { rows[i].value = found[+b.dataset.n].citation; });
+    box.querySelectorAll(".rs-use").forEach(b => b.onclick = () => { rows[i].dir = "auto"; rows[i].value = found[+b.dataset.n].citation; });
   }
 }
 $("lib-q").onkeydown = e => { if (e.key === "Enter") $("lib-go").click(); };
@@ -2718,7 +2718,7 @@ function prBuild() {
     <div class="note">${L("ملف CSV بأعمدة: name,x_mm,y_mm,length_mm,width_mm,height_mm,thickness_mm. الاسم: COL-1 أو FND-1 أو BM-1 أو SL-1 (كما في الجداول) أو معرّف العنصر أو room:المفتاح. الانحراف = المقاس − التصميم بالمليمتر، ولا يُحكم عليه إلا بتفاوتك أنت.", "CSV with columns name,x_mm,y_mm,length_mm,width_mm,height_mm,thickness_mm. The name is COL-1, FND-1, BM-1 or SL-1 (as in the schedules), an element id, or room:<key>. Deviation = measured - design in mm, judged only against your own tolerance.")}</div>
     <div class="row"><div><label>${L("ملف القياسات", "Measurements file")}</label><input type="file" id="pr-csvf" accept=".csv,.txt"></div><div><label>${L("التفاوت المسموح (مم)", "Tolerance (mm)")}</label><input type="number" step="any" dir="ltr" id="pr-tol" value="${ab.toleranceMm ?? ""}"></div></div>
     <label>${L("أو الصق النص", "or paste the text")}</label><textarea id="pr-csv" rows="4" dir="ltr" placeholder="name,x_mm,y_mm&#10;COL-1,6012,1995"></textarea>
-    <label>${L("مصدر القياس", "Source of the measurements")}</label><input type="text" id="pr-src" value="${esc(ab.source || "")}">
+    <label>${L("مصدر القياس", "Source of the measurements")}</label><input type="text" id="pr-src" dir="auto" value="${esc(ab.source || "")}">
     <div class="bar" style="padding:2px 0;border:0;gap:6px;flex-wrap:wrap"><button id="pr-lib-find">${L("ابحث عن التفاوت المسموح في المكتبة", "Find the allowed tolerance in the library")}</button></div><div id="pr-sug"></div>
     <div class="hint">${L("الصفوف المخزّنة", "Stored rows")}: ${ab.rows.length} · ${L("مطابقة", "matched")} ${ar.matched} · ${L("خارج التفاوت", "over")} <b>${ar.over}</b> · ${L("أكبر انحراف", "largest")} <b dir="ltr">${ar.max_abs_mm} mm</b>${ar.unmatched.length ? " · " + L("بلا عنصر", "no element") + ": " + esc(ar.unmatched.join(", ")) : ""}</div>
     ${dev.length ? sxT(dev, [L("الاسم", "Name"), L("القيمة", "Value"), L("التصميم", "Design"), L("المقاس", "Measured"), L("الانحراف مم", "Deviation mm"), ""]) : ""}
@@ -2752,8 +2752,8 @@ async function prSuggest(ab) {
     for (const h of hits) if (h.all && !seen.has(h.citation) && found.length < 4) { seen.add(h.citation); found.push(h); }
   }
   if (!$("pr-sug")) return;
-  box.innerHTML = found.length ? `<div class="hint"><b>${L("اقتراح من مكتبتك — اقرأ الصفحة ثم اكتب التفاوت بنفسك", "Suggested from your library: read the page, then type the tolerance yourself")}</b>${found.map((h, n) => `<div><span dir="ltr">${esc(h.citation)}</span> <span class="hint">${esc(h.excerpt.slice(0, 140))}…</span> <button class="pr-use" data-n="${n}">${L("ضعه مصدراً", "Use as source")}</button></div>`).join("")}</div>` : `<div class="hint">${L("لا صفحة في مكتبتك تحوي كلمة التفاوت. استورد المواصفة أو الكود الذي يحدده.", "No page in your library has the word tolerance. Import the specification or code that sets it.")}</div>`;
-  box.querySelectorAll(".pr-use").forEach(b => b.onclick = () => { $("pr-src").value = found[+b.dataset.n].citation; });
+  box.innerHTML = found.length ? `<div class="hint"><b>${L("اقتراح من مكتبتك — اقرأ الصفحة ثم اكتب التفاوت بنفسك", "Suggested from your library: read the page, then type the tolerance yourself")}</b>${found.map((h, n) => `<div><span dir="auto">${esc(h.citation)}</span> <span class="hint">${esc(h.excerpt.slice(0, 140))}…</span> <button class="pr-use" data-n="${n}">${L("ضعه مصدراً", "Use as source")}</button></div>`).join("")}</div>` : `<div class="hint">${L("لا صفحة في مكتبتك تحوي كلمة التفاوت. استورد المواصفة أو الكود الذي يحدده.", "No page in your library has the word tolerance. Import the specification or code that sets it.")}</div>`;
+  box.querySelectorAll(".pr-use").forEach(b => b.onclick = () => { $("pr-src").dir = "auto"; $("pr-src").value = found[+b.dataset.n].citation; });
 }
 function prWire() {
   const act = (id, fn) => { const e = $(id); if (e) e.onclick = () => busy(fn); };

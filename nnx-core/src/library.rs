@@ -68,13 +68,19 @@ pub struct Entry {
 
 impl Entry {
     /// The text a value's source field carries: `title, edition` (and the page when one is given). A missing edition is left out, not guessed.
+    /// The page mark follows the title's script, not the interface language, so a stored citation reads the same in both: an Arabic title
+    /// gets `، ص. N`, any other `, p. N`.
     pub fn citation(&self, page: Option<usize>) -> String {
         let mut s = self.title.clone();
         if !self.edition.is_empty() {
             s.push_str(&format!(" ({})", self.edition));
         }
         if let Some(p) = page {
-            s.push_str(&format!(", p. {p}"));
+            if self.title.chars().any(|c| ('\u{0621}'..='\u{064A}').contains(&c)) {
+                s.push_str(&format!("، ص. {p}"));
+            } else {
+                s.push_str(&format!(", p. {p}"));
+            }
         }
         s
     }
@@ -414,6 +420,22 @@ mod tests {
         lib.add(new("Code", &refs)).unwrap();
         let h = lib.search("SBC 201 door width", None, 3).unwrap();
         assert_eq!((h.len(), h[0].page, h[0].all), (1, 18, true), "only the page about doors, found although every page says SBC 201");
+    }
+
+    #[test]
+    fn the_page_mark_follows_the_script_of_the_title() {
+        let lib = Library::open(tmp("mark")).unwrap();
+        let mut n = new("مواصفة خرسانة", &["التفاوت المسموح 10 مم"]);
+        n.edition = "ت-1".into();
+        let ar = lib.add(n).unwrap();
+        assert_eq!(ar.citation(Some(3)), "مواصفة خرسانة (ت-1)، ص. 3");
+        assert_eq!(ar.citation(None), "مواصفة خرسانة (ت-1)");
+        let mut n = new("SBC-201-2024 اشتراطات", &["x"]);
+        n.edition = String::new();
+        assert_eq!(lib.add(n).unwrap().citation(Some(1)), "SBC-201-2024 اشتراطات، ص. 1", "a mixed title with Arabic words is Arabic");
+        let mut n = new("Spec B", &["y"]);
+        n.edition = "2020".into();
+        assert_eq!(lib.add(n).unwrap().citation(Some(2)), "Spec B (2020), p. 2");
     }
 
     #[test]
