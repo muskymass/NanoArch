@@ -49,7 +49,7 @@ fn every_criterion_is_a_counted_fraction_checked_by_hand() {
     let integ = Integrity { issues: vec![issue(Level::Warning, &[ids[0], ids[1]]), issue(Level::Warning, &[ids[1]])] };
     let rules = RuleReport {
         findings: vec![finding(Severity::Warning, ids[0])],
-        skipped: vec![Skipped { rule_id: "R2".into(), param: "p".into(), reason: "unset".into(), elements: vec![ids[0], ids[1]] }],
+        skipped: vec![Skipped { rule_id: "R2".into(), clause: String::new(), message: String::new(), param: "p".into(), reason: "unset".into(), elements: vec![ids[0], ids[1]] }],
         layers: vec![],
         checked: 6,
     };

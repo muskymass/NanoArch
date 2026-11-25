@@ -223,6 +223,9 @@ pub struct Finding {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Skipped {
     pub rule_id: String,
+    /// The rule's clause reference and message: what the library is searched with to suggest a source.
+    pub clause: String,
+    pub message: String,
     /// The first unset parameter: the one a user must enter, with its source, to make the rule run.
     pub param: String,
     pub reason: String,
@@ -289,6 +292,8 @@ pub fn check(model: &Model, rules: &RuleSet) -> Report {
                 .collect();
             report.skipped.push(Skipped {
                 rule_id: c.def.id.clone(),
+                clause: c.def.clause.clone(),
+                message: c.def.message.clone(),
                 param: name.clone(),
                 reason: format!("parameter '{name}' is unset; enter it from the official text"),
                 elements,

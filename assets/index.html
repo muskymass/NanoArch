@@ -1755,6 +1755,27 @@ document.addEventListener("focusin", e => {
 });
 document.querySelector('[data-tab="lib"]').addEventListener("click", () => busy(libxLoad));
 libxLoad();
+// For each rule that did not run, the library is searched with the rule's clause reference and then its message; the best pages are offered
+// as a suggested source. Nothing is filled in until the user presses the button, and the value is still entered by the user after reading the page.
+async function rulesSuggest(skipped) {
+  if (!LX.entries.length) return;
+  const rows = [...document.querySelectorAll("#rulesout .lim-s")];
+  for (let i = 0; i < skipped.length && i < rows.length; i++) {
+    const sk = skipped[i], seen = new Set(), found = [];
+    // The clause (when the rule names one), then the rule's message, then the topic words of its id (e.g. "sbc.daylight.stair" gives "daylight stair").
+    for (const q of [sk.clause, sk.message, String(sk.rule).split(".").slice(1).join(" ")]) {
+      if (!q || !String(q).trim() || /^none read$/i.test(String(q).trim())) continue;
+      let hits = [];
+      try { hits = (await call("library_search", { query: String(q), kind: "all", limit: 3 })).hits; } catch (e) { continue; }
+      for (const h of hits) if (h.all && !seen.has(h.citation) && found.length < 3) { seen.add(h.citation); found.push(h); }
+    }
+    if (!found.length) continue;
+    const box = document.createElement("div"); box.className = "hint";
+    box.innerHTML = `<b>${L("اقتراح من مكتبتك — اقرأ الصفحة قبل إدخال القيمة", "Suggested from your library: read the page before entering the value")}</b>${found.map((h, n) => `<div><span dir="ltr">${esc(h.citation)}</span> <span class="hint">${esc(h.excerpt.slice(0, 140))}…</span> <button class="rs-use" data-n="${n}">${L("ضعه مصدراً", "Use as source")}</button></div>`).join("")}`;
+    rows[i].closest("li").appendChild(box);
+    box.querySelectorAll(".rs-use").forEach(b => b.onclick = () => { rows[i].value = found[+b.dataset.n].citation; });
+  }
+}
 $("lib-q").onkeydown = e => { if (e.key === "Enter") $("lib-go").click(); };
 $("runrules").onclick = () => busy(async () => {
   const r = await call("check_rules", { pack: $("pack").value, sourced: $("rules-sourced").checked, limits: Object.entries(RULE_LIMITS).map(([rule, l]) => ({ rule, ...l })) });
@@ -1771,6 +1792,7 @@ $("runrules").onclick = () => busy(async () => {
     RULE_LIMITS[rule] = { param: v.dataset.param, value: +v.value, source: src };
     $("runrules").click();
   });
+  rulesSuggest(r.skipped);
   if ($("lim-clear")) $("lim-clear").onclick = () => { for (const k of Object.keys(RULE_LIMITS)) delete RULE_LIMITS[k]; $("runrules").click(); };
 });
 

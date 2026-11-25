@@ -1651,7 +1651,7 @@ impl App {
             "layers": r.layers,
             "overlays": reports,
             "findings": r.findings.iter().map(|f| json!({ "rule": f.rule_id, "clause": f.clause, "layer": f.layer, "severity": sev(f.severity), "message": f.message, "element": f.element.to_string() })).collect::<Vec<_>>(),
-            "skipped": r.skipped.iter().map(|s| json!({ "rule": s.rule_id, "param": s.param, "reason": s.reason, "elements": self.skipped_rooms(&s.elements) })).collect::<Vec<_>>(),
+            "skipped": r.skipped.iter().map(|s| json!({ "rule": s.rule_id, "clause": s.clause, "message": s.message, "param": s.param, "reason": s.reason, "elements": self.skipped_rooms(&s.elements) })).collect::<Vec<_>>(),
         }))
     }
 

@@ -242,16 +242,22 @@ impl Library {
 
     /// Pages that hold at least half of the query's words, best first (the whole phrase, then all words, then how densely the words recur on the page).
     pub fn search(&self, query: &str, kind: Option<Kind>, limit: usize) -> Result<Vec<Hit>, LibraryError> {
-        let words = terms(query);
-        if words.is_empty() {
+        let query_words = terms(query);
+        if query_words.is_empty() {
             return Ok(Vec::new());
         }
         let phrase_text = fold(query).split_whitespace().collect::<Vec<_>>().join(" ");
         let mut hits = Vec::new();
         for e in self.list()?.into_iter().filter(|e| kind.is_none_or(|k| e.kind == k)) {
             let doc = self.doc(&e.id)?;
+            let folded_pages: Vec<String> = doc.pages.iter().map(|t| fold(t)).collect();
+            // A word that is on most pages of this entry (a running header such as "SBC 201") says nothing about which page is meant: it is
+            // ignored while at least one other word remains.
+            let common: Vec<bool> = query_words.iter().map(|w| folded_pages.len() >= 20 && folded_pages.iter().filter(|p| p.contains(w.as_str())).count() * 100 > folded_pages.len() * 25).collect();
+            let words: Vec<String> = if common.iter().all(|&c| c) { query_words.clone() } else { query_words.iter().zip(&common).filter(|(_, c)| !**c).map(|(w, _)| w.clone()).collect() };
+            let phrase_text = if words.len() == query_words.len() { phrase_text.clone() } else { words.join(" ") };
             for (i, text) in doc.pages.iter().enumerate() {
-                let folded = fold(text);
+                let folded = folded_pages[i].clone();
                 let at: Vec<Option<usize>> = words.iter().map(|w| folded.find(w.as_str())).collect();
                 let found = at.iter().flatten().count();
                 if found == 0 || found * 2 < words.len() {
@@ -398,6 +404,16 @@ mod tests {
         assert_eq!(lib.search("stairs width", Some(Kind::Metric), 5).unwrap().len(), 0);
         assert_eq!(lib.page(&e.id, 3).unwrap().1, "stairs width 1000 mm");
         assert!(lib.page(&e.id, 4).is_err() && lib.page(&e.id, 0).is_err());
+    }
+
+    #[test]
+    fn a_running_header_word_does_not_decide_which_page_is_meant() {
+        let lib = Library::open(tmp("header")).unwrap();
+        let pages: Vec<String> = (0..30).map(|i| if i == 17 { "SBC 201 egress door width 900".to_string() } else { format!("SBC 201 filler text number {i}") }).collect();
+        let refs: Vec<&str> = pages.iter().map(String::as_str).collect();
+        lib.add(new("Code", &refs)).unwrap();
+        let h = lib.search("SBC 201 door width", None, 3).unwrap();
+        assert_eq!((h.len(), h[0].page, h[0].all), (1, 18, true), "only the page about doors, found although every page says SBC 201");
     }
 
     #[test]
