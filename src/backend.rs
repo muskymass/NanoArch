@@ -28,6 +28,8 @@ pub use nnx_core::project::{BriefIn, NanoArchProject, RoomIn, StructIn};
 /// What is kept here is either input that exists before a document does, or view state that is not part of the project.
 #[derive(Default)]
 pub struct App {
+    /// The page shows Arabic: generated room names are displayed in Arabic (exports and the stored names are untouched).
+    ui_arabic: bool,
     alternatives: Vec<Building>,
     plan: Option<BuildingPlan>,
     /// The inputs entered before a layout is chosen. Once a document exists the project element is the only copy.
@@ -187,6 +189,21 @@ impl App {
         self.project().map(|p| p.labels).unwrap_or_default()
     }
 
+    /// The labels as the screen shows them: the names the engine generated (Hall, Stair hall, Stair) in Arabic when the page is Arabic.
+    /// Only names the engine made are replaced; the stored project and the DXF, IFC and PDF exports keep `labels()`, and the SVG export asks
+    /// for the plan again through `plan_svg_export`.
+    fn display_labels(&self) -> BTreeMap<String, String> {
+        let mut l = self.labels();
+        if self.ui_arabic {
+            for v in l.values_mut() {
+                if let Some(ar) = nnx_core::msgs::room_name_ar(v) {
+                    *v = ar.to_string();
+                }
+            }
+        }
+        l
+    }
+
     /// The structure options, from the structural inputs stored in the project.
     fn sopts(&self) -> Result<StructOpts, String> {
         self.project().map(|p| struct_opts(&p.structure)).ok_or_else(|| "choose a layout first".to_string())
@@ -229,7 +246,7 @@ impl App {
         if let Some((_, _, name)) = self.level_list().get(self.cur_level) {
             title = format!("{title} — {name}");
         }
-        DrawOpts { title, labels: self.labels(), show_structure, show_mep: self.show_mep, blank_canvas: true, ..DrawOpts::default() }
+        DrawOpts { title, labels: self.display_labels(), show_structure, show_mep: self.show_mep, blank_canvas: true, ..DrawOpts::default() }
     }
 
     fn render(&self) -> Result<String, String> {
@@ -507,6 +524,19 @@ impl App {
             "project_set" => self.project_set(args),
             "sbc_check" => Ok(self.sbc_json()),
             "status" => Ok(json!({ "has_doc": self.doc.is_some(), "dirty": self.is_dirty() })),
+            // The page's language: only what the screen shows changes (generated room names); the reply carries the plan and rooms to show again.
+            "ui_lang" => {
+                self.ui_arabic = args.get("lang").and_then(Value::as_str) == Some("ar");
+                Ok(json!({ "svg": self.render_or_null()?, "rooms": self.rooms_json() }))
+            }
+            // The plan as a file: always with the stored names, whatever language the screen is in, so an exported SVG says the same as the
+            // DXF, IFC and PDF made from the same project.
+            "plan_svg_export" => {
+                let shown = std::mem::replace(&mut self.ui_arabic, false);
+                let svg = self.render_or_null();
+                self.ui_arabic = shown;
+                Ok(json!({ "svg": svg? }))
+            }
             "assumptions" => Ok(assumptions()),
             "qto" => self.qto(args),
             "qto_elements" => self.qto_elements(args),
@@ -737,7 +767,7 @@ impl App {
         self.show_structure = s.show_structure;
         self.doc = Some(doc);
         self.cur_level = 0;
-        Ok(json!({ "svg": self.render()?, "warnings": warnings, "rooms": self.rooms_json(), "levels": self.levels_json(), "sbc": self.sbc_json() }))
+        Ok(json!({ "svg": self.render()?, "warnings": warnings, "warnings_ar": nnx_core::msgs::localize_all(&warnings), "warnings_en_only": nnx_core::msgs::untranslated(&warnings), "rooms": self.rooms_json(), "levels": self.levels_json(), "sbc": self.sbc_json() }))
     }
 
     /// Computes MEP and insulation from the user's inputs. With `apply`, the generated points become model
@@ -2563,7 +2593,7 @@ impl App {
 
     fn rooms_json(&self) -> Vec<Value> {
         let level = self.current_level();
-        let labels = self.labels();
+        let labels = self.display_labels();
         let locked = self.project().map(|p| p.meta.locked_rooms).unwrap_or_default();
         self.doc
             .iter()
@@ -2618,7 +2648,7 @@ impl App {
         self.draft = None;
         self.cur_level = 0;
         self.doc = Some(doc);
-        Ok(json!({ "svg": self.render_or_null()?, "warnings": warnings, "rooms": self.rooms_json(), "levels": self.levels_json(), "settings": self.form_state(), "sbc": self.sbc_json() }))
+        Ok(json!({ "svg": self.render_or_null()?, "warnings": warnings, "warnings_ar": nnx_core::msgs::localize_all(&warnings), "warnings_en_only": nnx_core::msgs::untranslated(&warnings), "rooms": self.rooms_json(), "levels": self.levels_json(), "settings": self.form_state(), "sbc": self.sbc_json() }))
     }
 
     /// Sets the project's climate zone (a number or a city) and puts that zone's wall and roof U limits into the insulation inputs,
@@ -4010,7 +4040,8 @@ impl App {
     fn finishes_report(&self) -> Result<Value, String> {
         let p = self.project().ok_or("choose a layout first")?;
         let rep = nnx_core::finishes::report(&self.doc()?.model, &p.meta.finishes, p.boq.as_ref());
-        Ok(json!({ "catalog": nnx_core::finishes::CATALOG, "chosen": p.meta.finishes, "report": rep }))
+        let notes_ar = nnx_core::msgs::localize_all(&rep.notes);
+        Ok(json!({ "catalog": nnx_core::finishes::CATALOG, "chosen": p.meta.finishes, "report": rep, "notes_ar": notes_ar, "notes_en_only": nnx_core::msgs::untranslated(&rep.notes) }))
     }
 
     /// Chooses the facade and floor finishes (and optionally the rate of a finish code in the BOQ library): ONE undoable edit.
@@ -4533,7 +4564,7 @@ impl App {
         let id = args.get("id").and_then(Value::as_str).ok_or("template id missing")?;
         let t = nnx_core::templates::find(id).ok_or_else(|| format!("unknown template '{id}'"))?;
         let (sb, sources) = nnx_core::templates::setbacks(&t).map_err(|e| e.join("; "))?;
-        Ok(json!({ "template": t, "setbacks": { "front_m": sb[0], "side_m": sb[1], "back_m": sb[2] }, "sources": sources }))
+        Ok(json!({ "template": t, "setbacks": { "front_m": sb[0], "side_m": sb[1], "back_m": sb[2] }, "sources": sources, "assumptions_ar": nnx_core::msgs::localize_all(&t.assumptions), "assumptions_en_only": nnx_core::msgs::untranslated(&t.assumptions), "sources_ar": nnx_core::msgs::localize_all(&sources), "sources_en_only": nnx_core::msgs::untranslated(&sources) }))
     }
 
     /// The site plan of the open project: its plot outline, edges and rule, or for a rectangular plot the brief's plot size and
@@ -4862,6 +4893,64 @@ mod tests {
         assert!(g["alternatives"].as_array().unwrap().len() >= 2);
         app.handle("select", &json!({ "index": 0, "struct": { "show_structure": true } })).unwrap();
         app
+    }
+
+    #[test]
+    fn every_message_of_the_start_projects_and_their_generation_has_an_arabic_text() {
+        let mut missing: Vec<String> = Vec::new();
+        for t in nnx_core::templates::all() {
+            let mut app = App::default();
+            let applied = app.handle("template_apply", &json!({ "id": t.id })).unwrap();
+            let mut texts: Vec<String> = t.assumptions.clone();
+            texts.extend(applied["sources"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()));
+            let sb = &applied["setbacks"];
+            let rooms: Vec<Value> = t.rooms.iter().map(|r| json!({ "key": r.key, "name": r.name, "func": r.func, "area": r.area_m2, "zone": r.zone, "light": !matches!(r.func, "bathroom" | "lift"), "floor": r.floor })).collect();
+            let mut brief = json!({ "title": t.project_title, "width_m": t.plot_width_m, "length_m": t.plot_length_m, "setback_front_m": sb["front_m"], "setback_back_m": sb["back_m"], "setback_side_m": sb["side_m"], "entry": "south", "rooms": rooms });
+            if let Some((w, l, side)) = t.stair {
+                brief["stair"] = json!({ "width_m": w, "length_m": l, "side": side });
+            }
+            let st = json!({ "floors": t.floors });
+            let g = app.handle("generate", &json!({ "brief": brief, "struct": st })).unwrap();
+            let n = g["alternatives"].as_array().unwrap().len();
+            for i in 0..n.min(2) {
+                let sel = app.handle("select", &json!({ "index": i, "struct": st })).unwrap();
+                texts.extend(sel["warnings"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()));
+            }
+            for m in texts {
+                if !nnx_core::msgs::localize(&m).1 {
+                    missing.push(format!("[{}] {m}", t.id));
+                }
+            }
+        }
+        missing.sort();
+        missing.dedup();
+        assert!(missing.is_empty(), "start-project messages with no Arabic text:\n{}", missing.join("\n"));
+    }
+
+    #[test]
+    fn generated_room_names_show_in_arabic_only_on_screen() {
+        let mut app = App::default();
+        let g = app.handle("generate", &json!({ "brief": brief() })).unwrap();
+        assert!(g["alternatives"].as_array().unwrap().len() >= 2);
+        app.handle("select", &json!({ "index": 0 })).unwrap();
+        let en = app.handle("ui_lang", &json!({ "lang": "en" })).unwrap();
+        let ar = app.handle("ui_lang", &json!({ "lang": "ar" })).unwrap();
+        let names = |v: &Value| v["rooms"].as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert!(!names(&ar).iter().any(|n| n == "Hall" || n == "Stair hall" || n == "Stair"), "{:?}", names(&ar));
+        // Switching back shows the stored (English) names again: nothing was renamed.
+        let made_en = names(&en).iter().filter(|n| nnx_core::msgs::room_name_ar(n).is_some()).count();
+        let made_ar = names(&ar).iter().filter(|n| ["صالة", "بيت الدرج", "درج"].contains(&n.as_str())).count();
+        assert!(made_en > 0, "this brief gives at least one generated room name: {:?}", names(&en));
+        assert_eq!(made_en, made_ar, "every generated name, and only those, is shown in Arabic");
+        // The exported plan carries the stored names even while the screen is Arabic, and asking for it leaves the screen Arabic.
+        let screen = ar["svg"].as_str().unwrap();
+        let file = app.handle("plan_svg_export", &json!({})).unwrap();
+        let file = file["svg"].as_str().unwrap();
+        // The generated name of this brief is "Hall"; as a whole label it is told apart from the brief's own "الصالة".
+        assert!(screen.contains(">صالة<") && !screen.contains(">Hall<"), "the screen plan shows the generated name in Arabic: {:?}", names(&ar));
+        assert!(file.contains(">Hall<") && !file.contains(">صالة<"), "the exported plan keeps the stored name");
+        let after = app.handle("ui_lang", &json!({ "lang": "ar" })).unwrap();
+        assert_eq!(after["svg"], ar["svg"], "exporting does not change what the screen shows");
     }
 
     #[test]

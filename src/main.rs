@@ -25,6 +25,105 @@ use wry::{PageLoadEvent, WebView, WebViewBuilder};
 
 const HTML: &str = include_str!("../assets/index.html");
 
+/// IBM Plex Sans Arabic (SIL Open Font License 1.1, see assets/vendor/fonts/plex-sans-arabic-OFL-LICENSE.txt), four weights, each as an Arabic
+/// and a Latin subset (woff2). The page has no origin to fetch a file from, so the faces are written into it as data URLs at start-up.
+/// Where the page's own `/*NN_FONTS*/` marker stands the style rules are inserted; no network is ever used.
+const FONT_FACES: [(&str, u16, &str, &[u8]); 8] = [
+    ("arabic", 400, ARABIC_RANGE, include_bytes!("../assets/vendor/fonts/plex-sans-arabic-arabic-400.woff2")),
+    ("arabic", 500, ARABIC_RANGE, include_bytes!("../assets/vendor/fonts/plex-sans-arabic-arabic-500.woff2")),
+    ("arabic", 600, ARABIC_RANGE, include_bytes!("../assets/vendor/fonts/plex-sans-arabic-arabic-600.woff2")),
+    ("arabic", 700, ARABIC_RANGE, include_bytes!("../assets/vendor/fonts/plex-sans-arabic-arabic-700.woff2")),
+    ("latin", 400, LATIN_RANGE, include_bytes!("../assets/vendor/fonts/plex-sans-arabic-latin-400.woff2")),
+    ("latin", 500, LATIN_RANGE, include_bytes!("../assets/vendor/fonts/plex-sans-arabic-latin-500.woff2")),
+    ("latin", 600, LATIN_RANGE, include_bytes!("../assets/vendor/fonts/plex-sans-arabic-latin-600.woff2")),
+    ("latin", 700, LATIN_RANGE, include_bytes!("../assets/vendor/fonts/plex-sans-arabic-latin-700.woff2")),
+];
+/// Unicode ranges of the two subsets (from the font package's own unicode.json).
+const ARABIC_RANGE: &str = "U+0600-06FF,U+0750-077F,U+0870-088E,U+0890-0891,U+0897-08E1,U+08E3-08FF,U+200C-200E,U+2010-2011,U+204F,U+2E41,U+FB50-FDFF,U+FE70-FE74,U+FE76-FEFC";
+const LATIN_RANGE: &str = "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD";
+
+/// The `@font-face` rules for the bundled faces.
+fn font_face_css() -> String {
+    FONT_FACES
+        .iter()
+        .map(|(_, weight, range, bytes)| {
+            format!(
+                "@font-face{{font-family:\"IBM Plex Sans Arabic\";font-style:normal;font-weight:{weight};font-display:block;src:url(data:font/woff2;base64,{}) format(\"woff2\");unicode-range:{range}}}",
+                nnx_core::xlsx::base64_encode(bytes)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The file that keeps the user's interface choices. The page has no origin, so the browser's own storage is closed to it; the choices live in a
+/// small JSON file of their own. Next to the library folder when `NANOARCH_LIBRARY_DIR` names one (so a test's own library folder keeps its own
+/// choices and never touches the user's), otherwise `%APPDATA%\NanoArch\ui-prefs.json`.
+fn ui_prefs_path() -> PathBuf {
+    if let Some(dir) = std::env::var_os("NANOARCH_LIBRARY_DIR") {
+        let dir = PathBuf::from(dir);
+        let mut name = dir.file_name().map(std::ffi::OsStr::to_os_string).unwrap_or_default();
+        name.push(".ui-prefs.json");
+        return dir.with_file_name(name);
+    }
+    std::env::var_os("APPDATA").map_or_else(|| PathBuf::from("NanoArch-ui-prefs.json"), |a| PathBuf::from(a).join("NanoArch").join("ui-prefs.json"))
+}
+
+const UI_PREFS_MAX_BYTES: usize = 16 * 1024;
+
+/// The saved choices as JSON text for the page: `{}` when there is no file yet. A file that exists but is not a JSON object is NOT ignored
+/// silently: the page gets `{"_error": <path>}` and tells the user that the choices were reset (the next save replaces the file).
+fn ui_prefs_json(path: &Path) -> String {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return "{}".to_string(),
+        Err(_) => return json!({ "_error": path.display().to_string() }).to_string().replace('<', "\\u003c"),
+    };
+    match serde_json::from_str::<Value>(&text) {
+        // `<` is escaped so no stored text can close the script element it is written into.
+        Ok(Value::Object(mut m)) => {
+            // The page reads these two as maps. Anything else under their names (a hand edit, a half-written file) is dropped and reported,
+            // because the page would stop on it before it could show a single label.
+            let mut dropped = false;
+            for key in ["sizes", "open"] {
+                if m.get(key).is_some_and(|v| !v.is_object()) {
+                    m.remove(key);
+                    dropped = true;
+                }
+            }
+            if dropped {
+                m.insert("_error".to_string(), Value::String(path.display().to_string()));
+            }
+            Value::Object(m).to_string().replace('<', "\\u003c")
+        }
+        _ => json!({ "_error": path.display().to_string() }).to_string().replace('<', "\\u003c"),
+    }
+}
+
+fn ui_prefs_set(args: &Value) -> Result<Value, String> {
+    let prefs = args.get("prefs").filter(|p| p.is_object()).ok_or("ui_prefs_set: 'prefs' must be an object")?;
+    let text = prefs.to_string();
+    if text.len() > UI_PREFS_MAX_BYTES {
+        return Err(format!("ui_prefs_set: the choices are {} bytes, over the {UI_PREFS_MAX_BYTES} byte limit", text.len()));
+    }
+    let path = ui_prefs_path();
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|e| format!("the interface choices folder {} cannot be made: {e}", parent.display()))?;
+    }
+    // Written beside the file and renamed over it, so a crash in the middle never leaves half a file.
+    let mut tmp = path.clone().into_os_string();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    std::fs::write(&tmp, text).map_err(|e| format!("the interface choices cannot be saved to {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("the interface choices cannot be saved to {}: {e}", path.display()))?;
+    Ok(json!({ "saved": path.display().to_string() }))
+}
+
+/// The interface page with the bundled fonts and the saved interface choices written in.
+fn page_html() -> String {
+    HTML.replacen("/*NN_FONTS*/", &font_face_css(), 1).replacen("/*NN_PREFS*/{}", &ui_prefs_json(&ui_prefs_path()), 1)
+}
+
 /// The application icon as raw RGBA, 64 x 64 (made from `assets/icon.png`, see `assets/icon.ico` for the file icon).
 const ICON_RGBA: &[u8] = include_bytes!("../assets/icon-window.rgba");
 const ICON_SIZE: u32 = 64;
@@ -100,6 +199,8 @@ fn respond(app: &Shared, body: &str) -> String {
         "voice_transcribe" => voice::handle(&args),
         // A real DWG: the DXF comes from the engine under the lock, then a converter program on this computer runs outside it.
         "export_dwg" => export_dwg(app, &args),
+        // The user's appearance and layout choices (mode, accent, density, font size, column widths): a small file of their own, not the project.
+        "ui_prefs_set" => ui_prefs_set(&args),
         // The lock is held only while the engines run, never while a dialog is open.
         _ => lock(app).handle(cmd, &args),
     };
@@ -432,7 +533,7 @@ fn main() {
     let app: Shared = Arc::new(Mutex::new(backend::App::default()));
     let handler_app = Arc::clone(&app);
     let webview = WebViewBuilder::new()
-        .with_html(HTML)
+        .with_html(page_html())
         .with_ipc_handler(move |req| {
             let body = req.body().clone();
             let (app, proxy) = (Arc::clone(&handler_app), proxy.clone());
@@ -560,6 +661,48 @@ mod tests {
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
         // The PNG header holds its size: 512 x 512.
         assert_eq!((u32::from_be_bytes([png[16], png[17], png[18], png[19]]), u32::from_be_bytes([png[20], png[21], png[22], png[23]])), (512, 512));
+    }
+
+    #[test]
+    fn the_page_carries_the_bundled_fonts_and_no_network_font() {
+        let html = page_html();
+        assert!(!html.contains("/*NN_FONTS*/"), "the marker must be replaced");
+        assert_eq!(HTML.matches("/*NN_FONTS*/").count(), 1, "the page must carry the font marker once");
+        assert_eq!(HTML.matches("/*NN_PREFS*/{}").count(), 1, "the page must carry the preferences marker once");
+        assert!(!html.contains("/*NN_PREFS*/"), "the preferences marker must be replaced");
+        // WebView2's NavigateToString refuses a document over 2 MB (2 * 1024 * 1024 bytes; Microsoft Learn, ICoreWebView2::NavigateToString).
+        // Counted as UTF-16 (two bytes a character), the worst reading of "total size", with a tenth kept free.
+        let bytes = html.encode_utf16().count() * 2;
+        assert!(bytes < 2 * 1024 * 1024 * 9 / 10, "the page is {bytes} bytes (UTF-16), too close to the 2 MB limit of NavigateToString");
+        assert_eq!(html.matches("@font-face").count(), 8);
+        assert!(html.contains("font-weight:700") && html.contains("IBM Plex Sans Arabic"));
+        // Every face is a data URL: the page names no http(s) font and no font file path.
+        assert!(!html.contains("fonts.googleapis") && !html.contains("fonts.gstatic"));
+        assert!(FONT_FACES.iter().all(|(_, _, _, b)| b.len() > 10_000 && &b[..4] == b"wOF2"));
+    }
+
+    #[test]
+    fn interface_choices_round_trip_through_their_own_file() {
+        let dir = std::env::temp_dir().join(format!("nanoarch-ui-prefs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("p.ui-prefs.json");
+        assert_eq!(ui_prefs_json(&file), "{}", "no file yet: no choices");
+        std::fs::write(&file, r#"{"theme":"dark","accent":"teal","sizes":{"--w-res":512},"note":"</script>"}"#).unwrap();
+        let json = ui_prefs_json(&file);
+        assert!(json.contains(r#""theme":"dark""#) && json.contains("512"));
+        assert!(!json.contains('<'), "a stored '<' must not be able to close the script element: {json}");
+        std::fs::write(&file, "[1,2]").unwrap();
+        assert!(ui_prefs_json(&file).contains("_error"), "a damaged file is reported to the page, not ignored");
+        std::fs::write(&file, "{not json").unwrap();
+        assert!(ui_prefs_json(&file).contains("_error"));
+        // A valid object whose maps are not maps would stop the page: the bad parts are dropped and reported, the rest is kept.
+        std::fs::write(&file, r#"{"theme":"dark","sizes":null,"open":[1]}"#).unwrap();
+        let json = ui_prefs_json(&file);
+        assert!(json.contains("_error") && json.contains(r#""theme":"dark""#), "{json}");
+        assert!(!json.contains("sizes") && !json.contains("open"), "{json}");
+        assert!(ui_prefs_set(&json!({ "prefs": [1] })).is_err());
+        assert!(ui_prefs_set(&json!({ "prefs": { "k": "x".repeat(UI_PREFS_MAX_BYTES) } })).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

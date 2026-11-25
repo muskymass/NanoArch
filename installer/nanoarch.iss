@@ -4,7 +4,7 @@
 ; The installer is NOT code-signed, so Windows SmartScreen will warn on first run.
 
 #define AppName "NanoArch"
-#define AppVersion "2.6.1"
+#define AppVersion "2.7.0"
 #define AppPublisher "NanoNexus"
 #ifndef ExeSrc
   #error Pass the built executable: /DExeSrc="C:\path\to\nanoarch-app.exe"
@@ -47,6 +47,9 @@ Source: "{#ExeSrc}"; DestDir: "{app}"; DestName: "NanoArch.exe"; Flags: ignoreve
 Source: "..\assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; Empty templates to fill in: a code rule pack (every value null) and production rates (every value null).
 Source: "..\nnx-core\packs\*.json"; DestDir: "{app}\templates"; Flags: ignoreversion
+; Licences of the bundled third-party parts (the interface font, SIL OFL 1.1, and the PDF engine, Apache-2.0), beside the program.
+Source: "..\assets\vendor\fonts\plex-sans-arabic-OFL-LICENSE.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
+Source: "..\assets\vendor\pdfjs-LICENSE.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\NanoArch.exe"; IconFilename: "{app}\icon.ico"

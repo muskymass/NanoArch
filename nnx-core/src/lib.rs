@@ -47,6 +47,7 @@ pub mod expansion;
 pub mod rooftop;
 pub mod basement;
 pub mod parking;
+pub mod msgs;
 pub mod terrain;
 pub mod expr;
 pub mod history;
