@@ -2719,6 +2719,7 @@ function prBuild() {
     <div class="row"><div><label>${L("ملف القياسات", "Measurements file")}</label><input type="file" id="pr-csvf" accept=".csv,.txt"></div><div><label>${L("التفاوت المسموح (مم)", "Tolerance (mm)")}</label><input type="number" step="any" dir="ltr" id="pr-tol" value="${ab.toleranceMm ?? ""}"></div></div>
     <label>${L("أو الصق النص", "or paste the text")}</label><textarea id="pr-csv" rows="4" dir="ltr" placeholder="name,x_mm,y_mm&#10;COL-1,6012,1995"></textarea>
     <label>${L("مصدر القياس", "Source of the measurements")}</label><input type="text" id="pr-src" value="${esc(ab.source || "")}">
+    <div class="bar" style="padding:2px 0;border:0;gap:6px;flex-wrap:wrap"><button id="pr-lib-find">${L("ابحث عن التفاوت المسموح في المكتبة", "Find the allowed tolerance in the library")}</button></div><div id="pr-sug"></div>
     <div class="hint">${L("الصفوف المخزّنة", "Stored rows")}: ${ab.rows.length} · ${L("مطابقة", "matched")} ${ar.matched} · ${L("خارج التفاوت", "over")} <b>${ar.over}</b> · ${L("أكبر انحراف", "largest")} <b dir="ltr">${ar.max_abs_mm} mm</b>${ar.unmatched.length ? " · " + L("بلا عنصر", "no element") + ": " + esc(ar.unmatched.join(", ")) : ""}</div>
     ${dev.length ? sxT(dev, [L("الاسم", "Name"), L("القيمة", "Value"), L("التصميم", "Design"), L("المقاس", "Measured"), L("الانحراف مم", "Deviation mm"), ""]) : ""}
     <ul class="clean">${(ar.notes || []).map(n => `<li class="hint">${esc(n)}</li>`).join("")}</ul>
@@ -2733,7 +2734,26 @@ function prBuild() {
     <div class="row3"><div><label>${L("المقياس 1 :", "Scale 1 :")}</label><input type="number" step="any" dir="ltr" id="pr-scale" value="100"></div><div><label>${L("الدور", "Level")}</label><select id="pr-lv"><option value="">${L("كل الأدوار", "All levels")}</option>${PR.levels.map(l => `<option value="${l.index}">${esc(levelLabel(l.index))}</option>`).join("")}</select></div><div><label>${L("أصغر جدار تطبعه الطابعة (مم)", "Smallest wall your printer holds (mm)")}</label><input type="number" step="any" dir="ltr" id="pr-minf"></div></div>
     <div class="bar" style="padding:2px 0;border:0"><button id="pr-stl">${L("صدّر STL", "Export STL")}</button></div>
     ${st ? `<div class="${st.report.thin.length ? "warn" : "ok"}">${st.report.solids} ${L("مجسماً", "solids")} · ${st.report.triangles} ${L("مثلثاً", "triangles")} · ${st.report.size_mm.join(" × ")} mm · ${st.closed ? L("كل مجسم مغلق", "every solid closed") : L("شبكة غير مغلقة", "mesh not closed")}</div><ul class="clean">${st.report.thin.slice(0, 12).map(x => `<li class="hint">${esc(x)}</li>`).join("")}${st.report.notes.map(n => `<li class="hint">${esc(n)}</li>`).join("")}</ul>` : ""}`;
-  prWire();
+  prWire(); prSuggest(ab);
+}
+// The as-built check needs a tolerance and the source it comes from. The library is searched for the word "tolerance" (Arabic and English),
+// alone and with each kind of element in the measurements file; pages that hold every word are offered as the source. The tolerance itself
+// is never taken from a page: the user reads it and types it.
+async function prSuggest(ab) {
+  const box = $("pr-sug"); if (!box || !LX.entries.length) return;
+  const kinds = { COL: ["عمود", "column"], FND: ["أساس", "foundation"], BM: ["كمرة", "beam"], SL: ["بلاطة", "slab"] };
+  const present = new Set(((ab && ab.rows) || []).map(r => String(r.name || "").split("-")[0].toUpperCase()).filter(k => kinds[k]));
+  const queries = ["التفاوت المسموح", "تفاوت", "tolerance", "allowable tolerance"];
+  for (const k of present) for (const w of kinds[k]) queries.push(`${L("تفاوت", "tolerance")} ${w}`);
+  const seen = new Set(), found = [];
+  for (const q of queries) {
+    let hits = [];
+    try { hits = (await call("library_search", { query: q, kind: "all", limit: 3 })).hits; } catch (e) { continue; }
+    for (const h of hits) if (h.all && !seen.has(h.citation) && found.length < 4) { seen.add(h.citation); found.push(h); }
+  }
+  if (!$("pr-sug")) return;
+  box.innerHTML = found.length ? `<div class="hint"><b>${L("اقتراح من مكتبتك — اقرأ الصفحة ثم اكتب التفاوت بنفسك", "Suggested from your library: read the page, then type the tolerance yourself")}</b>${found.map((h, n) => `<div><span dir="ltr">${esc(h.citation)}</span> <span class="hint">${esc(h.excerpt.slice(0, 140))}…</span> <button class="pr-use" data-n="${n}">${L("ضعه مصدراً", "Use as source")}</button></div>`).join("")}</div>` : `<div class="hint">${L("لا صفحة في مكتبتك تحوي كلمة التفاوت. استورد المواصفة أو الكود الذي يحدده.", "No page in your library has the word tolerance. Import the specification or code that sets it.")}</div>`;
+  box.querySelectorAll(".pr-use").forEach(b => b.onclick = () => { $("pr-src").value = found[+b.dataset.n].citation; });
 }
 function prWire() {
   const act = (id, fn) => { const e = $(id); if (e) e.onclick = () => busy(fn); };
@@ -2743,6 +2763,7 @@ function prWire() {
     PR.fin = await call("finishes_set", { finishes: { facade: $("pr-facade").value || null, floor: $("pr-floor").value || null }, rates: rates() });
     V5.chosen = PR.fin.chosen; prBuild(); v5Labels(); if (V3.on) await refresh3d(false); toast(t("proj_saved"));
   });
+  act("pr-lib-find", async () => { LIB.target = $("pr-src"); document.querySelector('[data-tab="lib"]').click(); $("lib-q").value = L("التفاوت المسموح", "tolerance"); $("lib-go").click(); });
   const f = $("pr-csvf"); if (f) f.onchange = () => { const file = f.files[0]; if (!file) return; const r = new FileReader(); r.onload = () => { $("pr-csv").value = String(r.result); }; r.readAsText(file); };
   const abSave = async () => {
     const args = { toleranceMm: num("pr-tol"), source: $("pr-src").value };
