@@ -49,7 +49,9 @@ pub(crate) fn commit_with_sync(doc: &mut Document, so: &StructOpts, label: &str,
     scratch.commit(label, Origin::User, cmds.clone()).map_err(|e| e.to_string())?;
     // The edited level and every level below it: loads come down from above, so footings can change too.
     let from = level.and_then(|l| building::levels(&doc.model).iter().position(|(_, id)| *id == l));
-    let (sync_cmds, _) = levels::settle(&mut scratch, so, from)?;
+    // A project read from drawings keeps the structure the drawings gave it: nothing is derived from its rooms on an edit.
+    let from_drawings = nnx_core::project::get(&doc.model).ok().flatten().is_some_and(|p| p.meta.structure_from_drawings);
+    let sync_cmds = if from_drawings { Vec::new() } else { levels::settle(&mut scratch, so, from)?.0 };
     // A project that enforces the code refuses an edit that adds a violation; otherwise the page shows it.
     if let Some(why) = nnx_core::sbc::refusal(&doc.model, &scratch.model) {
         return Err(why);

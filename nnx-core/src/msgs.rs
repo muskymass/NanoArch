@@ -34,6 +34,12 @@ pub const TABLE: &[(&str, &str)] = &[
     ("no rate for {}: enter one for the code {} in the BOQ library", "لا سعر لـ {}: أدخل سعراً للرمز {} في مكتبة BOQ"),
     ("a door {} mm wide stands in a column on a {} mm wall and cannot be moved clear of it", "باب بعرض {} مم يقع في عمود على جدار طوله {} مم ولا يمكن إبعاده عنه"),
     ("a window {} mm wide stands in a column on a {} mm wall and cannot be moved clear of it", "نافذة بعرض {} مم تقع في عمود على جدار طوله {} مم ولا يمكن إبعادها عنه"),
+    ("the columns stand where the drawings' axes cross on a wall, {} x {} mm as the owner gave: a proposal from the axes, not a structural design. No beam, slab or footing was generated, and later edits generate none", "الأعمدة موضوعة حيث تتقاطع محاور الرسومات على جدار، بمقاس {} × {} مم كما أعطاه المالك: مقترح من المحاور لا تصميم إنشائي. لم تُولَّد كمرات ولا بلاطات ولا قواعد، والتعديلات اللاحقة لا تولّدها"),
+    ("no structure was generated: no column size was given, so no column was placed (the axes are drawn), and later edits generate none. Structure comes from a design, not from the architecture drawings", "لم يُولَّد هيكل: لم يُعطَ مقاس العمود فلم يوضع عمود (المحاور مرسومة)، والتعديلات اللاحقة لا تولّده. الهيكل يأتي من تصميم لا من الرسومات المعمارية"),
+    ("{} column(s) stand where two walls cross: their long side was laid along the longer wall; turn the ones the drawing shows otherwise", "{} عمود يقف عند تقاطع جدارين: وُضع ضلعه الطويل على امتداد الجدار الأطول؛ أدِر ما يُظهره الرسم بخلاف ذلك"),
+    ("{} door(s) or window(s) stand where a column was placed on the axes: check the drawing there", "{} باب أو نافذة يقف حيث وُضع عمود على المحاور: راجع الرسم هناك"),
+    ("axis {} was not drawn: {}", "المحور {} لم يُرسم: {}"),
+    ("this project was read from drawings: its columns stand on the drawings' axes and no structure is derived from its rooms", "هذا المشروع مقروء من رسومات: أعمدته على محاور الرسومات ولا يُشتق له هيكل من غرفه"),
     ("a door {} mm wide stands in a column on a {} mm wall: it was drawn there and is not moved (move it, or the column)", "باب بعرض {} مم يقع في عمود على جدار طوله {} مم: رُسم هناك فلا يُنقل (انقله أو انقل العمود)"),
     ("a window {} mm wide stands in a column on a {} mm wall: it was drawn there and is not moved (move it, or the column)", "نافذة بعرض {} مم تقع في عمود على جدار طوله {} مم: رُسمت هناك فلا تُنقل (انقلها أو انقل العمود)"),
     // Where each setback came from: the citation (clause, page) is kept as written; only the words around it change.

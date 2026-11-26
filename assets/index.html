@@ -4410,7 +4410,7 @@ drBind();
 // ---------------------------------------------------------------- plan import: pictures of plans, one per level, into a project
 // The page only picks the files, decodes them to pixels and shows what the engine found; the reading and the building are the engine's
 // (`plan_import_prepare`, `plan_import`). Nothing is filled in for the owner: heights, thickness and axis distances are typed here.
-const PI = { drawings: [], title: "", xn: "", xs: "", yn: "", ys: "", v: { storey: "", thick: "", door: "", win: "", sill: "" }, report: null };
+const PI = { drawings: [], title: "", xn: "", xs: "", yn: "", ys: "", v: { storey: "", thick: "", door: "", win: "", sill: "", colb: "", colh: "" }, report: null };
 const piHex = c => "#" + c.map(v => v.toString(16).padStart(2, "0")).join("");
 const piSame = (a, b) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 async function piDecode(p) {
@@ -4454,7 +4454,7 @@ function piAxes(names, gaps, side) {
 }
 async function piRun() {
   const num = v => (v === "" || v == null ? null : Number(v));
-  let spec; try { spec = { title: PI.title.trim(), storey_mm: num(PI.v.storey), wall_thickness_mm: num(PI.v.thick), door_height_mm: num(PI.v.door), window_height_mm: num(PI.v.win), window_sill_mm: num(PI.v.sill), x_axes: piAxes(PI.xn, PI.xs, L("المحاور الأفقية", "Columns")), y_axes: piAxes(PI.yn, PI.ys, L("المحاور الرأسية", "Rows")) }; } catch (e) { toast(e.message, "err"); return; }
+  let spec; try { spec = { title: PI.title.trim(), storey_mm: num(PI.v.storey), wall_thickness_mm: num(PI.v.thick), door_height_mm: num(PI.v.door), window_height_mm: num(PI.v.win), window_sill_mm: num(PI.v.sill), column_mm: (PI.v.colb.trim() || PI.v.colh.trim()) ? [num(PI.v.colb), num(PI.v.colh)] : null, x_axes: piAxes(PI.xn, PI.xs, L("المحاور الأفقية", "Columns")), y_axes: piAxes(PI.yn, PI.ys, L("المحاور الرأسية", "Rows")) }; } catch (e) { toast(e.message, "err"); return; }
   if (!PI.drawings.length) { toast(L("اختر المساقط أولاً", "Pick the plans first"), "err"); return; }
   const missing = PI.drawings.find(d => !d.walls.length); if (missing) { toast(L(`اختر لون الجدران في ${missing.file}`, `Choose the wall colour of ${missing.file}`), "err"); return; }
   const st = await call("status"); if (st.dirty && !(await uiAsk({ message: t("discard_q") }))) return;
@@ -4491,13 +4491,13 @@ function piReport() {
   const R = PI.report; if (!R) return "";
   // The reasons something was not built, in the page's language (an English-only one is marked EN, as the other engine messages are).
   const kv = a => (a || []).map(x => `<li dir="auto">${x.count} × ${lang === "ar" ? `${x.en_only ? `<span class="badge">EN</span> ` : ""}${esc(x.ar)}` : esc(x.en)}</li>`).join("");
-  const rows = R.levels.map(l => `<tr><td dir="auto">${esc(l.level)}</td><td>${l.mm_per_px.toFixed(1)}</td><td>${l.column_bubbles_fitted} / ${l.row_bubbles_fitted}</td><td>${l.walls_built} / ${l.walls_read}</td><td>${l.doors_built}</td><td>${l.windows_built}</td><td>${l.passages_built}</td><td>${l.gaps_left_open}</td><td>${l.rooms}</td><td>${l.composite_rooms}</td></tr>`).join("");
+  const rows = R.levels.map(l => `<tr><td dir="auto">${esc(l.level)}</td><td>${l.mm_per_px.toFixed(1)}</td><td>${l.column_bubbles_fitted} / ${l.row_bubbles_fitted}</td><td>${l.walls_built} / ${l.walls_read}</td><td>${l.doors_built}</td><td>${l.windows_built}</td><td>${l.passages_built}</td><td>${l.gaps_left_open}</td><td>${l.rooms}</td><td>${l.composite_rooms}</td><td title="${esc(l.crossings_without_wall.join("، "))}">${l.columns_built}${l.crossings_without_wall.length ? " (" + L("بلا جدار: ", "no wall: ") + l.crossings_without_wall.length + ")" : ""}</td></tr>`).join("");
   const detail = R.levels.map((l, li) => `<details ${PI.openLevel === li ? "open" : ""} data-lv-detail="${li}"><summary dir="auto">${esc(l.level)}</summary>
     ${piGaps(l, li)}
     ${l.walls_refused.length ? `<div class="hint">${L("جدران لم تُبنَ", "Walls not built")}</div><ul class="clean">${kv(l.walls_refused)}</ul>` : ""}
     ${l.openings_not_built.length ? `<div class="hint">${L("فتحات لم تُبنَ", "Openings not built")}</div><ul class="clean">${kv(l.openings_not_built)}</ul>` : ""}
     <div class="hint">${L("ملاحظات", "Notes")}</div><ul class="clean">${msgList("", l.notes, l.notes_ar, l.notes_en_only)}</ul></details>`).join("");
-  return `<h2>${L("تقرير الاستيراد", "Import report")}</h2><div style="overflow-x:auto"><table><thead><tr><th>${L("الدور", "Level")}</th><th>${L("مم/بكسل", "mm/px")}</th><th>${L("فقاعات أعمدة/صفوف", "Bubbles col/row")}</th><th>${L("جدران", "Walls")}</th><th>${L("أبواب", "Doors")}</th><th>${L("نوافذ", "Windows")}</th><th>${L("ممرات", "Passages")}</th><th>${L("فتحات تُركت", "Left open")}</th><th>${L("غرف", "Rooms")}</th><th>${L("منها على أجزاء", "In parts")}</th></tr></thead><tbody>${rows}</tbody></table></div>${detail}
+  return `<h2>${L("تقرير الاستيراد", "Import report")}</h2><div style="overflow-x:auto"><table><thead><tr><th>${L("الدور", "Level")}</th><th>${L("مم/بكسل", "mm/px")}</th><th>${L("فقاعات أعمدة/صفوف", "Bubbles col/row")}</th><th>${L("جدران", "Walls")}</th><th>${L("أبواب", "Doors")}</th><th>${L("نوافذ", "Windows")}</th><th>${L("ممرات", "Passages")}</th><th>${L("فتحات تُركت", "Left open")}</th><th>${L("غرف", "Rooms")}</th><th>${L("منها على أجزاء", "In parts")}</th><th>${L("أعمدة على المحاور", "Columns on axes")}</th></tr></thead><tbody>${rows}</tbody></table></div>${detail}
     <ul class="clean">${msgList("hint", R.notes, R.notes_ar, R.notes_en_only)}</ul>`;
 }
 function piBuild() {
@@ -4517,11 +4517,11 @@ function piBuild() {
     <label>${L("أسماء المحاور الرأسية، من الأعلى", "Row axis names, top down")}${inp("pi-yn", PI.yn, "AY6 AY5 AY4 AY3 AY2 AY1")}</label><label>${L("المسافات بينها (مم)", "Gaps between them (mm)")}${inp("pi-ys", PI.ys, "4654 4500 3200 4820 5472")}</label></div>
     <h2>${L("قيم المالك (مم)", "Owner's values (mm)")}</h2>
     <div class="pi-grid"><label>${L("اسم المشروع", "Project name")}<input id="pi-t" value="${esc(PI.title)}" dir="auto"></label><label>${L("ارتفاع الدور", "Storey height")}${inp("pi-storey", v.storey, "")}</label><label>${L("سماكة الجدران", "Wall thickness")}${inp("pi-thick", v.thick, "")}</label>
-    <label>${L("ارتفاع الباب", "Door height")}${inp("pi-door", v.door, "")}</label><label>${L("ارتفاع النافذة", "Window height")}${inp("pi-win", v.win, "")}</label><label>${L("جلسة النافذة", "Window sill")}${inp("pi-sill", v.sill, "")}</label></div>
+    <label>${L("ارتفاع الباب", "Door height")}${inp("pi-door", v.door, "")}</label><label>${L("ارتفاع النافذة", "Window height")}${inp("pi-win", v.win, "")}</label><label>${L("جلسة النافذة", "Window sill")}${inp("pi-sill", v.sill, "")}</label><label title="${L("اختياري: بدونه لا توضع أعمدة. توضع الأعمدة حيث تتقاطع المحاور على جدار.", "Optional: without it no column is placed. Columns go where the axes cross on a wall.")}">${L("العمود: الضلع القصير", "Column: short side")}${inp("pi-colb", v.colb, "")}</label><label>${L("العمود: الضلع الطويل", "Column: long side")}${inp("pi-colh", v.colh, "")}</label></div>
     <div class="bar"><button id="pi-check">${L("تحقق من المحاور", "Check the axes")}</button><button id="pi-run" class="primary">${L("ابنِ المشروع", "Build the project")}</button></div>${piReport()}`;
   const bind = (id, f) => { const e = $(id); if (e) e.oninput = () => f(e.value); };
   bind("pi-xn", x => PI.xn = x); bind("pi-xs", x => PI.xs = x); bind("pi-yn", x => PI.yn = x); bind("pi-ys", x => PI.ys = x); bind("pi-t", x => PI.title = x);
-  bind("pi-storey", x => v.storey = x); bind("pi-thick", x => v.thick = x); bind("pi-door", x => v.door = x); bind("pi-win", x => v.win = x); bind("pi-sill", x => v.sill = x);
+  bind("pi-storey", x => v.storey = x); bind("pi-thick", x => v.thick = x); bind("pi-door", x => v.door = x); bind("pi-win", x => v.win = x); bind("pi-sill", x => v.sill = x); bind("pi-colb", x => v.colb = x); bind("pi-colh", x => v.colh = x);
   box.querySelectorAll("[data-gap]").forEach(b => b.onclick = () => { const [li, n, how] = b.dataset.gap.split(":"); PI.openLevel = Number(li); busy(() => piClose(Number(li), Number(n), how)); });
   $("pi-add").onclick = () => busy(piAdd); $("pi-run").onclick = () => busy(piRun); $("pi-check").onclick = () => busy(async () => { await piPrepare(); piBuild(); });
   box.querySelectorAll("[data-lv]").forEach(e => e.oninput = () => { PI.drawings[+e.dataset.lv].level = e.value; });

@@ -124,14 +124,18 @@ const COLUMN_CLEAR_MM: i64 = 50;
 /// The stretches of a wall, along its axis, that the columns standing on it take: each column face plus its clearance.
 fn column_stretches(cols: &[Column], w: &crate::typed::Wall) -> Vec<(i64, i64)> {
     let (s, end, cl, half_t) = (w.start(), w.start() + w.length, w.centre_line(), w.thickness / 2);
+    // A column's size along the wall and across it: `b` runs along x and `h` along y, and the two differ in a rectangular column.
+    let sizes = |c: &Column| if w.horizontal() { (c.b, c.h) } else { (c.h, c.b) };
     cols.iter()
         .filter(|c| {
             let (along, across) = if w.horizontal() { (c.x, c.y) } else { (c.y, c.x) };
-            (across - cl).abs() <= half_t.max(c.b / 2) && along >= s - c.b / 2 && along <= end + c.b / 2
+            let (len, wid) = sizes(c);
+            (across - cl).abs() <= half_t.max(wid / 2) && along >= s - len / 2 && along <= end + len / 2
         })
         .map(|c| {
             let along = if w.horizontal() { c.x } else { c.y };
-            (along - c.b / 2 - COLUMN_CLEAR_MM, along + c.b / 2 + COLUMN_CLEAR_MM)
+            let (len, _) = sizes(c);
+            (along - len / 2 - COLUMN_CLEAR_MM, along + len / 2 + COLUMN_CLEAR_MM)
         })
         .collect()
 }

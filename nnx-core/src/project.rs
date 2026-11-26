@@ -118,6 +118,9 @@ pub fn inputs_html(inputs: &[ProjectInput], arabic: bool) -> String {
 #[serde(rename_all = "camelCase", default)]
 pub struct ProjectMeta {
     pub title: String,
+    /// The structure is not derived from the rooms on every edit: the project was read from drawings, its columns stand on the
+    /// drawings' axes, and nothing else structural appears unless a design gives it.
+    pub structure_from_drawings: bool,
     pub building_type: Option<BuildingType>,
     /// Architectural style, free text chosen by the user.
     pub style: Option<String>,

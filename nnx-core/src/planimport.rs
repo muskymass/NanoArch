@@ -42,6 +42,9 @@ pub struct Spec {
     pub y_axes: Vec<Axis>,
     /// Bubble radius range in pixels. When absent it is derived from the image width and said in the notes.
     pub bubble_radius_px: Option<[u32; 2]>,
+    /// The column's two sides, mm, short then long. Optional: with it a column is placed where two axes cross on a wall; without it
+    /// no column is placed. The drawings carry no column size, so there is no default.
+    pub column_mm: Option<[i64; 2]>,
 }
 
 pub struct Drawing {
@@ -82,6 +85,10 @@ pub struct LevelReport {
     pub open_gaps: Vec<OpenGap>,
     /// Gaps that were not built, by reason.
     pub openings_not_built: BTreeMap<String, usize>,
+    /// Columns placed where two of the drawings' axes cross on a wall of this level.
+    pub columns_built: usize,
+    /// Axis crossings of this level with no wall there, by the names of the two axes: no column was placed on them.
+    pub crossings_without_wall: Vec<String>,
     /// Rooms, a room made of several rectangles counted once.
     pub rooms: usize,
     /// Rooms that are not rectangles (made of several parts).
@@ -218,6 +225,11 @@ pub fn import(spec: &Spec, drawings: &[Drawing]) -> Result<(Document, Report), S
             return Err("plan import: every drawing needs its own level name".into());
         }
     }
+    if let Some([short, long]) = spec.column_mm
+        && (short <= 0 || long < short)
+    {
+        return Err("plan import: the column's sides (column_mm) are the short side then the long side, both above zero".into());
+    }
     let mut report = Report::default();
     // 1 and 2. Each drawing: its bubbles, its scale and place, its walls.
     let mut reads: Vec<Read> = Vec::new();
@@ -250,12 +262,26 @@ pub fn import(spec: &Spec, drawings: &[Drawing]) -> Result<(Document, Report), S
     let (shift_x, top_y) = (2000.0 - min_x, max_y + 2000.0);
     // 3. The model.
     let mut doc = Document::default();
-    let mut cmds = vec![project::create_command(&NanoArchProject { meta: ProjectMeta { title: spec.title.trim().to_string(), ..Default::default() }, ..Default::default() })?];
+    let mut cmds = vec![project::create_command(&NanoArchProject { meta: ProjectMeta { title: spec.title.trim().to_string(), structure_from_drawings: true, ..Default::default() }, ..Default::default() })?];
     for (i, r) in reads.iter().enumerate() {
         cmds.push(Command::Create(element_of(&Level { name: r.level.clone(), index: i as i64, extra: Default::default() }, Source::User)));
     }
     doc.commit("plan import: project and levels", Origin::User, cmds).map_err(|e| e.to_string())?;
     let level_ids: Vec<Id> = building::levels(&doc.model).into_iter().map(|(_, id)| id).collect();
+    // The axes of the drawings, as grid lines of the model under the names the owner typed. They run past the outermost axes by 1.5 m.
+    let axes_x: Vec<(String, i64)> = spec.x_axes.iter().map(|a| (a.name.clone(), (a.pos_mm + shift_x).round() as i64)).collect();
+    let axes_y: Vec<(String, i64)> = spec.y_axes.iter().map(|a| (a.name.clone(), (top_y - a.pos_mm).round() as i64)).collect();
+    {
+        let span = |v: &[(String, i64)]| (v.iter().map(|a| a.1).min().unwrap_or(0) - 1500, v.iter().map(|a| a.1).max().unwrap_or(0) + 1500);
+        let ((x0, x1), (y0, y1)) = (span(&axes_x), span(&axes_y));
+        let lines = axes_x.iter().map(|(n, x)| (n, [*x, y0], [*x, y1])).chain(axes_y.iter().map(|(n, y)| (n, [x0, *y], [x1, *y])));
+        for (name, a, b) in lines {
+            match annot::grid_command(&doc.model, &annot::GridSpec { a, b, name: Some(name.clone()) }) {
+                Ok((cmd, _)) => doc.commit("plan import: axis", Origin::User, vec![cmd]).map_err(|e| e.to_string())?,
+                Err(e) => report.notes.push(format!("axis {name} was not drawn: {e}")),
+            }
+        }
+    }
     for (r, level_id) in reads.iter().zip(level_ids) {
         let level = Some(level_id);
         let (ox, oy, s) = (r.fit.x_offset_mm, r.fit.y_offset_mm, r.fit.mm_per_px);
@@ -349,6 +375,49 @@ pub fn import(spec: &Spec, drawings: &[Drawing]) -> Result<(Document, Report), S
                 Err(e) => *lr.openings_not_built.entry(reason(&e)).or_default() += 1,
             }
         }
+        // Columns: where two axes cross on a wall of this level. The long side runs along the wall the column stands in.
+        if let Some([short, long]) = spec.column_mm {
+            let walls: Vec<crate::typed::Wall> = doc.model.elements.values().filter(|e| e.kind == "Wall" && e.level_id == level).filter_map(|e| e.typed().ok()).collect();
+            // The longest wall of each direction that passes through the point, within one wall thickness of its centre line.
+            let through = |x: i64, y: i64, horizontal: bool| {
+                walls.iter().filter(|w| w.horizontal() == horizontal).filter(|w| {
+                    let (along, across) = if horizontal { (x, y) } else { (y, x) };
+                    (across - w.centre_line()).abs() <= thick && along >= w.start() - thick && along <= w.start() + w.length + thick
+                }).map(|w| w.length).max()
+            };
+            let mut cmds = Vec::new();
+            let mut by_longer = 0;
+            for (xn, x) in &axes_x {
+                for (yn, y) in &axes_y {
+                    let (b, h) = match (through(*x, *y, true), through(*x, *y, false)) {
+                        (None, None) => {
+                            lr.crossings_without_wall.push(format!("{xn}/{yn}"));
+                            continue;
+                        }
+                        (Some(_), None) => (long, short),
+                        (None, Some(_)) => (short, long),
+                        (Some(lh), Some(lv)) => {
+                            by_longer += usize::from(long != short);
+                            if lh >= lv { (long, short) } else { (short, long) }
+                        }
+                    };
+                    let mut el = element_of(&crate::typed::Column { x: *x, y: *y, b, h, grid_ref: format!("{xn}/{yn}"), axial_service_kn: None, extra: Default::default() }, Source::User);
+                    el.level_id = level;
+                    cmds.push(Command::Create(el));
+                }
+            }
+            lr.columns_built = cmds.len();
+            if !cmds.is_empty() {
+                doc.commit("plan import: columns on the axes", Origin::User, cmds).map_err(|e| format!("{}: {e}", r.level))?;
+            }
+            if by_longer > 0 {
+                lr.notes.push(format!("{by_longer} column(s) stand where two walls cross: their long side was laid along the longer wall; turn the ones the drawing shows otherwise"));
+            }
+            let (_, in_columns) = building::clear_openings(&doc.model, &[level]);
+            if !in_columns.is_empty() {
+                lr.notes.push(format!("{} door(s) or window(s) stand where a column was placed on the axes: check the drawing there", in_columns.len()));
+            }
+        }
         lr.gaps_left_open = r.walls.left_open.len();
         for (n, g) in r.walls.left_open.iter().enumerate() {
             let (a, b, px) = if g.horizontal { ([wx(g.lo_px), wy(g.axis_px)], [wx(g.hi_px), wy(g.axis_px)], [g.lo_px, g.axis_px, g.hi_px, g.axis_px]) } else { ([wx(g.axis_px), wy(g.hi_px)], [wx(g.axis_px), wy(g.lo_px)], [g.axis_px, g.lo_px, g.axis_px, g.hi_px]) };
@@ -359,7 +428,10 @@ pub fn import(spec: &Spec, drawings: &[Drawing]) -> Result<(Document, Report), S
         report.levels.push(lr);
     }
     doc.mark_saved();
-    report.notes.push("no structure was generated: the model holds what the drawings hold (walls, doors, windows, rooms). Structure comes from a design, not from the architecture drawings".into());
+    report.notes.push(match spec.column_mm {
+        Some([short, long]) => format!("the columns stand where the drawings' axes cross on a wall, {short} x {long} mm as the owner gave: a proposal from the axes, not a structural design. No beam, slab or footing was generated, and later edits generate none"),
+        None => "no structure was generated: no column size was given, so no column was placed (the axes are drawn), and later edits generate none. Structure comes from a design, not from the architecture drawings".into(),
+    });
     report.notes.push("every height and the wall thickness are the owner's values, applied to every wall and opening; the drawings carry none of them".into());
     Ok((doc, report))
 }
@@ -476,6 +548,7 @@ mod tests {
             x_axes: ["A", "B", "C"].iter().zip([0.0, 5000.0, 10000.0]).map(|(n, p)| Axis { name: (*n).into(), pos_mm: p }).collect(),
             y_axes: ["1", "2"].iter().zip([0.0, 4000.0]).map(|(n, p)| Axis { name: (*n).into(), pos_mm: p }).collect(),
             bubble_radius_px: None,
+            column_mm: None,
         }
     }
 
@@ -485,6 +558,47 @@ mod tests {
 
     fn walls_of(doc: &Document, level: Id) -> Vec<crate::typed::Wall> {
         doc.model.elements.values().filter(|e| e.kind == "Wall" && e.level_id == Some(level)).filter_map(|e| e.typed::<crate::typed::Wall>().ok()).collect()
+    }
+
+    #[test]
+    fn the_axes_become_grid_lines_and_a_column_stands_where_two_cross_on_a_wall_with_its_long_side_along_the_wall() {
+        let with_columns = Spec { column_mm: Some([200, 500]), ..spec() };
+        let (doc, rep) = import(&with_columns, &[drawing("lower.png", "Ground", sheet(60, 70, true)), drawing("upper.png", "First", sheet(73, 79, false))]).unwrap_or_else(|e| panic!("{e}"));
+        let mut names: Vec<String> = doc.model.elements.values().filter_map(|e| e.typed::<crate::typed::Grid>().ok().filter(|_| e.kind == "Grid")).map(|g| g.name).collect();
+        names.sort();
+        assert_eq!(names, ["1", "2", "A", "B", "C"], "the axes under the names the owner typed");
+        // Six crossings on each level, each on a wall: A, B and C on the long walls along 1 and 2.
+        assert_eq!((rep.levels[0].columns_built, rep.levels[1].columns_built), (6, 6), "{rep:#?}");
+        assert!(rep.levels.iter().all(|l| l.crossings_without_wall.is_empty()));
+        let cols: Vec<crate::typed::Column> = doc.model.elements.values().filter(|e| e.kind == "Column").filter_map(|e| e.typed().ok()).collect();
+        assert_eq!(cols.len(), 12);
+        // Every column stands in a 10 m horizontal wall (the corners too: it is longer than the 4 m side walls), so 500 runs along x.
+        assert!(cols.iter().all(|c| (c.b, c.h) == (500, 200)), "{cols:?}");
+        assert!(cols.iter().any(|c| c.grid_ref == "B/2"));
+        // The same axis crossing is at the same place on both levels, and it is where the grid lines cross.
+        let lv = building::levels(&doc.model);
+        let at = |level: Id, r: &str| doc.model.elements.values().filter(|e| e.kind == "Column" && e.level_id == Some(level)).filter_map(|e| e.typed::<crate::typed::Column>().ok()).find(|c| c.grid_ref == r).map(|c| (c.x, c.y)).unwrap();
+        assert_eq!(at(lv[0].1, "C/1"), at(lv[1].1, "C/1"));
+        // Nothing else structural, the project says where its structure comes from, and the note says what the columns are.
+        assert!(!doc.model.elements.values().any(|e| ["Beam", "Slab", "Footing"].contains(&e.kind.as_str())));
+        assert!(project::get(&doc.model).unwrap().unwrap().meta.structure_from_drawings);
+        assert!(rep.notes.iter().any(|n| n.contains("a proposal from the axes")), "{:?}", rep.notes);
+        // Every note about the axes and the columns has its Arabic, with and without a column size, and so has the refusal of a sync.
+        let said = [
+            "2 column(s) stand where two walls cross: their long side was laid along the longer wall; turn the ones the drawing shows otherwise",
+            "1 door(s) or window(s) stand where a column was placed on the axes: check the drawing there",
+            "axis AX3 was not drawn: grid line AX3 already runs along that line there",
+            "this project was read from drawings: its columns stand on the drawings' axes and no structure is derived from its rooms",
+            "a window 1500 mm wide stands in a column on a 4000 mm wall: it was drawn there and is not moved (move it, or the column)",
+        ];
+        let plain_notes = import(&spec(), &[drawing("lower.png", "Ground", sheet(60, 70, true))]).unwrap().1.notes;
+        for n in rep.notes.iter().chain(rep.levels.iter().flat_map(|l| &l.notes)).chain(&plain_notes).map(String::as_str).chain(said) {
+            assert!(crate::msgs::localize(n).1, "no Arabic for: {n}");
+        }
+        // Without a size there is no column, and a size that is not short-then-long is refused.
+        let (plain, _) = import(&spec(), &[drawing("lower.png", "Ground", sheet(60, 70, true))]).unwrap();
+        assert!(!plain.model.elements.values().any(|e| e.kind == "Column"));
+        assert!(import(&Spec { column_mm: Some([500, 200]), ..spec() }, &[drawing("lower.png", "Ground", sheet(60, 70, true))]).unwrap_err().contains("column_mm"));
     }
 
     #[test]

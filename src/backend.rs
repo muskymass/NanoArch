@@ -355,6 +355,10 @@ impl App {
                 Ok(json!({ "changed": changed, "svg": self.render_or_null()?, "levels": self.levels_json(), "rooms": self.rooms_json(), "settings": self.form_state(), "sbc": self.sbc_json() }))
             }
             "sync" => {
+                if self.project().is_some_and(|p| p.meta.structure_from_drawings) {
+                    let e = "this project was read from drawings: its columns stand on the drawings' axes and no structure is derived from its rooms";
+                    return Err(if self.ui_arabic { nnx_core::msgs::localize(e).0 } else { e.to_string() });
+                }
                 let so = self.sopts()?;
                 let doc = self.doc.as_mut().ok_or("choose a layout first")?;
                 let r = levels::sync_all(doc, &so)?;
@@ -2769,7 +2773,7 @@ impl App {
         let so = struct_opts(&nnx_core::project::get(&doc.model)?.map(|p| p.structure).unwrap_or_default());
         // Say plainly what is wrong with the file instead of hiding it.
         warnings.extend(nnx_core::typed::validate_model(&doc.model).iter().take(5).map(|i| format!("{} {}: {}", i.kind, i.id, i.message)));
-        {
+        if !nnx_core::project::get(&doc.model)?.is_some_and(|p| p.meta.structure_from_drawings) {
             let mut probe = Document::new(doc.model.clone());
             match levels::settle(&mut probe, &so, None) {
                 Ok((cmds, _)) if !cmds.is_empty() => warnings.push("the structure does not match the walls: press Sync".into()),
@@ -10347,6 +10351,14 @@ COL-1,10,10
         assert!(rep["levels"][0]["openings_not_built"].as_array().unwrap().iter().all(|x| x["en_only"] == false), "{rep}");
         assert!(rep["levels"][0]["origin_x_mm"].is_number() && rep["levels"][0]["origin_y_mm"].is_number());
         assert_eq!(r["rooms"].as_array().unwrap().len(), 1, "{r}");
+        // A project read from drawings keeps the structure the drawings gave it (none here: no column size was given). An edit derives
+        // none from its rooms, and asking for one says why there is none.
+        let structural = |app: &App| app.doc.as_ref().unwrap().model.elements.values().filter(|e| ["Column", "Beam", "Slab", "Footing"].contains(&e.kind.as_str())).count();
+        assert_eq!(structural(&app), 0);
+        app.handle("draft_wall", &json!({ "a": [100000, 100000], "b": [104000, 100000], "thickness": 300, "height": 3000 })).unwrap();
+        assert_eq!(structural(&app), 0, "an edit generated a structure");
+        assert!(app.handle("sync", &json!({})).unwrap_err().contains("read from drawings"));
+        assert!(app.handle("undo", &json!({})).unwrap()["changed"].as_bool().unwrap());
         // Without the owner's storey height nothing is built, and the open project is the one that was there.
         let mut bad = spec.clone();
         bad["storey_mm"] = json!(null);
