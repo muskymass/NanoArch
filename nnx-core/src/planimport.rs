@@ -45,6 +45,17 @@ pub struct Spec {
     /// The column's two sides, mm, short then long. Optional: with it a column is placed where two axes cross on a wall; without it
     /// no column is placed. The drawings carry no column size, so there is no default.
     pub column_mm: Option<[i64; 2]>,
+    /// The door widths the owner builds with, mm. Optional: with it a door read within two pixels of one of them takes that width;
+    /// without it every door keeps the width read from the picture. There is no default list.
+    pub door_widths_mm: Option<Vec<i64>>,
+    /// The same for windows.
+    pub window_widths_mm: Option<Vec<i64>>,
+}
+
+/// The width of the owner's list that a width read from a picture stands for: the nearest one within `reach` mm, or none. `reach` is
+/// two pixels of the drawing (one at each end of the opening): what the picture cannot tell apart.
+pub fn standard_width(read: i64, list: &[i64], reach: i64) -> Option<i64> {
+    list.iter().copied().filter(|w| (w - read).abs() <= reach).min_by_key(|w| ((w - read).abs(), *w))
 }
 
 pub struct Drawing {
@@ -307,6 +318,11 @@ pub fn import(spec: &Spec, drawings: &[Drawing]) -> Result<(Document, Report), S
     {
         return Err("plan import: the column's sides (column_mm) are the short side then the long side, both above zero".into());
     }
+    for (list, what) in [(&spec.door_widths_mm, "door_widths_mm"), (&spec.window_widths_mm, "window_widths_mm")] {
+        if list.as_ref().is_some_and(|l| l.is_empty() || l.iter().any(|w| *w <= 0)) {
+            return Err(format!("plan import: the owner's widths ({what}) must be a list of widths above zero, or left out"));
+        }
+    }
     let mut report = Report::default();
     // 1 and 2. Each drawing: its bubbles, its scale and place, its walls.
     let mut reads: Vec<Read> = Vec::new();
@@ -429,6 +445,9 @@ pub fn import(spec: &Spec, drawings: &[Drawing]) -> Result<(Document, Report), S
         if !learnt.is_empty() {
             doc.commit("plan import: the walls' rooms", Origin::User, learnt).map_err(|e| format!("{}: {e}", r.level))?;
         }
+        // (took a width of the owner's list, kept the width read) for doors, then for windows.
+        let mut typed = [[0usize; 2]; 2];
+        let reach = (2.0 * s).round() as i64;
         for o in &r.walls.openings {
             let (kind, label) = match o.kind {
                 OpeningKind::Door => (BuildKind::Door, "door"),
@@ -443,13 +462,33 @@ pub fn import(spec: &Spec, drawings: &[Drawing]) -> Result<(Document, Report), S
             };
             let centre = (o.lo_px + o.hi_px) / 2.0;
             let (start, along) = if w.horizontal { (wx(w.lo_px), wx(centre)) } else { (wy(w.hi_px), wy(centre)) };
-            let width = (((o.hi_px - o.lo_px) * s) / 10.0).round() as i64 * 10;
+            let read = (((o.hi_px - o.lo_px) * s) / 10.0).round() as i64 * 10;
+            let (list, row) = if label == "door" { (&spec.door_widths_mm, 0) } else { (&spec.window_widths_mm, 1) };
+            let width = match list {
+                Some(l) => match standard_width(read, l, reach) {
+                    Some(w) => {
+                        typed[row][0] += 1;
+                        w
+                    }
+                    None => {
+                        typed[row][1] += 1;
+                        read
+                    }
+                },
+                None => read,
+            };
             let spec_o = OpeningSpec { kind, wall: host, offset: along - start, width, height: if label == "door" { door_h } else { win_h }, sill: (label == "window").then_some(sill), side: (label == "door").then_some(1) };
             let outcome = draft::opening_command(&doc.model, &spec_o).and_then(|(cmds, _)| doc.commit("plan import: opening", Origin::User, cmds).map_err(|e| e.to_string()));
             match outcome {
                 Ok(()) if label == "door" => lr.doors_built += 1,
                 Ok(()) => lr.windows_built += 1,
                 Err(e) => *lr.openings_not_built.entry(reason(&e)).or_default() += 1,
+            }
+        }
+        for (row, what) in [(0, "door"), (1, "window")] {
+            let [took, kept] = typed[row];
+            if took + kept > 0 {
+                lr.notes.push(format!("{took} {what}(s) took a width of the owner's list (the width read was within {reach} mm of it, two pixels of this drawing); {kept} kept the width read, which is farther than that from every width of the list"));
             }
         }
         // Columns: where two axes cross on a wall of this level. The long side runs along the wall the column stands in.
@@ -512,6 +551,14 @@ pub fn import(spec: &Spec, drawings: &[Drawing]) -> Result<(Document, Report), S
         report.levels.push(lr);
     }
     doc.mark_saved();
+    // Without the owner's widths every opening keeps the width read: say how many different ones there are, and how far a picture can be trusted.
+    for (kind, list, what, field) in [("Door", &spec.door_widths_mm, "door", "door widths"), ("Window", &spec.window_widths_mm, "window", "window widths")] {
+        let widths: std::collections::BTreeSet<i64> = doc.model.elements.values().filter(|e| e.kind == kind).filter_map(|e| e.props.get("width").and_then(|v| v.as_i64())).collect();
+        let coarsest = report.levels.iter().map(|l| l.mm_per_px).fold(0.0_f64, f64::max);
+        if list.is_none() && widths.len() > 1 {
+            report.notes.push(format!("{} different {what} widths were read. A width read from these pictures is good to about {} mm (two pixels): give the {field} you build with, and each {what} within that of one of them takes it", widths.len(), (2.0 * coarsest).round() as i64));
+        }
+    }
     report.notes.push(match spec.column_mm {
         Some([short, long]) => format!("the columns stand where the drawings' axes cross on a wall, {short} x {long} mm as the owner gave: a proposal from the axes, not a structural design. No beam, slab or footing was generated, and later edits generate none"),
         None => "no structure was generated: no column size was given, so no column was placed (the axes are drawn), and later edits generate none. Structure comes from a design, not from the architecture drawings".into(),
@@ -632,6 +679,27 @@ mod tests {
     }
 
     #[test]
+    fn a_width_read_takes_the_owners_width_only_within_two_pixels_of_it() {
+        // 43.6 mm per pixel: two pixels are 87 mm.
+        let list = [800, 900, 1000];
+        assert_eq!(standard_width(920, &list, 87), Some(900));
+        assert_eq!(standard_width(960, &list, 87), Some(1000));
+        assert_eq!(standard_width(950, &list, 87), Some(900), "midway: the smaller, always the same one");
+        assert_eq!(standard_width(1180, &list, 87), None, "farther than the picture's reach from every width: kept as read");
+        assert_eq!(standard_width(740, &list, 87), Some(800));
+        assert_eq!(standard_width(700, &list, 87), None);
+        for note in [
+            "9 door(s) took a width of the owner's list (the width read was within 87 mm of it, two pixels of this drawing); 2 kept the width read, which is farther than that from every width of the list",
+            "0 window(s) took a width of the owner's list (the width read was within 87 mm of it, two pixels of this drawing); 9 kept the width read, which is farther than that from every width of the list",
+            "6 different door widths were read. A width read from these pictures is good to about 87 mm (two pixels): give the door widths you build with, and each door within that of one of them takes it",
+            "18 different window widths were read. A width read from these pictures is good to about 87 mm (two pixels): give the window widths you build with, and each window within that of one of them takes it",
+            "plan import: the owner's widths (door_widths_mm) must be a list of widths above zero, or left out",
+        ] {
+            assert!(crate::msgs::localize(note).1, "no Arabic for: {note}");
+        }
+    }
+
+    #[test]
     fn a_gap_end_with_no_wall_to_stand_on_is_refused_and_a_crossing_wall_serves_as_an_end() {
         let (doc, level) = box_with_a_gap();
         // From the partition's lower piece up to the top wall: its far end stands on the wall that crosses there.
@@ -711,6 +779,8 @@ mod tests {
             y_axes: ["1", "2"].iter().zip([0.0, 4000.0]).map(|(n, p)| Axis { name: (*n).into(), pos_mm: p }).collect(),
             bubble_radius_px: None,
             column_mm: None,
+            door_widths_mm: None,
+            window_widths_mm: None,
         }
     }
 

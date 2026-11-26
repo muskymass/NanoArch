@@ -4425,7 +4425,7 @@ drBind();
 // ---------------------------------------------------------------- plan import: pictures of plans, one per level, into a project
 // The page only picks the files, decodes them to pixels and shows what the engine found; the reading and the building are the engine's
 // (`plan_import_prepare`, `plan_import`). Nothing is filled in for the owner: heights, thickness and axis distances are typed here.
-const PI = { drawings: [], title: "", xn: "", xs: "", yn: "", ys: "", v: { storey: "", thick: "", door: "", win: "", sill: "", colb: "", colh: "" }, report: null };
+const PI = { drawings: [], title: "", xn: "", xs: "", yn: "", ys: "", v: { storey: "", thick: "", door: "", win: "", sill: "", colb: "", colh: "", dws: "", wws: "" }, report: null };
 const piHex = c => "#" + c.map(v => v.toString(16).padStart(2, "0")).join("");
 const piSame = (a, b) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 async function piDecode(p) {
@@ -4469,7 +4469,9 @@ function piAxes(names, gaps, side) {
 }
 async function piRun() {
   const num = v => (v === "" || v == null ? null : Number(v));
-  let spec; try { spec = { title: PI.title.trim(), storey_mm: num(PI.v.storey), wall_thickness_mm: num(PI.v.thick), door_height_mm: num(PI.v.door), window_height_mm: num(PI.v.win), window_sill_mm: num(PI.v.sill), column_mm: (PI.v.colb.trim() || PI.v.colh.trim()) ? [num(PI.v.colb), num(PI.v.colh)] : null, x_axes: piAxes(PI.xn, PI.xs, L("المحاور الأفقية", "Columns")), y_axes: piAxes(PI.yn, PI.ys, L("المحاور الرأسية", "Rows")) }; } catch (e) { toast(e.message, "err"); return; }
+  // A list of widths as typed (spaces or commas between them); empty means the owner gave none.
+  const widths = s => { const parts = String(s || "").split(/[\s,،]+/).filter(Boolean); return parts.length ? parts.map(Number) : null; };
+  let spec; try { spec = { title: PI.title.trim(), storey_mm: num(PI.v.storey), wall_thickness_mm: num(PI.v.thick), door_height_mm: num(PI.v.door), window_height_mm: num(PI.v.win), window_sill_mm: num(PI.v.sill), column_mm: (PI.v.colb.trim() || PI.v.colh.trim()) ? [num(PI.v.colb), num(PI.v.colh)] : null, door_widths_mm: widths(PI.v.dws), window_widths_mm: widths(PI.v.wws), x_axes: piAxes(PI.xn, PI.xs, L("المحاور الأفقية", "Columns")), y_axes: piAxes(PI.yn, PI.ys, L("المحاور الرأسية", "Rows")) }; } catch (e) { toast(e.message, "err"); return; }
   if (!PI.drawings.length) { toast(L("اختر المساقط أولاً", "Pick the plans first"), "err"); return; }
   const missing = PI.drawings.find(d => !d.walls.length); if (missing) { toast(L(`اختر لون الجدران في ${missing.file}`, `Choose the wall colour of ${missing.file}`), "err"); return; }
   const st = await call("status"); if (st.dirty && !(await uiAsk({ message: t("discard_q") }))) return;
@@ -4535,11 +4537,11 @@ function piBuild() {
     <label>${L("أسماء المحاور الرأسية، من الأعلى", "Row axis names, top down")}${inp("pi-yn", PI.yn, "AY6 AY5 AY4 AY3 AY2 AY1")}</label><label>${L("المسافات بينها (مم)", "Gaps between them (mm)")}${inp("pi-ys", PI.ys, "4654 4500 3200 4820 5472")}</label></div>
     <h2>${L("قيم المالك (مم)", "Owner's values (mm)")}</h2>
     <div class="pi-grid"><label>${L("اسم المشروع", "Project name")}<input id="pi-t" value="${esc(PI.title)}" dir="auto"></label><label>${L("ارتفاع الدور", "Storey height")}${inp("pi-storey", v.storey, "")}</label><label>${L("سماكة الجدران", "Wall thickness")}${inp("pi-thick", v.thick, "")}</label>
-    <label>${L("ارتفاع الباب", "Door height")}${inp("pi-door", v.door, "")}</label><label>${L("ارتفاع النافذة", "Window height")}${inp("pi-win", v.win, "")}</label><label>${L("جلسة النافذة", "Window sill")}${inp("pi-sill", v.sill, "")}</label><label title="${L("اختياري: بدونه لا توضع أعمدة. توضع الأعمدة حيث تتقاطع المحاور على جدار.", "Optional: without it no column is placed. Columns go where the axes cross on a wall.")}">${L("العمود: الضلع القصير", "Column: short side")}${inp("pi-colb", v.colb, "")}</label><label>${L("العمود: الضلع الطويل", "Column: long side")}${inp("pi-colh", v.colh, "")}</label></div>
+    <label>${L("ارتفاع الباب", "Door height")}${inp("pi-door", v.door, "")}</label><label>${L("ارتفاع النافذة", "Window height")}${inp("pi-win", v.win, "")}</label><label>${L("جلسة النافذة", "Window sill")}${inp("pi-sill", v.sill, "")}</label><label title="${L("اختياري: بدونه لا توضع أعمدة. توضع الأعمدة حيث تتقاطع المحاور على جدار.", "Optional: without it no column is placed. Columns go where the axes cross on a wall.")}">${L("العمود: الضلع القصير", "Column: short side")}${inp("pi-colb", v.colb, "")}</label><label>${L("العمود: الضلع الطويل", "Column: long side")}${inp("pi-colh", v.colh, "")}</label><label title="${L("اختياري: كل باب مقروء ضمن بكسلين من أحد هذه العروض يأخذه؛ وبدونها يبقى كل باب على العرض المقروء من الصورة.", "Optional: a door read within two pixels of one of these widths takes it; without them every door keeps the width read from the picture.")}">${L("عروض الأبواب (مم)", "Door widths (mm)")}${inp("pi-dws", v.dws, "")}</label><label title="${L("اختياري: كما في الأبواب.", "Optional: as for doors.")}">${L("عروض النوافذ (مم)", "Window widths (mm)")}${inp("pi-wws", v.wws, "")}</label></div>
     <div class="bar"><button id="pi-check">${L("تحقق من المحاور", "Check the axes")}</button><button id="pi-run" class="primary">${L("ابنِ المشروع", "Build the project")}</button></div>${piReport()}`;
   const bind = (id, f) => { const e = $(id); if (e) e.oninput = () => f(e.value); };
   bind("pi-xn", x => PI.xn = x); bind("pi-xs", x => PI.xs = x); bind("pi-yn", x => PI.yn = x); bind("pi-ys", x => PI.ys = x); bind("pi-t", x => PI.title = x);
-  bind("pi-storey", x => v.storey = x); bind("pi-thick", x => v.thick = x); bind("pi-door", x => v.door = x); bind("pi-win", x => v.win = x); bind("pi-sill", x => v.sill = x); bind("pi-colb", x => v.colb = x); bind("pi-colh", x => v.colh = x);
+  bind("pi-storey", x => v.storey = x); bind("pi-thick", x => v.thick = x); bind("pi-door", x => v.door = x); bind("pi-win", x => v.win = x); bind("pi-sill", x => v.sill = x); bind("pi-colb", x => v.colb = x); bind("pi-colh", x => v.colh = x); bind("pi-dws", x => v.dws = x); bind("pi-wws", x => v.wws = x);
   box.querySelectorAll("[data-gap]").forEach(b => b.onclick = () => { const [li, n, how] = b.dataset.gap.split(":"); PI.openLevel = Number(li); busy(() => piClose(Number(li), Number(n), how)); });
   $("pi-add").onclick = () => busy(piAdd); $("pi-run").onclick = () => busy(piRun); $("pi-check").onclick = () => busy(async () => { await piPrepare(); piBuild(); });
   box.querySelectorAll("[data-lv]").forEach(e => e.oninput = () => { PI.drawings[+e.dataset.lv].level = e.value; });
