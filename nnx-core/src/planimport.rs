@@ -202,6 +202,20 @@ pub fn snap_gap(model: &Model, level: Option<Id>, a: [i64; 2], b: [i64; 2]) -> R
     Ok(if horizontal { ([p, c], [q, c]) } else { ([c, p], [c, q]) })
 }
 
+/// The rooms of a level, each one rectangle, that are narrower (between the axes of their walls) than the narrowest door of that level:
+/// `(that door's width, the rooms' names)`. No door could stand in the short side of such a room: a duct, or the space between two walls
+/// drawn close together, most likely. The measure comes from the level's own doors, so a level without a door has none. The rooms are
+/// only named: whether one is a room is the owner's to say.
+pub fn narrow_rooms(model: &Model, level: Option<Id>) -> Option<(i64, Vec<String>)> {
+    let door = model.elements.values().filter(|e| e.kind == "Door" && e.level_id == level).filter_map(|e| e.props.get("width").and_then(|v| v.as_i64())).min()?;
+    let spaces: Vec<crate::typed::Space> = model.elements.values().filter(|e| e.kind == "Space" && e.level_id == level).filter_map(|e| e.typed::<crate::typed::Space>().ok()).collect();
+    // A room made of several rectangles is not judged by one of its parts.
+    let in_parts: std::collections::BTreeSet<&str> = spaces.iter().filter_map(annot::part_of).collect();
+    let mut names: Vec<String> = spaces.iter().filter(|s| annot::part_of(s).is_none() && !in_parts.contains(s.requirement_key.as_str()) && s.w.min(s.h) < door).map(|s| s.requirement_key.clone()).collect();
+    names.sort();
+    (!names.is_empty()).then_some((door, names))
+}
+
 /// Closes a gap with a door: the walls beside the gap become one wall across it (`draft::bridge`), and a door as wide as the gap, of
 /// the owner's door height, stands where the gap was. `thickness` and `height` are the owner's wall values, used only where no wall in
 /// line stands at either end. Returns the commands of the whole step and the door's id. Refused, with the reason, where the door does
@@ -491,6 +505,9 @@ pub fn import(spec: &Spec, drawings: &[Drawing]) -> Result<(Document, Report), S
             lr.notes.push(format!("{} of the gaps left open stand in {in_rows} row(s) of equal gaps side by side (a stair's treads, most likely): they are listed together", lr.open_gaps.iter().filter(|g| g.row.is_some()).count()));
         }
         lr.rooms = doc.model.elements.values().filter(|e| e.kind == "Space" && e.level_id == level && !e.props.contains_key("partOf")).count();
+        if let Some((door, names)) = narrow_rooms(&doc.model, level) {
+            lr.notes.push(format!("{} room(s) are narrower than the narrowest door read on this level ({door} mm): {}. A duct or the space between two walls, most likely: delete the ones that are not rooms", names.len(), names.join(", ")));
+        }
         lr.composite_rooms = composite;
         report.levels.push(lr);
     }
@@ -587,6 +604,31 @@ mod tests {
         d2.commit("thicker", Origin::User, vec![Command::SetProp { id: up, key: "thickness".into(), value: Some(serde_json::json!(300)) }]).unwrap();
         let e = close_gap_with_door(&d2.model, level2, [3000, 1090], [3000, 2910], 200, 3000, 2000).unwrap_err();
         assert!(e.contains("differ") && crate::msgs::localize(&e).1, "{e}");
+    }
+
+    #[test]
+    fn a_room_narrower_than_the_narrowest_door_of_its_level_is_named_and_a_level_without_a_door_names_none() {
+        // A 6 x 4 m box with two partitions 400 mm apart: three rooms, the middle one 400 mm between axes.
+        let mut doc = Document::default();
+        doc.commit("level", Origin::User, vec![Command::Create(element_of(&Level { name: "G".into(), index: 0, extra: Default::default() }, Source::User))]).unwrap();
+        let level = building::levels(&doc.model).first().map(|l| l.1);
+        let mut south = None;
+        for (a, b) in [([0, 0], [6000, 0]), ([6000, 0], [6000, 4000]), ([6000, 4000], [0, 4000]), ([0, 4000], [0, 0]), ([3000, 0], [3000, 4000]), ([3400, 0], [3400, 4000])] {
+            let (cmd, id) = draft::wall_command(&doc.model, level, &WallSpec { a, b, thickness: 200, height: 3000 }).unwrap();
+            doc.commit("wall", Origin::User, vec![cmd]).unwrap();
+            south = south.or(Some(id));
+        }
+        let sync = annot::rooms_sync(&doc.model, level);
+        doc.commit("rooms", Origin::User, sync.cmds).unwrap();
+        assert_eq!(narrow_rooms(&doc.model, level), None, "no door on the level: nothing to measure against");
+        let (cmds, _) = draft::opening_command(&doc.model, &draft::OpeningSpec { kind: draft::OpeningKind::Door, wall: south.unwrap(), offset: 1500, width: 900, height: 2000, sill: None, side: None }).unwrap();
+        doc.commit("door", Origin::User, cmds).unwrap();
+        let (door, names) = narrow_rooms(&doc.model, level).unwrap();
+        assert_eq!((door, names.len()), (900, 1));
+        let narrow = doc.model.elements.values().filter(|e| e.kind == "Space").filter_map(|e| e.typed::<crate::typed::Space>().ok()).find(|s| s.requirement_key == names[0]).unwrap();
+        assert_eq!(narrow.w, 400);
+        let note = format!("1 room(s) are narrower than the narrowest door read on this level (900 mm): {}. A duct or the space between two walls, most likely: delete the ones that are not rooms", names[0]);
+        assert!(crate::msgs::localize(&note).1, "the note has its Arabic");
     }
 
     #[test]

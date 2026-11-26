@@ -100,6 +100,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("bridging a gap: the walls at its two ends differ ({} x {} mm and {} x {} mm, thickness x height): close it with a wall and place the door by hand", "وصل فتحة: الجداران عند طرفيها مختلفان ({} × {} مم و{} × {} مم، سماكة × ارتفاع): أغلقها بجدار وضع الباب يدوياً"),
     ("bridging a gap: its two ends must share an x or a y, and differ", "وصل فتحة: طرفاها يجب أن يشتركا في x أو y وأن يختلفا"),
     ("closing a gap with a door: {} is missing or not above zero: it is the owner's to give, there is no default", "إغلاق فتحة بباب: {} ناقص أو ليس أكبر من صفر: يعطيه المالك ولا قيمة افتراضية له"),
+    ("{} room(s) are narrower than the narrowest door read on this level ({} mm): {}. A duct or the space between two walls, most likely: delete the ones that are not rooms", "{} غرفة أضيق من أضيق باب مقروء في هذا الدور ({} مم): {}. الأرجح أنها مجرى أو فراغ بين جدارين: احذف ما ليس غرفة منها"),
     ("closing a gap: no wall ends or crosses within {} mm of its start: draw it by hand", "إغلاق فتحة: لا جدار ينتهي أو يتقاطع ضمن {} مم من بدايتها: ارسمها يدوياً"),
     ("closing a gap: no wall ends or crosses within {} mm of its end: draw it by hand", "إغلاق فتحة: لا جدار ينتهي أو يتقاطع ضمن {} مم من نهايتها: ارسمها يدوياً"),
     ("closing a gap with a wall: the wall thickness is missing or not above zero: it is the owner's to give, there is no default", "إغلاق فتحة بجدار: سماكة الجدار ناقصة أو ليست أكبر من صفر: يعطيها المالك، ولا قيمة افتراضية"),
