@@ -4,7 +4,7 @@
 ; The installer is NOT code-signed, so Windows SmartScreen will warn on first run.
 
 #define AppName "NanoArch"
-#define AppVersion "2.11.0"
+#define AppVersion "2.11.1"
 #define AppPublisher "NanoNexus"
 #ifndef ExeSrc
   #error Pass the built executable: /DExeSrc="C:\path\to\nanoarch-app.exe"
