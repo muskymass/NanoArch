@@ -336,6 +336,37 @@ pub fn room_total(model: &Model, level: Option<Id>, sp: &Space) -> RoomTotal {
     }
 }
 
+/// A room as the code checks read it: the whole of it, whatever number of rectangles it is made of.
+pub struct WholeRoom {
+    /// The element of the room's first rectangle: what a finding names.
+    pub element: Id,
+    pub space: Space,
+    pub area: f64,
+    pub net_area: Option<f64>,
+    /// [w, h] of each rectangle, mm; the first is the room's own.
+    pub rects: Vec<[i64; 2]>,
+    /// Glass of the windows that belong to any of the rectangles, m2.
+    pub glazed_m2: f64,
+}
+
+/// Every room of the model once (a rectangle that is a part of a room is counted in that room).
+pub fn whole_rooms(model: &Model) -> Vec<WholeRoom> {
+    let spaces: Vec<(&Element, Space)> = model.elements.values().filter(|e| e.kind == Space::KIND).filter_map(|e| Some((e, e.typed::<Space>().ok()?))).collect();
+    let windows: Vec<crate::typed::Window> = model.elements.values().filter(|e| e.kind == crate::typed::Window::KIND).filter_map(|e| e.typed().ok()).collect();
+    spaces
+        .iter()
+        .filter(|(_, s)| part_of(s).is_none())
+        .map(|(e, s)| {
+            let parts: Vec<&Space> = spaces.iter().filter(|(o, p)| o.level_id == e.level_id && part_of(p) == Some(s.requirement_key.as_str())).map(|(_, p)| p).collect();
+            let all: Vec<&Space> = std::iter::once(s).chain(parts).collect();
+            let total = room_total(model, e.level_id, s);
+            // `fold` from zero: an empty float `sum` is -0.0 and prints as "-0.0%".
+            let glazed_m2 = windows.iter().filter(|w| all.iter().any(|p| p.requirement_key == w.room)).fold(0.0, |a, w| a + w.width as f64 * w.height as f64 / 1e6);
+            WholeRoom { element: e.id, space: s.clone(), area: total.area, net_area: total.net_area, rects: all.iter().map(|p| [p.w, p.h]).collect(), glazed_m2 }
+        })
+        .collect()
+}
+
 // ------------------------------------------------------------------ rooms from enclosed walls
 
 #[derive(Debug, Clone, Default)]

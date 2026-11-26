@@ -273,10 +273,33 @@ impl App {
         let findings = r["findings"].as_array().cloned().unwrap_or_default();
         let skipped = r["skipped"].as_array().cloned().unwrap_or_default();
         let layers = r["layers"].as_array().map(|l| l.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("; ")).unwrap_or_default();
-        let frows: String = findings.iter().map(|f| format!("<tr><td>{}</td><td>{}</td><td>{}</td></tr>", esc(f["rule"].as_str().unwrap_or("")), esc(f["clause"].as_str().unwrap_or("")), esc(f["message"].as_str().unwrap_or("")))).collect();
-        let srows: String = skipped.iter().map(|k| format!("<tr><td>{}</td><td>{}</td><td>{}</td></tr>", esc(k["rule"].as_str().unwrap_or("")), esc(k["param"].as_str().unwrap_or("")), k["elements"].as_array().map_or(0, Vec::len))).collect();
+        let text = |v: &Value, k: &str| esc(v[k].as_str().unwrap_or(""));
+        // The sentence in the sheet's language; a rule with no Arabic sentence keeps its own, marked as English.
+        let sentence = |v: &Value| match v["message_ar"].as_str() {
+            Some(a) if arabic => esc(a),
+            _ => format!("<bdi dir=\"ltr\">{}</bdi>", text(v, "message")),
+        };
+        let frows: String = findings.iter().map(|f| format!("<tr><td>{}</td><td>{}<br><small><bdi dir=\"ltr\">{}</bdi></small></td><td><bdi dir=\"ltr\">{}</bdi></td></tr>", text(f, "room"), sentence(f), text(f, "rule"), text(f, "clause"))).collect();
+        let srows: String = skipped
+            .iter()
+            .map(|k| {
+                let why = match k["param"].as_str() {
+                    Some("") => t("غرفة من عدة مستطيلات أحدها لا يستوفي القاعدة وحده: لا يُحكم عليها", "A room of several rectangles, one of which does not pass alone: not judged").to_string(),
+                    Some("min") if k["message_ar"].is_string() => t("الحد الأدنى (يُدخل مع مصدره)", "The minimum (entered with its source)").to_string(),
+                    p => format!("<bdi dir=\"ltr\">{}</bdi>", esc(p.unwrap_or(""))),
+                };
+                format!("<tr><td>{}<br><small><bdi dir=\"ltr\">{}</bdi></small></td><td>{why}</td><td>{}</td></tr>", sentence(k), text(k, "rule"), k["elements"].as_array().map_or(0, Vec::len))
+            })
+            .collect();
+        // A room whose use nobody stated is outside every room rule: the statement says how many there are.
+        let unstated = self.doc.as_ref().map_or(0, |d| nnx_core::annot::whole_rooms(&d.model).iter().filter(|r| r.space.func == "room").count());
+        let unstated = match (unstated, arabic) {
+            (0, _) => String::new(),
+            (n, true) => format!("<p><b>غرف لم يُحدَّد نوعها: {n}. لا تسري عليها قواعد المساحة والعرض والإضاءة، فهي غير مفحوصة.</b></p>"),
+            (n, false) => format!("<p><b>Rooms with no stated use: {n}. No area, width or daylight rule applies to them, so they are not checked.</b></p>"),
+        };
         let frag = format!(
-            "<section class=\"sheet\" style=\"padding:8mm\"><h1>{}</h1><p>{}</p><p>{}: <bdi dir=\"ltr\">{}</bdi></p><p>{}: {} · {}: {} · {}: {}</p>             <h2>{}</h2><table><tr><th>{}</th><th>{}</th><th>{}</th></tr>{}</table><h2>{}</h2><table><tr><th>{}</th><th>{}</th><th>{}</th></tr>{}</table></section>",
+            "<section class=\"sheet\" style=\"padding:8mm\"><h1>{}</h1><p>{}</p><p>{}: <bdi dir=\"ltr\">{}</bdi></p><p>{}: {} · {}: {} · {}: {}</p>{unstated}<h2>{}</h2><table><tr><th>{}</th><th>{}</th><th>{}</th></tr>{}</table><h2>{}</h2><table><tr><th>{}</th><th>{}</th><th>{}</th></tr>{}</table></section>",
             t("بيان فحص الكود", "Code-check statement"),
             t("فحص أولي لا يغني عن مهندس مرخّص ولا عن الجهة المعتمدة. «لم تُفحص» تعني أن القاعدة لم تعمل لنقص قيمة، ولا تعني الامتثال.", "A preliminary check; it does not replace a licensed engineer or the approving authority. \"Not run\" means the rule did not execute for a missing value; it does not mean compliance."),
             t("الحزم المستعملة", "Rule layers used"),
@@ -288,13 +311,13 @@ impl App {
             t("قواعد لم تُفحص", "Rules not run"),
             skipped.len(),
             t("المخالفات", "Findings"),
-            t("القاعدة", "Rule"),
+            t("الغرفة", "Room"),
+            t("المخالفة والقاعدة", "Finding and rule"),
             t("البند", "Clause"),
-            t("الرسالة", "Message"),
             if frows.is_empty() { format!("<tr><td colspan=\"3\">{}</td></tr>", t("لا شيء", "None")) } else { frows },
             t("قواعد لم تُفحص", "Rules not run"),
             t("القاعدة", "Rule"),
-            t("القيمة الناقصة", "Missing value"),
+            t("سبب عدم الفحص", "Why not run"),
             t("الغرف غير المفحوصة", "Rooms unchecked"),
             if srows.is_empty() { format!("<tr><td colspan=\"3\">{}</td></tr>", t("لا شيء", "None")) } else { srows },
         );
@@ -1711,8 +1734,8 @@ impl App {
             "checked": r.checked,
             "layers": r.layers,
             "overlays": reports,
-            "findings": r.findings.iter().map(|f| json!({ "rule": f.rule_id, "clause": f.clause, "layer": f.layer, "severity": sev(f.severity), "message": f.message, "element": f.element.to_string() })).collect::<Vec<_>>(),
-            "skipped": r.skipped.iter().map(|s| json!({ "rule": s.rule_id, "clause": s.clause, "message": s.message, "param": s.param, "reason": s.reason, "elements": self.skipped_rooms(&s.elements) })).collect::<Vec<_>>(),
+            "findings": r.findings.iter().map(|f| json!({ "room": self.skipped_rooms(&[f.element]).first().map(|r| r["name"].clone()), "message_ar": nnx_core::sbc::rule_message_ar(&f.rule_id, &f.message), "rule": f.rule_id, "clause": f.clause, "layer": f.layer, "severity": sev(f.severity), "message": f.message, "element": f.element.to_string() })).collect::<Vec<_>>(),
+            "skipped": r.skipped.iter().map(|s| json!({ "message_ar": nnx_core::sbc::rule_message_ar(&s.rule_id, &s.message), "rule": s.rule_id, "clause": s.clause, "message": s.message, "param": s.param, "reason": s.reason, "elements": self.skipped_rooms(&s.elements) })).collect::<Vec<_>>(),
         }))
     }
 
@@ -1764,7 +1787,8 @@ impl App {
             .filter_map(|e| e.typed::<nnx_core::typed::Space>().ok().map(|s| (e, s)))
             .map(|(e, s)| {
                 let name = nnx_core::annot::room_name(&s, &labels).unwrap_or(s.requirement_key.clone());
-                json!({ "id": e.id.to_string(), "name": name, "area": s.area, "glazing_ratio": s.glazing_ratio })
+                let area = nnx_core::annot::room_total(&doc.model, e.level_id, &s).area;
+                json!({ "id": e.id.to_string(), "name": name, "area": area, "glazing_ratio": s.glazing_ratio })
             })
             .collect()
     }
@@ -11060,5 +11084,22 @@ COL-1,10,10
         assert!(r["svg"].as_str().unwrap().contains("مجلس الرجال"), "the plan shows the name");
         let u = app.handle("undo", &json!({})).unwrap();
         assert!(u["rooms"][0]["label"].is_null() && u["rooms"][0]["func"] == room["func"], "{}", u["rooms"]);
+    }
+
+    #[test]
+    fn the_arabic_statement_names_the_room_in_arabic_and_counts_the_rooms_with_no_use() {
+        let mut app = blank_app();
+        app.handle("project_blank", &json!({})).unwrap();
+        for (a, b) in [([0, 0], [2000, 0]), ([2000, 0], [2000, 2000]), ([2000, 2000], [0, 2000]), ([0, 2000], [0, 0]), ([2000, 0], [5000, 0]), ([5000, 0], [5000, 2000]), ([5000, 2000], [2000, 2000])] {
+            app.handle("draft_wall", &json!({ "a": a, "b": b, "thickness": 200, "height": 3000 })).unwrap();
+        }
+        let id = app.rooms_json()[0]["id"].clone();
+        app.handle("set_room", &json!({ "id": id, "name": "غرفة الضيوف", "func": "bedroom" })).unwrap();
+        let html = app.handle("pdf_html", &json!({})).unwrap()["html"].as_str().unwrap().to_string();
+        assert!(html.contains("<td>غرفة الضيوف</td><td>نوم: مساحة الأرضية أقل من الحد الأدنى 6.5 م²<br>"), "the room and the finding in Arabic");
+        assert!(html.contains("غرف لم يُحدَّد نوعها: 1."), "the other room is declared unchecked");
+        assert!(!html.contains("floor area is below") && !html.contains("could not be evaluated"));
+        let en = app.handle("pdf_html", &json!({ "lang": "en" })).unwrap()["html"].as_str().unwrap().to_string();
+        assert!(en.contains("bedroom: floor area is below the minimum of 6.5 m2") && en.contains("Rooms with no stated use: 1."));
     }
 }

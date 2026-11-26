@@ -29,7 +29,7 @@ fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-fn func_ar(f: &str) -> &str {
+pub(crate) fn func_ar(f: &str) -> &str {
     match f {
         "majlis" => "مجلس",
         "living" => "صالة",

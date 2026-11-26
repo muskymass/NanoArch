@@ -274,15 +274,51 @@ impl Scope for ElScope<'_> {
     }
 }
 
+/// What the rules judge: every element, except that a room made of several rectangles is judged once. Its element carries the whole
+/// room's areas and no `w` or `h`; the rectangles' [w, h] come beside it (empty for every other element). A room with no stored
+/// `glazingRatio` gets the one measured from its windows.
+fn judged_elements(model: &Model) -> Vec<(Element, Vec<[i64; 2]>)> {
+    let mut rooms: BTreeMap<Id, crate::annot::WholeRoom> = crate::annot::whole_rooms(model).into_iter().map(|r| (r.element, r)).collect();
+    model
+        .elements
+        .values()
+        .filter_map(|e| {
+            if e.kind != "Space" {
+                return Some((e.clone(), Vec::new()));
+            }
+            let Some(room) = rooms.remove(&e.id) else {
+                // A part is judged with its room. A space that does not read as a room is left as it is.
+                let part = e.typed::<crate::typed::Space>().is_ok_and(|s| crate::annot::part_of(&s).is_some());
+                return (!part).then(|| (e.clone(), Vec::new()));
+            };
+            let mut el = e.clone();
+            if !el.props.contains_key("glazingRatio") && room.area > 0.0 {
+                el.props.insert("glazingRatio".into(), Value::from(room.glazed_m2 / room.area));
+            }
+            if room.rects.len() < 2 {
+                return Some((el, Vec::new()));
+            }
+            el.props.insert("area".into(), Value::from(room.area));
+            if let Some(n) = room.net_area {
+                el.props.insert("netArea".into(), Value::from(n));
+            }
+            el.props.remove("w");
+            el.props.remove("h");
+            Some((el, room.rects))
+        })
+        .collect()
+}
+
 /// Runs every rule over the model. Deterministic: findings are ordered by rule id, then element id.
 pub fn check(model: &Model, rules: &RuleSet) -> Report {
     let mut report = Report { layers: rules.layers.clone(), ..Default::default() };
+    let judged = judged_elements(model);
     for c in rules.rules.values() {
         if let Some((name, _)) = c.def.params.iter().find(|(_, p)| p.value.is_none()) {
             // The filter is evaluated without parameters: a filter that needs one counts as "not applicable", as in a run.
-            let elements = model
-                .elements
-                .values()
+            let elements = judged
+                .iter()
+                .map(|(e, _)| e)
                 .filter(|e| e.kind == c.def.applies_to.kind)
                 .filter(|e| {
                     let scope = ElScope { el: e, params: &c.def.params };
@@ -300,7 +336,8 @@ pub fn check(model: &Model, rules: &RuleSet) -> Report {
             });
             continue;
         }
-        for el in model.elements.values().filter(|e| e.kind == c.def.applies_to.kind) {
+        let mut not_judged = Vec::new();
+        for (el, rects) in judged.iter().filter(|(e, _)| e.kind == c.def.applies_to.kind) {
             let scope = ElScope { el, params: &c.def.params };
             if let Some(f) = &c.filter {
                 // A filter that cannot be evaluated (missing property) means "not applicable".
@@ -308,8 +345,23 @@ pub fn check(model: &Model, rules: &RuleSet) -> Report {
                     continue;
                 }
             }
+            let mut outcome = c.check.eval(&scope);
+            // A room in parts has no one width. A check that asks for it passes when every rectangle passes; otherwise it is not judged.
+            if outcome.is_err() && !rects.is_empty() {
+                let all_pass = rects.iter().all(|[w, h]| {
+                    let mut one = el.clone();
+                    one.props.insert("w".into(), Value::from(*w));
+                    one.props.insert("h".into(), Value::from(*h));
+                    matches!(c.check.eval(&ElScope { el: &one, params: &c.def.params }), Ok(Val::Bool(true)))
+                });
+                if !all_pass {
+                    not_judged.push(el.id);
+                    continue;
+                }
+                outcome = Ok(Val::Bool(true));
+            }
             report.checked += 1;
-            match c.check.eval(&scope) {
+            match outcome {
                 Ok(Val::Bool(true)) => {}
                 Ok(Val::Bool(false)) => report.findings.push(finding(c, el, &scope, c.def.severity, c.def.message.clone())),
                 Ok(other) => report.findings.push(finding(
@@ -324,6 +376,16 @@ pub fn check(model: &Model, rules: &RuleSet) -> Report {
                     ..finding(c, el, &scope, Severity::Info, format!("could not be evaluated: {e}"))
                 }),
             }
+        }
+        if !not_judged.is_empty() {
+            report.skipped.push(Skipped {
+                rule_id: c.def.id.clone(),
+                clause: c.def.clause.clone(),
+                message: c.def.message.clone(),
+                param: String::new(),
+                reason: format!("{} room(s) of several rectangles: not judged, because one rectangle alone does not pass", not_judged.len()),
+                elements: not_judged,
+            });
         }
     }
     report.findings.sort_by(|a, b| (&a.rule_id, a.element).cmp(&(&b.rule_id, b.element)));

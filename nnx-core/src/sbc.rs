@@ -15,7 +15,7 @@ use crate::model::{Id, Model};
 use crate::presets;
 use crate::project::{self, NanoArchProject};
 use crate::rules::Severity;
-use crate::typed::{Space, Window};
+use crate::typed::Space;
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -123,6 +123,26 @@ pub fn sourced_pack_json() -> String {
         }));
     }
     json!({ "id": "SBC-SOURCED", "edition": "values read from the files in the code folder", "version": "1", "rules": rules }).to_string()
+}
+
+/// The Arabic sentence of a rule of the sourced pack. `None` for any other rule, and for a rule whose message another layer
+/// replaced: only the sentence the pack itself wrote is translated.
+pub fn rule_message_ar(rule_id: &str, message: &str) -> Option<String> {
+    let pack: serde_json::Value = serde_json::from_str(&sourced_pack_json()).ok()?;
+    let rule = pack["rules"].as_array()?.iter().find(|r| r["id"] == rule_id)?;
+    if rule["message"].as_str() != Some(message) {
+        return None;
+    }
+    let (kind, func) = rule_id.strip_prefix("sbc.")?.split_once('.')?;
+    let func = crate::printdoc::func_ar(func);
+    let min = rule["params"]["min"]["value"].as_f64();
+    Some(match (kind, min) {
+        ("room_area", Some(v)) => format!("{func}: مساحة الأرضية أقل من الحد الأدنى {v} م²"),
+        ("room_width", Some(v)) => format!("{func}: الضلع الأضيق أقل من الحد الأدنى {v} م"),
+        ("daylight", Some(v)) => format!("{func}: الزجاج أقل من {}% من مساحة الأرضية", (v * 10_000.0).round() / 100.0),
+        ("daylight", None) => format!("{func}: الزجاج أقل من الحد الذي تُدخله"),
+        _ => return None,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -308,17 +328,24 @@ fn thermal(p: &NanoArchProject, pid: Id, r: &mut SbcReport) {
 /// Minimum area and width of each room function, where the code text gives one.
 fn rooms(model: &Model, r: &mut SbcReport) {
     let mut missing: BTreeSet<String> = BTreeSet::new();
-    for e in model.elements.values().filter(|e| e.kind == "Space") {
-        let Ok(s) = e.typed::<Space>() else { continue };
+    for room in crate::annot::whole_rooms(model) {
+        let s = &room.space;
+        let narrowest = room.rects.iter().map(|r| r[0].min(r[1])).min().unwrap_or(0) as f64 / 1000.0;
         for (kind, en, ar, value, unit) in [
-            ("room_min_area_m2", "area", "المساحة", s.area, "m2"),
-            ("room_min_width_m", "width", "العرض", s.w.min(s.h) as f64 / 1000.0, "m"),
+            ("room_min_area_m2", "area", "المساحة", room.area, "m2"),
+            ("room_min_width_m", "width", "العرض", narrowest, "m"),
         ] {
             let id = format!("{kind}.{}", s.func);
             let Some(v) = code_value(&id) else {
                 missing.insert(id);
                 continue;
             };
+            // Every point of a room lies in one of its rectangles, so all of them wide enough means the room is. A narrow one may
+            // only be how the shape was cut into rectangles: that is neither a pass nor a failure.
+            if kind == "room_min_width_m" && room.rects.len() > 1 && value + 1e-9 < v.value {
+                r.skip(&format!("{id}:{}", s.requirement_key), format!("{} ({}): a room of several rectangles, one of them narrower than {} m: its width is not judged", s.requirement_key, s.func, v.value), format!("{} ({}): غرفة من عدة مستطيلات أحدها أضيق من {} م: لا يُحكم على عرضها", s.requirement_key, s.func, v.value));
+                continue;
+            }
             r.checked += 1;
             if value + 1e-9 < v.value {
                 r.violations.push(Violation {
@@ -327,7 +354,7 @@ fn rooms(model: &Model, r: &mut SbcReport) {
                     clause: v.clause.into(),
                     source: cite(v),
                     severity: Severity::Error,
-                    element: Some(e.id),
+                    element: Some(room.element),
                     en: format!("{} ({}): {en} {value:.2} {unit} is below the minimum {} {unit}", s.requirement_key, s.func, v.value),
                     ar: format!("{} ({}): {ar} {value:.2} {unit} أقل من الحد الأدنى {} {unit}", s.requirement_key, s.func, v.value),
                     value,
@@ -344,23 +371,15 @@ fn rooms(model: &Model, r: &mut SbcReport) {
 /// Glazed area over floor area of rooms that need daylight, where the code text gives a ratio.
 fn daylight(model: &Model, r: &mut SbcReport) {
     let mut missing: BTreeSet<String> = BTreeSet::new();
-    for e in model.elements.values().filter(|e| e.kind == "Space") {
-        let Ok(s) = e.typed::<Space>() else { continue };
+    for room in crate::annot::whole_rooms(model) {
+        let s = &room.space;
         let id = format!("daylight_min_ratio.{}", s.func);
         let Some(v) = code_value(&id) else {
             missing.insert(id);
             continue;
         };
-        let glazed: f64 = model
-            .elements
-            .values()
-            .filter(|w| w.kind == "Window")
-            .filter_map(|w| w.typed::<Window>().ok())
-            .filter(|w| w.room == s.requirement_key)
-            .map(|w| w.width as f64 * w.height as f64 / 1e6)
-            .sum();
         r.checked += 1;
-        let ratio = glazed / s.area;
+        let ratio = room.glazed_m2 / room.area;
         if ratio + 1e-9 < v.value {
             r.violations.push(Violation {
                 rule: id,
@@ -368,7 +387,7 @@ fn daylight(model: &Model, r: &mut SbcReport) {
                 clause: v.clause.into(),
                 source: cite(v),
                 severity: Severity::Error,
-                element: Some(e.id),
+                element: Some(room.element),
                 en: format!("{} ({}): glazing is {:.1}% of the floor area; the minimum is {:.1}%", s.requirement_key, s.func, ratio * 100.0, v.value * 100.0),
                 ar: format!("{} ({}): الزجاج {:.1}% من مساحة الأرضية، والحد الأدنى {:.1}%", s.requirement_key, s.func, ratio * 100.0, v.value * 100.0),
                 value: ratio,
