@@ -94,8 +94,8 @@ pub fn sourced_pack_json() -> String {
         let applies = json!({ "kind": "Space", "where": format!("func == \"{func}\"") });
         rules.push(json!({
             "id": format!("sbc.room_area.{func}"), "clause": area.clause, "applies_to": applies,
-            "check": "area >= param.min", "params": { "min": { "value": area.value, "source": src(area) } },
-            "severity": "error", "message": format!("{func}: floor area is below the minimum of {} m2", area.value),
+            "check": "netArea >= param.min", "params": { "min": { "value": area.value, "source": src(area) } },
+            "severity": "error", "message": format!("{func}: net floor area is below the minimum of {} m2", area.value),
         }));
         if let Some(w) = code_value(&format!("room_min_width_m.{func}")) {
             rules.push(json!({
@@ -137,7 +137,7 @@ pub fn rule_message_ar(rule_id: &str, message: &str) -> Option<String> {
     let func = crate::printdoc::func_ar(func);
     let min = rule["params"]["min"]["value"].as_f64();
     Some(match (kind, min) {
-        ("room_area", Some(v)) => format!("{func}: مساحة الأرضية أقل من الحد الأدنى {v} م²"),
+        ("room_area", Some(v)) => format!("{func}: المساحة الصافية أقل من الحد الأدنى {v} م²"),
         ("room_width", Some(v)) => format!("{func}: الضلع الأضيق أقل من الحد الأدنى {v} م"),
         ("daylight", Some(v)) => format!("{func}: الزجاج أقل من {}% من مساحة الأرضية", (v * 10_000.0).round() / 100.0),
         ("daylight", None) => format!("{func}: الزجاج أقل من الحد الذي تُدخله"),
@@ -332,7 +332,8 @@ fn rooms(model: &Model, r: &mut SbcReport) {
         let s = &room.space;
         let narrowest = room.rects.iter().map(|r| r[0].min(r[1])).min().unwrap_or(0) as f64 / 1000.0;
         for (kind, en, ar, value, unit) in [
-            ("room_min_area_m2", "area", "المساحة", room.area, "m2"),
+            // A room with no net area has no wall on any side: its gross area is its net area.
+            ("room_min_area_m2", "net area", "المساحة الصافية", room.net_area.unwrap_or(room.area), "m2"),
             ("room_min_width_m", "width", "العرض", narrowest, "m"),
         ] {
             let id = format!("{kind}.{}", s.func);

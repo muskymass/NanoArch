@@ -275,8 +275,9 @@ impl Scope for ElScope<'_> {
 }
 
 /// What the rules judge: every element, except that a room made of several rectangles is judged once. Its element carries the whole
-/// room's areas and no `w` or `h`; the rectangles' [w, h] come beside it (empty for every other element). A room with no stored
-/// `glazingRatio` gets the one measured from its windows.
+/// room's areas and no `w` or `h`; the rectangles' [w, h] come beside it (empty for every other element). Every room carries
+/// `netArea` (its gross area when it has none: no wall on any side), and one with no stored `glazingRatio` gets the one measured
+/// from its windows.
 fn judged_elements(model: &Model) -> Vec<(Element, Vec<[i64; 2]>)> {
     let mut rooms: BTreeMap<Id, crate::annot::WholeRoom> = crate::annot::whole_rooms(model).into_iter().map(|r| (r.element, r)).collect();
     model
@@ -295,13 +296,11 @@ fn judged_elements(model: &Model) -> Vec<(Element, Vec<[i64; 2]>)> {
             if !el.props.contains_key("glazingRatio") && room.area > 0.0 {
                 el.props.insert("glazingRatio".into(), Value::from(room.glazed_m2 / room.area));
             }
+            el.props.insert("netArea".into(), Value::from(room.net_area.unwrap_or(room.area)));
             if room.rects.len() < 2 {
                 return Some((el, Vec::new()));
             }
             el.props.insert("area".into(), Value::from(room.area));
-            if let Some(n) = room.net_area {
-                el.props.insert("netArea".into(), Value::from(n));
-            }
             el.props.remove("w");
             el.props.remove("h");
             Some((el, room.rects))

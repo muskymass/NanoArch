@@ -90,3 +90,17 @@ fn every_rule_of_the_sourced_pack_has_an_arabic_sentence_and_a_replaced_one_does
     }
     assert_eq!(nnx_core::sbc::rule_message_ar("sbc.daylight.bedroom", "bedroom: glazing is below 0.08 of the floor area").unwrap(), "نوم: الزجاج أقل من 8% من مساحة الأرضية");
 }
+
+#[test]
+fn the_smallest_area_is_compared_with_the_net_area() {
+    // 3 x 2.4 m = 7.2 m2 between the wall axes, above 6.5; 6.16 m2 inside the walls, below it.
+    let mut doc = bedroom(&[[0, 0, 3000, 2400]], 1000);
+    let id = nnx_core::annot::whole_rooms(&doc.model)[0].element;
+    assert!(rules_of(&doc).findings.iter().all(|f| f.rule_id != "sbc.room_area.bedroom"), "no walls: gross is net");
+    doc.commit("net", Origin::User, vec![Command::SetProp { id, key: "netArea".into(), value: Some(serde_json::json!(6.16)) }]).unwrap();
+    let f = rules_of(&doc).findings;
+    assert!(f.iter().any(|f| f.rule_id == "sbc.room_area.bedroom" && f.message == "bedroom: net floor area is below the minimum of 6.5 m2"), "{f:?}");
+    let s = nnx_core::sbc::check(&doc.model);
+    let v = s.violations.iter().find(|v| v.rule == "room_min_area_m2.bedroom").expect("the built-in check agrees");
+    assert!((v.value - 6.16).abs() < 1e-9 && v.ar.contains("المساحة الصافية 6.16"), "{} {}", v.value, v.ar);
+}

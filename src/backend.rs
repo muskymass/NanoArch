@@ -11096,10 +11096,10 @@ COL-1,10,10
         let id = app.rooms_json()[0]["id"].clone();
         app.handle("set_room", &json!({ "id": id, "name": "غرفة الضيوف", "func": "bedroom" })).unwrap();
         let html = app.handle("pdf_html", &json!({})).unwrap()["html"].as_str().unwrap().to_string();
-        assert!(html.contains("<td>غرفة الضيوف</td><td>نوم: مساحة الأرضية أقل من الحد الأدنى 6.5 م²<br>"), "the room and the finding in Arabic");
+        assert!(html.contains("<td>غرفة الضيوف</td><td>نوم: المساحة الصافية أقل من الحد الأدنى 6.5 م²<br>"), "the room and the finding in Arabic");
         assert!(html.contains("غرف لم يُحدَّد نوعها: 1."), "the other room is declared unchecked");
-        assert!(!html.contains("floor area is below") && !html.contains("could not be evaluated"));
+        assert!(!html.contains("area is below") && !html.contains("could not be evaluated"));
         let en = app.handle("pdf_html", &json!({ "lang": "en" })).unwrap()["html"].as_str().unwrap().to_string();
-        assert!(en.contains("bedroom: floor area is below the minimum of 6.5 m2") && en.contains("Rooms with no stated use: 1."));
+        assert!(en.contains("bedroom: net floor area is below the minimum of 6.5 m2") && en.contains("Rooms with no stated use: 1."));
     }
 }
