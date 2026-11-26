@@ -96,6 +96,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("{} door(s) or window(s) stand in a column and can be moved clear of it", "{} باب أو نافذة تقف في عمود ويمكن إبعادها عنه"),
     ("{} door(s) or window(s) stand in a column and are not moved clear of it: check each on the drawing", "{} باب أو نافذة تقف في عمود ولا تُبعد عنه: راجع كلاً منها على الرسم"),
     ("{} door(s) or window(s) stand in a column: {} can be moved clear of it and {} are not moved: check each on the drawing", "{} باب أو نافذة تقف في عمود: {} يمكن إبعادها عنه و{} لا تُبعد: راجع كلاً منها على الرسم"),
+    ("{} of the gaps left open stand in {} row(s) of equal gaps side by side (a stair's treads, most likely): they are listed together", "{} من الفتحات المتروكة تقف في {} صف من فتحات متساوية متجاورة (درجات سلم على الأرجح): أُدرجت مجتمعة"),
     ("closing a gap: no wall ends or crosses within {} mm of its start: draw it by hand", "إغلاق فتحة: لا جدار ينتهي أو يتقاطع ضمن {} مم من بدايتها: ارسمها يدوياً"),
     ("closing a gap: no wall ends or crosses within {} mm of its end: draw it by hand", "إغلاق فتحة: لا جدار ينتهي أو يتقاطع ضمن {} مم من نهايتها: ارسمها يدوياً"),
     ("closing a gap with a wall: the wall thickness is missing or not above zero: it is the owner's to give, there is no default", "إغلاق فتحة بجدار: سماكة الجدار ناقصة أو ليست أكبر من صفر: يعطيها المالك، ولا قيمة افتراضية"),

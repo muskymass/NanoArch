@@ -109,6 +109,48 @@ pub struct OpenGap {
     pub kind: &'static str,
     /// Its two ends in the picture: x1, y1, x2, y2 (pixels).
     pub px: [f64; 4],
+    /// The row of equal gaps it stands in (from 1), when it is one of several side by side: see `rows_of_equal_gaps`.
+    pub row: Option<usize>,
+}
+
+/// A row of equal gaps: at least this many, each spanning the same stretch (within the tolerance) and no farther from the next than
+/// the pitch. What a stair's treads leave when they are drawn in the wall colour. These only decide how the report lists the gaps:
+/// nothing is built or left out because of them.
+pub const GAP_ROW_MIN: usize = 4;
+pub const GAP_ROW_SPAN_TOL_MM: i64 = 100;
+pub const GAP_ROW_PITCH_MAX_MM: i64 = 1000;
+
+/// Marks the gaps that stand in a row of equal gaps with the row's number, and returns how many rows there are.
+pub fn rows_of_equal_gaps(gaps: &mut [OpenGap]) -> usize {
+    // (horizontal, where it starts along its line, where it ends, its line's position, index)
+    let mut keyed: Vec<(bool, i64, i64, i64, usize)> = gaps.iter().enumerate().map(|(i, g)| if g.a[1] == g.b[1] { (true, g.a[0].min(g.b[0]), g.a[0].max(g.b[0]), g.a[1], i) } else { (false, g.a[1].min(g.b[1]), g.a[1].max(g.b[1]), g.a[0], i) }).collect();
+    keyed.sort_by_key(|k| (k.0, k.3, k.4));
+    let mut rows = 0;
+    let mut used = vec![false; gaps.len()];
+    for s in 0..keyed.len() {
+        if used[keyed[s].4] {
+            continue;
+        }
+        // The gaps after this one, in order across the row, that span the same stretch, each within the pitch of the one before.
+        let mut run = vec![s];
+        for t in s + 1..keyed.len() {
+            let (first, last, k) = (keyed[s], keyed[run[run.len() - 1]], keyed[t]);
+            if k.0 != first.0 || k.3 - last.3 > GAP_ROW_PITCH_MAX_MM {
+                break;
+            }
+            if !used[k.4] && (k.1 - first.1).abs() <= GAP_ROW_SPAN_TOL_MM && (k.2 - first.2).abs() <= GAP_ROW_SPAN_TOL_MM {
+                run.push(t);
+            }
+        }
+        if run.len() >= GAP_ROW_MIN {
+            rows += 1;
+            for t in run {
+                used[keyed[t].4] = true;
+                gaps[keyed[t].4].row = Some(rows);
+            }
+        }
+    }
+    rows
 }
 
 /// How far (mm) an end of a gap may stand from the wall end, or from the face of the crossing wall, that it is closed onto.
@@ -423,7 +465,11 @@ pub fn import(spec: &Spec, drawings: &[Drawing]) -> Result<(Document, Report), S
         lr.gaps_left_open = r.walls.left_open.len();
         for (n, g) in r.walls.left_open.iter().enumerate() {
             let (a, b, px) = if g.horizontal { ([wx(g.lo_px), wy(g.axis_px)], [wx(g.hi_px), wy(g.axis_px)], [g.lo_px, g.axis_px, g.hi_px, g.axis_px]) } else { ([wx(g.axis_px), wy(g.hi_px)], [wx(g.axis_px), wy(g.lo_px)], [g.axis_px, g.lo_px, g.axis_px, g.hi_px]) };
-            lr.open_gaps.push(OpenGap { n: n + 1, a, b, width_mm: (((g.hi_px - g.lo_px) * s) / 10.0).round() as i64 * 10, kind: if g.kind == OpeningKind::Passage { "passage" } else { "unclear" }, px });
+            lr.open_gaps.push(OpenGap { n: n + 1, a, b, width_mm: (((g.hi_px - g.lo_px) * s) / 10.0).round() as i64 * 10, kind: if g.kind == OpeningKind::Passage { "passage" } else { "unclear" }, px, row: None });
+        }
+        let in_rows = rows_of_equal_gaps(&mut lr.open_gaps);
+        if in_rows > 0 {
+            lr.notes.push(format!("{} of the gaps left open stand in {in_rows} row(s) of equal gaps side by side (a stair's treads, most likely): they are listed together", lr.open_gaps.iter().filter(|g| g.row.is_some()).count()));
         }
         lr.rooms = doc.model.elements.values().filter(|e| e.kind == "Space" && e.level_id == level && !e.props.contains_key("partOf")).count();
         lr.composite_rooms = composite;
@@ -459,6 +505,20 @@ mod tests {
         let sync = annot::rooms_sync(&doc.model, level);
         doc.commit("rooms", Origin::User, sync.cmds).unwrap();
         doc.model.elements.values().filter(|e| e.kind == "Space" && !e.props.contains_key("partOf")).count()
+    }
+
+    #[test]
+    fn equal_gaps_side_by_side_are_one_row_and_a_gap_that_differs_or_stands_apart_is_not() {
+        let gap = |n: usize, a: [i64; 2], b: [i64; 2]| OpenGap { n, a, b, width_mm: (a[0] - b[0]).abs().max((a[1] - b[1]).abs()), kind: "unclear", px: [0.0; 4], row: None };
+        // Six treads 1180 mm wide, 400 mm apart; a wider gap among them; one equal gap 3 m away; three equal gaps of another kind.
+        let mut gaps: Vec<OpenGap> = (0..6).map(|i| gap(i + 1, [8000, 5000 + 400 * i as i64], [9180, 5000 + 400 * i as i64])).collect();
+        gaps.push(gap(7, [8000, 5200], [10010, 5200]));
+        gaps.push(gap(8, [8000, 10000], [9180, 10000]));
+        gaps.extend((0..3).map(|i| gap(9 + i, [2000 + 600 * i as i64, 1000], [2000 + 600 * i as i64, 2270])));
+        assert_eq!(rows_of_equal_gaps(&mut gaps), 1);
+        assert_eq!(gaps.iter().map(|g| g.row).collect::<Vec<_>>(), [vec![Some(1); 6], vec![None; 5]].concat(), "the treads, and nothing else");
+        let note = "6 of the gaps left open stand in 1 row(s) of equal gaps side by side (a stair's treads, most likely): they are listed together";
+        assert!(crate::msgs::localize(note).1, "the note has its Arabic");
     }
 
     #[test]

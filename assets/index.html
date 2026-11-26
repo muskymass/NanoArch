@@ -4498,8 +4498,11 @@ async function piClose(li, n, how) {
 function piGaps(l, li) {
   const d = PI.drawings[li]; if (!l.open_gaps || !l.open_gaps.length) return "";
   const done = { separator: L("أُغلقت بفاصل غرف", "closed with a separator"), wall: L("أُغلقت بجدار", "closed with a wall") };
-  const rows = l.open_gaps.map(g => `<div class="pi-gap">${d && d.cv ? `<img alt="" src="${piGapCrop(d, g)}">` : ""}<div><b>${L("فتحة", "Gap")} ${g.n}</b> · <span dir="ltr">${g.width_mm} mm</span><div class="hint">${g.kind === "passage" ? L("خالية", "bare") : L("عبرها شيء مرسوم", "something is drawn across it")}</div>
-    ${g.closed ? `<span class="badge ok">${done[g.closed]}</span>` : `<div class="bar tight"><button data-gap="${li}:${g.n}:separator">${L("فاصل غرف", "Separator")}</button><button data-gap="${li}:${g.n}:wall">${L("جدار", "Wall")}</button></div>`}</div></div>`).join("");
+  const one = g => `<div class="pi-gap">${d && d.cv ? `<img alt="" src="${piGapCrop(d, g)}">` : ""}<div><b>${L("فتحة", "Gap")} ${g.n}</b> · <span dir="ltr">${g.width_mm} mm</span><div class="hint">${g.kind === "passage" ? L("خالية", "bare") : L("عبرها شيء مرسوم", "something is drawn across it")}</div>
+    ${g.closed ? `<span class="badge ok">${done[g.closed]}</span>` : `<div class="bar tight"><button data-gap="${li}:${g.n}:separator">${L("فاصل غرف", "Separator")}</button><button data-gap="${li}:${g.n}:wall">${L("جدار", "Wall")}</button></div>`}</div></div>`;
+  // Gaps that stand in a row of equal gaps (a stair's treads, most likely) are folded into one line; each can still be closed.
+  const byRow = new Map(); l.open_gaps.filter(g => g.row != null).forEach(g => { if (!byRow.has(g.row)) byRow.set(g.row, []); byRow.get(g.row).push(g); });
+  const rows = l.open_gaps.filter(g => g.row == null).map(one).join("") + [...byRow.values()].map(gs => `<details class="pi-row"><summary>${L(`صف من ${gs.length} فتحات متساوية`, `A row of ${gs.length} equal gaps`)} · <span dir="ltr">${gs[0].width_mm} mm</span> <span class="hint">${L("درجات سلم على الأرجح", "a stair's treads, most likely")}</span></summary><div class="pi-gaps">${gs.map(one).join("")}</div></details>`).join("");
   return `<div class="hint">${L("فتحات تُركت مفتوحة: أغلق منها ما هو حدّ غرفة. الفاصل يفصل الغرفتين بلا جدار؛ والجدار بسماكة الجدران وارتفاع الدور المكتوبين أعلاه.", "Gaps left open: close the ones that are a room boundary. A separator divides the two rooms without a wall; a wall takes the thickness and storey height typed above.")}</div><div class="pi-gaps">${rows}</div>`;
 }
 function piReport() {
