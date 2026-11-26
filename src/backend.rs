@@ -10350,6 +10350,37 @@ COL-1,10,10
     }
 
     #[test]
+    fn a_gap_is_closed_from_the_page_with_a_door_a_separator_or_a_wall_and_each_is_one_undo() {
+        // A 6 x 4 m box with a partition at x = 3000 that has a 2 m gap in its middle, on a level of its own.
+        let mut app = blank_app();
+        app.handle("level_add", &json!({ "name": "G" })).unwrap();
+        let li = app.cur_level;
+        for (a, b) in [([0, 0], [6000, 0]), ([6000, 0], [6000, 4000]), ([6000, 4000], [0, 4000]), ([0, 4000], [0, 0]), ([3000, 0], [3000, 1000]), ([3000, 3000], [3000, 4000])] {
+            draw(&mut app, a, b);
+        }
+        let count = |app: &App, kind: &str| app.doc.as_ref().unwrap().model.elements.values().filter(|e| e.kind == kind).count();
+        let walls = count(&app, "Wall");
+        // The gap as a picture gives it: a little off the line and short at both ends.
+        let ask = |how: &str| json!({ "level": li, "a": [3040, 1090], "b": [3040, 2910], "how": how, "thickness_mm": 200, "height_mm": 3000 });
+        // A door: its height is the owner's, and without it nothing is built.
+        let e = app.handle("plan_gap_close", &ask("door")).unwrap_err();
+        assert!(e.contains("the door height") && e.contains("no default"), "{e}");
+        let mut door = ask("door");
+        door["door_height_mm"] = json!(2000);
+        app.handle("plan_gap_close", &door).unwrap();
+        assert_eq!((count(&app, "Wall"), count(&app, "Door")), (walls - 1, 1), "the two pieces are one wall, with the door in it");
+        app.handle("undo", &json!({})).unwrap();
+        assert_eq!((count(&app, "Wall"), count(&app, "Door")), (walls, 0), "one undo takes the door and the join away");
+        // A separator, then a wall.
+        app.handle("plan_gap_close", &ask("separator")).unwrap();
+        assert_eq!((count(&app, "Wall"), count(&app, "RoomSeparator")), (walls, 1));
+        app.handle("undo", &json!({})).unwrap();
+        app.handle("plan_gap_close", &ask("wall")).unwrap();
+        assert_eq!((count(&app, "Wall"), count(&app, "RoomSeparator")), (walls + 1, 0));
+        assert!(app.handle("plan_gap_close", &ask("curtain")).unwrap_err().contains("'door'"));
+    }
+
+    #[test]
     fn plans_become_a_project_through_prepare_and_import_and_nothing_is_built_without_the_owners_values() {
         let (w, h, wall) = (320usize, 240usize, [28u8, 124, 108]);
         let mut g = vec![240u8; w * h * 3];
