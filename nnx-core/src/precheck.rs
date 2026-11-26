@@ -8,9 +8,12 @@
 
 use crate::building;
 use crate::model::{Id, Model};
-use crate::typed::{Door, Space, Typed, Wall, Window};
+use crate::typed::{Door, RoomSeparator, Space, Typed, Wall, Window};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// How far (mm) to each side of a room separator the room on that side is looked for. A geometric probe, not a design value.
+const SEPARATOR_SIDE_MM: i64 = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -153,6 +156,22 @@ pub fn run(model: &Model) -> Report {
             (m, s) => format!("{} door(s) or window(s) stand in a column: {m} can be moved clear of it and {s} are not moved: check each on the drawing", m + s),
         };
         issues.push(Issue { level: Level::Warning, code: "OPENING.IN_COLUMN", message, elements: vec![] });
+    }
+    // A room separator is an open boundary, a passage with no wall: the rooms on its two sides are entered through it, door or no door.
+    for e in model.elements.values().filter(|e| e.kind == RoomSeparator::KIND) {
+        let Ok(sep) = e.typed::<RoomSeparator>() else { continue };
+        let Some(list) = spaces.get(&e.level_id) else { continue };
+        let vertical = sep.x1 == sep.x2;
+        // Asked at three places along it, a little to each side: a long separator can pass more than one rectangle.
+        for quarter in 1..=3 {
+            let (x, y) = (sep.x1 + (sep.x2 - sep.x1) * quarter / 4, sep.y1 + (sep.y2 - sep.y1) * quarter / 4);
+            for off in [-SEPARATOR_SIDE_MM, SEPARATOR_SIDE_MM] {
+                let (px, py) = if vertical { (x + off, y) } else { (x, y + off) };
+                if let Some((_, s)) = list.iter().find(|(_, s)| px > s.x && px < s.x + s.w && py > s.y && py < s.y + s.h) {
+                    entered.insert((e.level_id, whole_of(e.level_id, s.requirement_key.clone())));
+                }
+            }
+        }
     }
     let walled: BTreeSet<(Option<Id>, String)> = model
         .elements

@@ -977,3 +977,31 @@ fn an_opening_on_one_part_of_a_room_names_the_whole_room_and_a_door_into_a_part_
     let report = precheck::run(&l.model);
     assert!(!report.issues.iter().any(|i| i.code == "ROOM.NO_DOOR"), "{:?}", report.issues.iter().map(|i| &i.message).collect::<Vec<_>>());
 }
+
+#[test]
+fn a_room_open_to_its_neighbour_through_a_room_separator_is_entered_and_one_shut_by_a_wall_is_not() {
+    // Two rooms side by side; only the left one has a door. Between them: two wall stubs and, in the 2 m between the stubs, either a
+    // room separator (an open passage) or a wall.
+    let build = |open: bool| {
+        let mut doc = blank();
+        let south = wall(&mut doc, [0, 0], [8000, 0]);
+        wall(&mut doc, [8000, 0], [8000, 4000]);
+        wall(&mut doc, [8000, 4000], [0, 4000]);
+        wall(&mut doc, [0, 4000], [0, 0]);
+        wall(&mut doc, [4000, 0], [4000, 1000]);
+        wall(&mut doc, [4000, 3000], [4000, 4000]);
+        if open {
+            let (cmd, _) = annot::separator_command(&doc.model, level(&doc), (4000, 1000), (4000, 3000)).unwrap();
+            doc.commit("separator", Origin::User, vec![cmd]).unwrap();
+        } else {
+            wall(&mut doc, [4000, 1000], [4000, 3000]);
+        }
+        opening(&mut doc, draft::OpeningKind::Door, south, 1500);
+        sync(&mut doc, "Find rooms");
+        refresh(&mut doc);
+        assert_eq!(rooms(&doc).len(), 2, "two rooms either way");
+        precheck::run(&doc.model).issues.iter().filter(|i| i.code == "ROOM.NO_DOOR").count()
+    };
+    assert_eq!(build(true), 0, "the right-hand room is entered through the open passage");
+    assert_eq!(build(false), 1, "shut by a wall, the right-hand room has no way in");
+}
