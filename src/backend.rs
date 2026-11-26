@@ -408,6 +408,7 @@ impl App {
                 out["sbc"] = self.sbc_json();
                 Ok(out)
             }
+            "set_room" => self.set_room(args),
             "set_opening" => {
                 let id = id_arg(args, "id")?;
                 self.guard_lock(&[id])?;
@@ -2756,20 +2757,34 @@ impl App {
         Ok(json!({ "proposal": proposal }))
     }
 
+    /// `set_room`: the display name and/or the use of the room `id` (a field left out does not change; an empty name removes it).
+    fn set_room(&mut self, args: &Value) -> Result<Value, String> {
+        let id = id_arg(args, "id")?;
+        let text = |k: &str| args.get(k).and_then(Value::as_str);
+        let (name, func) = (text("name"), text("func"));
+        if name.is_none() && func.is_none() {
+            return Err("name or func is required".into());
+        }
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        let changed = nnx_core::project::name_room(doc, id, name, func)?;
+        Ok(json!({ "changed": changed, "svg": self.render_or_null()?, "rooms": self.rooms_json(), "sbc": self.sbc_json() }))
+    }
+
     fn rooms_json(&self) -> Vec<Value> {
         let level = self.current_level();
         let labels = self.display_labels();
+        let stored = self.labels();
         let locked = self.project().map(|p| p.meta.locked_rooms).unwrap_or_default();
         let Some(doc) = self.doc.as_ref() else { return Vec::new() };
         doc.model.elements.values()
             .filter(|e| level.is_none() || e.level_id == level)
-            .filter_map(|e| Some((e.level_id, e.typed::<nnx_core::typed::Space>().ok()?)))
+            .filter_map(|e| Some((e.id, e.level_id, e.typed::<nnx_core::typed::Space>().ok()?)))
             // A room made of several rectangles is one row, with the areas of all of them.
-            .filter(|(_, s)| nnx_core::annot::part_of(s).is_none())
-            .map(|(lv, s)| {
+            .filter(|(_, _, s)| nnx_core::annot::part_of(s).is_none())
+            .map(|(id, lv, s)| {
                 let t = nnx_core::annot::room_total(&doc.model, lv, &s);
                 let target = if t.parts == 1 { s.target_area } else { t.area };
-                json!({ "key": s.requirement_key, "locked": locked.contains(&s.requirement_key), "name": nnx_core::annot::room_name(&s, &labels).unwrap_or(s.requirement_key.clone()), "func": s.func, "area": t.area, "net_area": t.net_area, "target": target, "parts": t.parts })
+                json!({ "id": id.to_string(), "label": stored.get(&s.requirement_key), "key": s.requirement_key, "locked": locked.contains(&s.requirement_key), "name": nnx_core::annot::room_name(&s, &labels).unwrap_or(s.requirement_key.clone()), "func": s.func, "area": t.area, "net_area": t.net_area, "target": target, "parts": t.parts })
             })
             .collect()
     }
@@ -11028,5 +11043,22 @@ COL-1,10,10
         assert!(app.handle("backup_s3_put", &http).unwrap_err().contains("use https"));
         assert!(app.handle("backup_s3_get", &json!({ "path": path, "endpoint": "https://s3.example.com", "bucket": "my-backups", "key": "a.nnxbak", "region": "eu-west-1", "access_key": "AK" })).unwrap_err().contains("secret_key"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_built_room_is_named_from_the_page_and_the_change_is_one_undo_step() {
+        let mut app = blank_app();
+        app.handle("project_blank", &json!({})).unwrap();
+        for (x1, y1, x2, y2) in [(0, 0, 6000, 0), (6000, 0, 6000, 4000), (6000, 4000, 0, 4000), (0, 4000, 0, 0)] {
+            app.handle("draft_wall", &json!({ "a": [x1, y1], "b": [x2, y2], "thickness": 250, "height": 3000 })).unwrap();
+        }
+        let room = app.rooms_json()[0].clone();
+        assert!(room["label"].is_null(), "{room}");
+        assert!(app.handle("set_room", &json!({ "id": room["id"] })).is_err(), "nothing to change");
+        let r = app.handle("set_room", &json!({ "id": room["id"], "name": "مجلس الرجال", "func": "majlis" })).unwrap();
+        assert_eq!((r["changed"].as_bool(), r["rooms"][0]["label"].as_str(), r["rooms"][0]["func"].as_str()), (Some(true), Some("مجلس الرجال"), Some("majlis")));
+        assert!(r["svg"].as_str().unwrap().contains("مجلس الرجال"), "the plan shows the name");
+        let u = app.handle("undo", &json!({})).unwrap();
+        assert!(u["rooms"][0]["label"].is_null() && u["rooms"][0]["func"] == room["func"], "{}", u["rooms"]);
     }
 }

@@ -1358,10 +1358,20 @@ function assumptionsHtml() {
   return `<details style="margin-top:14px"><summary><b>${t("assump_h")}</b></summary><div class="note">${t("assump_note")}</div>
     <table><tbody>${a.map(r => `<tr><td>${esc(lang === "ar" ? r.ar : r.en)}</td><td class="num">${r.value} ${esc(r.unit)}</td></tr>`).join("")}</tbody></table></details>`;
 }
+// The uses a built room may be given (the engine's ROOM_USES) and their names.
+const ROOM_USES = ["room", "majlis", "living", "dining", "kitchen", "bedroom", "bathroom", "hall", "stair", "lift", "courtyard", "other"];
+const useName = f => ({ room: L("غير محدد", "Unstated"), hall: L("ردهة", "Hall"), stair: L("درج", "Stair"), circulation_reserve: L("حركة وتنقل", "Circulation") })[f] || t("func")[f] || f;
 function renderNotes() {
   const w = state.notes || [], rooms = state.rooms_out || [];
   $("p-notes").innerHTML = `<h2>${t("warnings")}</h2>${w.length ? `<ul class="clean">${msgList("warn", w, state.notes_ar, state.notes_en)}</ul>` : `<div class="ok">${t("none")}</div>`}
-    <h2>${t("rooms")}</h2><table><thead><tr><th>${t("r_name")}</th><th>${t("target")}</th><th>${t("actual")}</th></tr></thead><tbody>${rooms.map(r => `<tr><td>${esc(r.name)}</td><td class="num">${r.target.toFixed(1)}</td><td class="num">${r.area.toFixed(1)}</td></tr>`).join("")}</tbody></table>${assumptionsHtml()}<div id="precheck"></div>`;
+    <h2>${t("rooms")}</h2><table class="rooms"><thead><tr><th>${t("r_name")}</th><th>${t("r_func")}</th><th>${t("target")}</th><th>${t("actual")}</th><th></th></tr></thead><tbody>${rooms.map((r, n) => `<tr><td><input data-rn="${n}" value="${esc(r.label || "")}" placeholder="${esc(r.name)}" maxlength="80" title="${L("اسم الغرفة على المخطط والأوراق؛ اتركه فارغاً لإزالته", "The room's name on the plan and the sheets; leave empty to remove it")}"></td><td><select data-rf="${n}" title="${L("استعمال الغرفة", "The room's use")}">${(ROOM_USES.includes(r.func) ? ROOM_USES : [r.func, ...ROOM_USES]).map(f => `<option value="${esc(f)}" ${f === r.func ? "selected" : ""}>${esc(useName(f))}</option>`).join("")}</select></td><td class="num">${r.target.toFixed(1)}</td><td class="num">${r.area.toFixed(1)}</td><td><button data-rs="${n}" title="${L("حدّد الغرفة على المخطط", "Select the room on the plan")}">${L("أظهرها", "Show")}</button></td></tr>`).join("")}</tbody></table>${assumptionsHtml()}<div id="precheck"></div>`;
+  const setRoom = (n, change) => busy(async () => {
+    const r = await call("set_room", { id: rooms[n].id, ...change });
+    showPlan(r.svg); state.rooms_out = r.rooms; if (r.sbc) renderSbc(r.sbc); refreshBim(); renderNotes(); refreshStatus();
+  });
+  $("p-notes").querySelectorAll("[data-rn]").forEach(el => el.onchange = () => setRoom(+el.dataset.rn, { name: el.value }));
+  $("p-notes").querySelectorAll("[data-rf]").forEach(el => el.onchange = () => setRoom(+el.dataset.rf, { func: el.value }));
+  $("p-notes").querySelectorAll("[data-rs]").forEach(el => el.onclick = async () => { const ids = [rooms[+el.dataset.rs].id]; await selectIds(ids, { src: "table" }); SEL.ids = new Set(ids); selApply2d(); });
   call("precheck").then(r => {
     const box = $("precheck"); if (!box) return;
     const rows = r.issues || [];

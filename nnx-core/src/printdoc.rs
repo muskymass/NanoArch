@@ -44,6 +44,7 @@ fn func_ar(f: &str) -> &str {
         "circulation_reserve" => "حركة وتنقل",
         // A room found from walls, whose use nobody has stated yet.
         "room" => "غرفة",
+        "other" => "أخرى",
         other => other,
     }
 }

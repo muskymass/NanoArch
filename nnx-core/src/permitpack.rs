@@ -181,6 +181,8 @@ fn func_ar(f: &str) -> &str {
         "lift" => "مصعد",
         "courtyard" => "فناء",
         "hall" => "ردهة",
+        "room" => "غرفة",
+        "other" => "أخرى",
         "circulation_reserve" => "حركة وتنقل",
         other => other,
     }

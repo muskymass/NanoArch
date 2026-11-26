@@ -492,6 +492,60 @@ pub fn update(doc: &mut Document, label: &str, edit: impl FnOnce(&mut NanoArchPr
     Ok(Update { changed: true, new_violations: added })
 }
 
+/// The uses a room may be given: those the engine reads (layout, rules, schedules and drawings). `room` is a room whose use is unstated.
+pub const ROOM_USES: [&str; 12] = ["room", "majlis", "living", "dining", "kitchen", "bedroom", "bathroom", "hall", "stair", "lift", "courtyard", "other"];
+
+/// Names a room and states its use, as ONE undoable step: `name` is the display name kept under the room's key (empty removes it) and
+/// `func` is set on the room and on every rectangle that is a part of it on the same level. `id` may be any of those rectangles. What is
+/// not given does not change; `false` means there was nothing to change. A project that enforces the code refuses a use that breaks it.
+pub fn name_room(doc: &mut Document, id: Id, name: Option<&str>, func: Option<&str>) -> Result<bool, String> {
+    use crate::typed::Space;
+    const NOT_A_ROOM: &str = "naming a room: that element is not a room";
+    let el = doc.model.get(&id).filter(|e| e.kind == Space::KIND).ok_or(NOT_A_ROOM)?;
+    let space = el.typed::<Space>().map_err(|e| format!("room: {e}"))?;
+    let level = el.level_id;
+    let key = crate::annot::part_of(&space).unwrap_or(&space.requirement_key).to_string();
+    if let Some(f) = func
+        && !ROOM_USES.contains(&f)
+    {
+        return Err(format!("naming a room: '{f}' is not a known room use"));
+    }
+    let name = name.map(str::trim);
+    if name.is_some_and(|n| n.chars().count() > 80) {
+        return Err("naming a room: a name is at most 80 characters".into());
+    }
+    let mut cmds = Vec::new();
+    if let Some(n) = name {
+        cmds = update_commands(&doc.model, |p| {
+            if n.is_empty() {
+                p.labels.remove(&key);
+            } else {
+                p.labels.insert(key.clone(), n.to_string());
+            }
+            Ok(())
+        })?;
+    }
+    if let Some(f) = func {
+        for e in doc.model.elements.values().filter(|e| e.kind == Space::KIND && e.level_id == level) {
+            let s = e.typed::<Space>().map_err(|e| format!("room: {e}"))?;
+            let of_room = s.requirement_key == key || crate::annot::part_of(&s) == Some(key.as_str());
+            if of_room && s.func != f {
+                cmds.push(Command::SetProp { id: e.id, key: "func".into(), value: Some(Value::from(f)) });
+            }
+        }
+    }
+    if cmds.is_empty() {
+        return Ok(false);
+    }
+    let mut scratch = Document::new(doc.model.clone());
+    scratch.commit("name room", Origin::User, cmds.clone()).map_err(|e| e.to_string())?;
+    if let Some(why) = crate::sbc::refusal(&doc.model, &scratch.model) {
+        return Err(why);
+    }
+    doc.commit("name room", Origin::User, cmds).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 /// The commands an edit of the project amounts to (one `SetProp` per top-level property that differs), checked but not committed, so a
 /// caller can commit them together with edits of other elements as one undoable step.
 pub fn update_commands(model: &Model, edit: impl FnOnce(&mut NanoArchProject) -> Result<(), String>) -> Result<Vec<Command>, String> {
