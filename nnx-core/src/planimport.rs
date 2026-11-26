@@ -202,6 +202,25 @@ pub fn snap_gap(model: &Model, level: Option<Id>, a: [i64; 2], b: [i64; 2]) -> R
     Ok(if horizontal { ([p, c], [q, c]) } else { ([c, p], [c, q]) })
 }
 
+/// Closes a gap with a door: the walls beside the gap become one wall across it (`draft::bridge`), and a door as wide as the gap, of
+/// the owner's door height, stands where the gap was. `thickness` and `height` are the owner's wall values, used only where no wall in
+/// line stands at either end. Returns the commands of the whole step and the door's id. Refused, with the reason, where the door does
+/// not fit its wall or would stand in a column.
+pub fn close_gap_with_door(model: &Model, level: Option<Id>, a: [i64; 2], b: [i64; 2], thickness: i64, height: i64, door_height: i64) -> Result<(Vec<Command>, Id), String> {
+    let (p, q) = snap_gap(model, level, a, b)?;
+    let (edit, host, start) = draft::bridge(model, level, p, q, thickness, height)?;
+    // The door is placed on the wall as it will be, so it is checked against that wall: its ends, its other openings, its columns.
+    let mut scratch = Document::new(model.clone());
+    scratch.commit("bridge", Origin::User, edit.cmds.clone()).map_err(|e| e.to_string())?;
+    let horizontal = a[1] == b[1];
+    let (lo, hi) = if horizontal { (a[0].min(b[0]), a[0].max(b[0])) } else { (a[1].min(b[1]), a[1].max(b[1])) };
+    let width = (hi - lo + 5) / 10 * 10;
+    let (door, id) = draft::opening_command(&scratch.model, &draft::OpeningSpec { kind: draft::OpeningKind::Door, wall: host, offset: (lo + hi) / 2 - start, width, height: door_height, sill: None, side: None })?;
+    let mut cmds = edit.cmds;
+    cmds.extend(door);
+    Ok((cmds, id))
+}
+
 /// The command that closes a gap between the walls beside it (see `snap_gap`), and the id of what it creates.
 pub fn close_gap(model: &Model, level: Option<Id>, a: [i64; 2], b: [i64; 2], how: CloseHow) -> Result<(Command, Id), String> {
     let (p, q) = snap_gap(model, level, a, b)?;
@@ -533,6 +552,41 @@ mod tests {
         let (cmd, _) = close_gap(&doc.model, level, off_a, off_b, CloseHow::Wall { thickness: 200, height: 3000 }).unwrap();
         assert_eq!(rooms_after(&mut doc, level, cmd), 2);
         assert_eq!(doc.model.elements.values().filter(|e| e.kind == "Wall").count(), 7);
+    }
+
+    #[test]
+    fn a_gap_closed_with_a_door_joins_the_walls_beside_it_and_keeps_their_openings_in_place() {
+        // A window on the partition's upper piece, 500 mm from that piece's start (y 3500 in the plan).
+        let (mut doc, level) = box_with_a_gap();
+        let wall_at = |doc: &Document, y1: i64| doc.model.elements.values().find(|e| e.kind == "Wall" && e.props["x1"] == 3000 && e.props["x2"] == 3000 && e.props["y1"] == y1).map(|e| e.id).unwrap();
+        let upper = wall_at(&doc, 3000);
+        let (cmds, window) = draft::opening_command(&doc.model, &draft::OpeningSpec { kind: draft::OpeningKind::Window, wall: upper, offset: 500, width: 400, height: 1000, sill: Some(900), side: None }).unwrap();
+        doc.commit("window", Origin::User, cmds).unwrap();
+        let _ = window;
+        // The gap as a picture gives it (y 1090..2910), closed with a door 2 m high.
+        let (cmds, door) = close_gap_with_door(&doc.model, level, [3040, 1090], [3040, 2910], 200, 3000, 2000).unwrap();
+        doc.commit("door", Origin::User, cmds).unwrap();
+        let walls: Vec<Wall> = doc.model.elements.values().filter(|e| e.kind == "Wall").filter_map(|e| e.typed::<Wall>().ok()).filter(|w| w.x1 == 3000 && w.x2 == 3000).collect();
+        assert_eq!(walls.len(), 1, "the two pieces are one wall now");
+        assert_eq!((walls[0].y1, walls[0].y2, walls[0].length), (0, 4000, 4000));
+        let host = wall_at(&doc, 0);
+        let d = doc.model.get(&door).unwrap();
+        assert_eq!((d.host_id, d.props["offsetCenter"].as_i64(), d.props["width"].as_i64(), d.props["height"].as_i64()), (Some(host), Some(2000), Some(1820), Some(2000)), "the door stands where the gap was, as wide as the gap");
+        let w = doc.model.elements.values().find(|e| e.kind == "Window").unwrap();
+        assert_eq!((w.host_id, w.props["offsetCenter"].as_i64()), (Some(host), Some(3500)), "the window is on the joined wall, at the same place in the plan");
+        let sync = annot::rooms_sync(&doc.model, level);
+        doc.commit("rooms", Origin::User, sync.cmds).unwrap();
+        assert_eq!(doc.model.elements.values().filter(|e| e.kind == "Space" && !e.props.contains_key("partOf")).count(), 2, "the joined wall divides the box");
+        // One undo takes the door and the join away together.
+        assert!(doc.undo() && doc.undo());
+        assert_eq!(doc.model.elements.values().filter(|e| e.kind == "Wall").count(), 6);
+        assert!(doc.model.elements.values().all(|e| e.kind != "Door"));
+        // Walls that differ are not joined: the refusal says so and has its Arabic.
+        let (mut d2, level2) = box_with_a_gap();
+        let up = wall_at(&d2, 3000);
+        d2.commit("thicker", Origin::User, vec![Command::SetProp { id: up, key: "thickness".into(), value: Some(serde_json::json!(300)) }]).unwrap();
+        let e = close_gap_with_door(&d2.model, level2, [3000, 1090], [3000, 2910], 200, 3000, 2000).unwrap_err();
+        assert!(e.contains("differ") && crate::msgs::localize(&e).1, "{e}");
     }
 
     #[test]

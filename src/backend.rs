@@ -2373,14 +2373,29 @@ impl App {
     /// wall) or `wall` (then `thickness_mm` and `height_mm` are required: the owner's values, there is no default). The gap's ends `a`
     /// and `b` are moved onto the walls beside it by the engine, and the rooms are found again. The level becomes the one on screen.
     fn plan_gap_close(&mut self, args: &Value) -> Result<Value, String> {
-        use nnx_core::planimport::{CloseHow, close_gap};
+        use nnx_core::planimport::{CloseHow, close_gap, close_gap_with_door};
         let (a, b) = (Self::int_point(args.get("a"), "a")?, Self::int_point(args.get("b"), "b")?);
         let index = args.get("level").and_then(Value::as_u64).ok_or("closing a gap: 'level' (its place in the building, from 0) is missing")? as usize;
         let need = |k: &str, what: &str| args.get(k).and_then(Value::as_i64).filter(|n| *n > 0).ok_or_else(|| format!("closing a gap with a wall: {what} is missing or not above zero: it is the owner's to give, there is no default"));
+        let need_door = |k: &str, what: &str| args.get(k).and_then(Value::as_i64).filter(|n| *n > 0).ok_or_else(|| format!("closing a gap with a door: {what} is missing or not above zero: it is the owner's to give, there is no default"));
+        if args.get("how").and_then(Value::as_str) == Some("door") {
+            // The walls beside the gap become one wall across it, and a door as wide as the gap stands in it: one undoable step.
+            let (thickness, height, door_height) = (need_door("thickness_mm", "the wall thickness")?, need_door("height_mm", "the storey height")?, need_door("door_height_mm", "the door height")?);
+            if index >= self.level_list().len() {
+                return Err("closing a gap: there is no such level".into());
+            }
+            self.cur_level = index;
+            let level = self.current_level();
+            let (cmds, id) = close_gap_with_door(&self.doc()?.model, level, a, b, thickness, height, door_height)?;
+            let mut v = self.draft_commit("Close gap with a door", nnx_core::draft::Edit { cmds, created: vec![id], notes: vec![] }, level)?;
+            v["levels"] = self.levels_json();
+            v["closed"] = json!(id.to_string());
+            return Ok(v);
+        }
         let how = match args.get("how").and_then(Value::as_str) {
             Some("separator") => CloseHow::Separator,
             Some("wall") => CloseHow::Wall { thickness: need("thickness_mm", "the wall thickness")?, height: need("height_mm", "the storey height")? },
-            _ => return Err("closing a gap: 'how' must be 'separator' or 'wall'".into()),
+            _ => return Err("closing a gap: 'how' must be 'separator', 'wall' or 'door'".into()),
         };
         if index >= self.level_list().len() {
             return Err("closing a gap: there is no such level".into());

@@ -840,6 +840,68 @@ pub fn split(model: &Model, wall: Id, at: i64) -> Result<Edit, String> {
     Ok(edit)
 }
 
+/// One wall across the stretch from `p` to `q` (two points on one horizontal or vertical line), made of what is already there: a wall
+/// in that line that ends at `p` and one that starts at `q` are joined across the stretch into a single wall; with only one of them,
+/// that wall is extended over the stretch; with neither, a new wall of the given thickness and height is drawn. Doors and windows of
+/// the walls keep their place in the plan. Returns the edit, the wall that now covers the stretch, and where that wall starts along
+/// the line. Two walls that differ in thickness or height are not joined: which of the two the stretch takes is not the program's to say.
+pub fn bridge(model: &Model, level: Option<Id>, p: [i64; 2], q: [i64; 2], thickness: i64, height: i64) -> Result<(Edit, Id, i64), String> {
+    if (p[0] == q[0]) == (p[1] == q[1]) {
+        return Err("bridging a gap: its two ends must share an x or a y, and differ".into());
+    }
+    let horiz = p[1] == q[1];
+    let (line, lo, hi) = if horiz { (p[1], p[0].min(q[0]), p[0].max(q[0])) } else { (p[0], p[1].min(q[1]), p[1].max(q[1])) };
+    let in_line: Vec<(Id, Wall)> = walls_on(model, level).into_iter().filter(|(_, w)| { let a = ax(w); a.horiz == horiz && a.line == line }).collect();
+    let before = in_line.iter().find(|(_, w)| ax(w).hi == lo);
+    let after = in_line.iter().find(|(_, w)| ax(w).lo == hi);
+    let mut edit = Edit::default();
+    // Every door and window of `from`, as it must stand on a wall that starts at `start`: its distance from that start.
+    let shifted = |from: Id, from_lo: i64, start: i64| -> Result<Vec<(Id, i64)>, String> {
+        model.dependents(&from).into_iter().map(|h| { let (a, b) = opening_interval(model, &h).ok_or("a hosted element is not a door or window")?; Ok((h, from_lo + (a + b) / 2 - start)) }).collect()
+    };
+    match (before, after) {
+        (None, None) => {
+            let (cmd, id) = wall_command(model, level, &WallSpec { a: p, b: q, thickness, height })?;
+            edit.cmds.push(cmd);
+            edit.created.push(id);
+            Ok((edit, id, lo))
+        }
+        (Some((id, w)), None) => {
+            let el = model.get(id).ok_or("that wall no longer exists")?;
+            edit.cmds.extend(rebuilt(*id, el, &with_ends(w, ax(w).lo, hi))?);
+            Ok((edit, *id, ax(w).lo))
+        }
+        (None, Some((id, w))) => {
+            let el = model.get(id).ok_or("that wall no longer exists")?;
+            edit.cmds.extend(rebuilt(*id, el, &with_ends(w, lo, ax(w).hi))?);
+            for (h, off) in shifted(*id, ax(w).lo, lo)? {
+                edit.cmds.push(Command::SetProp { id: h, key: "offsetCenter".into(), value: Some(json!(off)) });
+            }
+            Ok((edit, *id, lo))
+        }
+        (Some((ia, wa)), Some((ib, wb))) => {
+            if wa.thickness != wb.thickness || wa.height != wb.height {
+                return Err(format!("bridging a gap: the walls at its two ends differ ({} x {} mm and {} x {} mm, thickness x height): close it with a wall and place the door by hand", wa.thickness, wa.height, wb.thickness, wb.height));
+            }
+            let el = model.get(ia).ok_or("that wall no longer exists")?;
+            let start = ax(wa).lo;
+            edit.cmds.extend(rebuilt(*ia, el, &with_ends(wa, start, ax(wb).hi))?);
+            for (h, off) in shifted(*ib, ax(wb).lo, start)? {
+                let oe = model.get(&h).ok_or("a hosted element disappeared")?;
+                let mut ne = oe.clone();
+                ne.id = Element::new(&oe.kind, oe.discipline, oe.provenance.source).id;
+                ne.rev = 0;
+                ne.host_id = Some(*ia);
+                ne.props.insert("offsetCenter".into(), json!(off));
+                edit.cmds.push(Command::Delete(h));
+                edit.cmds.push(Command::Create(ne));
+            }
+            edit.cmds.push(Command::Delete(*ib));
+            Ok((edit, *ia, start))
+        }
+    }
+}
+
 /// Brings two perpendicular walls to their common corner. Where the corner lies inside a wall, the part on the side of the click is
 /// kept; where it lies outside, the nearer end is extended to it. Doors and windows keep their place in the plan; one that would end
 /// up outside its wall refuses the edit.
