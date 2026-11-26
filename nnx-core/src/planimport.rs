@@ -111,7 +111,7 @@ pub struct OpenGap {
     pub px: [f64; 4],
 }
 
-/// How far (mm) an end of a gap may stand from the wall end or the crossing wall it is closed onto.
+/// How far (mm) an end of a gap may stand from the wall end, or from the face of the crossing wall, that it is closed onto.
 pub const GAP_SNAP_MM: i64 = 300;
 
 /// What a gap is closed with.
@@ -124,7 +124,9 @@ pub enum CloseHow {
 }
 
 /// The two ends of a gap moved onto the walls it lies between: at each end the end of a wall in the same line, else the axis of a wall
-/// that crosses there, within `GAP_SNAP_MM`. The line itself moves onto the axis of the wall in line. A line that stopped a few
+/// that crosses there, within `GAP_SNAP_MM`. A gap read from a picture ends at the crossing wall's face, or at a drawn stub too short
+/// to be kept as a wall, so the distance to a crossing wall is measured to its face (half its thickness off its axis), not to its axis.
+/// The line itself moves onto the axis of the wall in line. A line that stopped a few
 /// millimetres short of a wall would bound nothing, so an end with no wall to stand on is an error, not a guess.
 pub fn snap_gap(model: &Model, level: Option<Id>, a: [i64; 2], b: [i64; 2]) -> Result<([i64; 2], [i64; 2]), String> {
     if (a[0] == b[0]) == (a[1] == b[1]) {
@@ -132,14 +134,14 @@ pub fn snap_gap(model: &Model, level: Option<Id>, a: [i64; 2], b: [i64; 2]) -> R
     }
     let horizontal = a[1] == b[1];
     let (c0, lo, hi) = if horizontal { (a[1], a[0].min(b[0]), a[0].max(b[0])) } else { (a[0], a[1].min(b[1]), a[1].max(b[1])) };
-    // (horizontal, axis, lo, hi) of every wall of the level.
-    let walls: Vec<(bool, i64, i64, i64)> = model
+    // (horizontal, axis, lo, hi, thickness) of every wall of the level.
+    let walls: Vec<(bool, i64, i64, i64, i64)> = model
         .elements
         .values()
         .filter(|e| e.kind == Wall::KIND && e.level_id == level)
         .filter_map(|e| e.typed::<Wall>().ok())
         .filter(|w| (w.x1 == w.x2) != (w.y1 == w.y2))
-        .map(|w| if w.y1 == w.y2 { (true, w.y1, w.x1.min(w.x2), w.x1.max(w.x2)) } else { (false, w.x1, w.y1.min(w.y2), w.y1.max(w.y2)) })
+        .map(|w| if w.y1 == w.y2 { (true, w.y1, w.x1.min(w.x2), w.x1.max(w.x2), w.thickness) } else { (false, w.x1, w.y1.min(w.y2), w.y1.max(w.y2), w.thickness) })
         .collect();
     // The wall in line whose end is nearest to this edge of the gap: (its end, its axis).
     let in_line = |edge: i64, before: bool| {
@@ -152,7 +154,7 @@ pub fn snap_gap(model: &Model, level: Option<Id>, a: [i64; 2], b: [i64; 2]) -> R
         return Err(format!("closing a gap: the walls at its two ends are not in one line ({} mm apart): draw it by hand", (l.1 - h.1).abs()));
     }
     let c = l.or(h).map_or(c0, |x| x.1);
-    let crossing = |edge: i64| walls.iter().filter(|w| w.0 != horizontal && w.2 <= c && c <= w.3 && (w.1 - edge).abs() <= GAP_SNAP_MM).map(|w| w.1).min_by_key(|x| (x - edge).abs());
+    let crossing = |edge: i64| walls.iter().filter(|w| w.0 != horizontal && w.2 <= c && c <= w.3 && (w.1 - edge).abs() <= GAP_SNAP_MM + w.4 / 2).map(|w| w.1).min_by_key(|x| (x - edge).abs());
     let end = |found: Option<(i64, i64)>, edge: i64, what: &str| found.map(|x| x.0).or_else(|| crossing(edge)).ok_or_else(|| format!("closing a gap: no wall ends or crosses within {GAP_SNAP_MM} mm of its {what}: draw it by hand"));
     let (p, q) = (end(l, lo, "start")?, end(h, hi, "end")?);
     Ok(if horizontal { ([p, c], [q, c]) } else { ([c, p], [c, q]) })
@@ -481,6 +483,10 @@ mod tests {
         let low = d2.model.elements.values().find(|e| e.kind == "Wall" && e.props.get("y1").and_then(|v| v.as_i64()) == Some(3000) && e.props.get("x1").and_then(|v| v.as_i64()) == Some(3000)).map(|e| e.id).unwrap();
         d2.commit("drop", Origin::User, vec![Command::Delete(low)]).unwrap();
         assert_eq!(snap_gap(&d2.model, level2, [3000, 1100], [3000, 3900]).unwrap(), ([3000, 1000], [3000, 4000]));
+        // A gap that stops short of the crossing wall's face (a drawn stub too short to be a wall stood there): 280 mm from the face of
+        // the 200 mm top wall, 380 mm from its axis. It is closed onto that wall; 320 mm from the face is out of reach.
+        assert_eq!(snap_gap(&d2.model, level2, [3000, 1100], [3000, 3620]).unwrap(), ([3000, 1000], [3000, 4000]));
+        assert!(snap_gap(&d2.model, level2, [3000, 1100], [3000, 3580]).unwrap_err().contains("end"));
         // An end in the middle of the room has nothing within reach.
         let e = snap_gap(&doc.model, level, [1500, 2000], [2900, 2000]).unwrap_err();
         assert!(e.contains("start") && e.contains("300 mm"), "{e}");

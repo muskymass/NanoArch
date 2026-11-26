@@ -146,7 +146,13 @@ pub fn run(model: &Model) -> Report {
     let level_ids: Vec<Option<Id>> = if level_name.is_empty() { vec![None] } else { level_name.keys().map(|id| Some(*id)).collect() };
     let (moves, stuck) = building::clear_openings(model, &level_ids);
     if !moves.is_empty() || !stuck.is_empty() {
-        issues.push(Issue { level: Level::Warning, code: "OPENING.IN_COLUMN", message: format!("{} door/window position(s) stand in a column and {} cannot be moved clear", moves.len(), stuck.len()), elements: vec![] });
+        // Only the counts that are not zero are said: "0 stand in a column and 7 cannot be moved" reads as if none did.
+        let message = match (moves.len(), stuck.len()) {
+            (m, 0) => format!("{m} door(s) or window(s) stand in a column and can be moved clear of it"),
+            (0, s) => format!("{s} door(s) or window(s) stand in a column and are not moved clear of it: check each on the drawing"),
+            (m, s) => format!("{} door(s) or window(s) stand in a column: {m} can be moved clear of it and {s} are not moved: check each on the drawing", m + s),
+        };
+        issues.push(Issue { level: Level::Warning, code: "OPENING.IN_COLUMN", message, elements: vec![] });
     }
     let walled: BTreeSet<(Option<Id>, String)> = model
         .elements
