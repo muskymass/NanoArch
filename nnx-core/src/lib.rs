@@ -88,6 +88,8 @@ pub mod families;
 pub mod plot_import;
 pub mod rasterplan;
 pub mod rasterwalls;
+pub mod planaxes;
+pub mod planimport;
 pub mod project;
 pub mod presets;
 pub mod prefs;

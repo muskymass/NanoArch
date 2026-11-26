@@ -351,6 +351,16 @@ main.wide>.brief,main.wide>.rz1{display:none}
 .tab[data-tab="sbc"]{--ico:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.9'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M5%204h11a3%203%200%200%201%203%203v13H8a3%203%200%200%201-3-3z'/%3E%3Cpath%20d='M5%2017a3%203%200%200%201%203-3h11'/%3E%3C/svg%3E")}
 .tab[data-tab="sketch"]{--ico:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.9'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M4%2020l1-4L16%205l3%203L8%2019z'/%3E%3Cpath%20d='M14%207l3%203'/%3E%3C/svg%3E")}
 .tab[data-tab="ol"]{--ico:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.9'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d=%22M4%206h16M8%2012h12M12%2018h8%22/%3E%3C/svg%3E")}
+.tab[data-tab="pi"]{--ico:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.9'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Crect%20x='3'%20y='4'%20width='18'%20height='16'%20rx='2'/%3E%3Ccircle%20cx='9'%20cy='10'%20r='1.6'/%3E%3Cpath%20d='M21%2016l-5-5-8%208'/%3E%3C/svg%3E")}
+.pi-card{border:1px solid var(--border);border-radius:var(--r-md);padding:8px;margin:8px 0;background:var(--surface)}
+.pi-gaps{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;margin:6px 0}
+.pi-gap{display:flex;gap:8px;align-items:flex-start;border:1px solid var(--border);border-radius:var(--r-md);padding:6px;background:var(--surface)}
+.pi-gap img{width:92px;height:92px;flex:none;border:1px solid var(--border);border-radius:var(--r)}
+.pi-card img{max-width:100%;max-height:190px;display:block;margin:6px 0;border:1px solid var(--border)}
+.pi-sw{display:inline-flex;align-items:center;gap:6px;margin:2px 6px 2px 0;padding:2px 8px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface-2);cursor:pointer;font-size:.75rem}
+.pi-sw i{width:16px;height:16px;border-radius:3px;border:1px solid var(--border-strong,var(--border));display:inline-block}
+.pi-sw.on{outline:2px solid var(--accent)}
+.pi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px 10px}
 .tab[data-tab="bim"]{--ico:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.9'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%203l8%204.5v9L12%2021l-8-4.5v-9z'/%3E%3Cpath%20d='M12%2012l8-4.5M12%2012v9M12%2012L4%207.5'/%3E%3C/svg%3E")}
 .tab[data-tab="pr"]{--ico:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.9'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Crect%20x='3'%20y='4'%20width='18'%20height='12'%20rx='1'/%3E%3Cpath%20d='M8%2020h8M12%2016v4'/%3E%3C/svg%3E")}
 .tab[data-tab="rules"]{--ico:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.9'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%203v18M5%207h14M7%207l-3%207a3%203%200%200%200%206%200zM17%207l-3%207a3%203%200%200%200%206%200z'/%3E%3C/svg%3E")}
@@ -441,7 +451,7 @@ main.wide>.brief,main.wide>.rz1{display:none}
     <div class="brand"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l10 5.5v11L16 25 6 19.5v-11z" fill="var(--accent)"/><path d="M16 3l10 5.5L16 14 6 8.5z" fill="var(--on-accent)" fill-opacity=".38"/><path d="M16 14v11" stroke="var(--on-accent)" stroke-width="1.6"/><path d="M22 22l5 2.7V29l-5 2.5-5-2.5v-4.3z" fill="var(--text)" fill-opacity=".85" transform="translate(-1 -3) scale(.9)"/></svg><div class="bt"><b>NanoArch</b><small data-i="subtitle"></small></div></div>
     <nav class="nav" id="navA" data-it="ui_nav">
     <div class="grp" data-g="inputs"><button type="button" class="gh" data-gt="inputs" aria-expanded="false" aria-controls="gl-inputs"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sliders"/></svg><span class="gl" data-i="g_inputs"></span><svg class="ic chev" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev"/></svg></button>
-      <div class="glist" id="gl-inputs" hidden><button type="button" class="tab on" data-tab="notes" data-i="t_notes"></button><button type="button" class="tab" data-tab="sbc" data-i="t_sbc"></button></div></div>
+      <div class="glist" id="gl-inputs" hidden><button type="button" class="tab on" data-tab="notes" data-i="t_notes"></button><button type="button" class="tab" data-tab="sbc" data-i="t_sbc"></button><button type="button" class="tab" data-tab="pi" id="tab-pi"></button></div></div>
     <div class="grp" data-g="plan"><button type="button" class="gh" data-gt="plan" aria-expanded="false" aria-controls="gl-plan"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plan"/></svg><span class="gl" data-i="g_plan"></span><svg class="ic chev" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev"/></svg></button>
       <div class="glist" id="gl-plan" hidden><button type="button" class="tab" data-tab="sketch" data-i="t_sketch"></button><button type="button" class="tab" data-tab="ol" id="tab-ol"></button><button type="button" class="tab" data-tab="bim" data-i="t_bim"></button><button type="button" class="tab" data-tab="pr" id="tab-pr"></button></div></div>
     <div class="grp" data-g="comp"><button type="button" class="gh" data-gt="comp" aria-expanded="false" aria-controls="gl-comp"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-shield"/></svg><span class="gl" data-i="g_comp"></span><svg class="ic chev" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev"/></svg></button>
@@ -787,6 +797,7 @@ main.wide>.brief,main.wide>.rz1{display:none}
       <div class="pane" id="p-ex"></div>
       <div class="pane" id="p-dv"></div>
       <div class="pane" id="p-ol"></div>
+      <div class="pane" id="p-pi"></div>
       <div class="pane" id="p-vr"></div>
       <div class="pane" id="p-ov"></div>
       <div class="pane" id="p-rules">
@@ -968,6 +979,7 @@ function applyLang() {
   try { exBuild(); dvBuild(); olBuild(); vrBuild(); ovBuild(); applyMode(); $("draft").textContent = L("رسم BIM", "BIM draft"); $("newblank").textContent = L("مشروع فارغ", "Blank project"); drBar(); } catch (e) { /* not loaded yet */ }
   try { mbBuild(); } catch (e) { /* not loaded yet */ }
   uiBuild();
+  piBuild();
   if (state.alts.length) renderAlts();
   if (state.sbc) renderSbc(state.sbc);
   if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
@@ -4394,6 +4406,130 @@ $("newblank").onclick = () => busy(async () => {
 });
 $("draft").textContent = L("رسم BIM", "BIM draft");
 drBind();
+
+// ---------------------------------------------------------------- plan import: pictures of plans, one per level, into a project
+// The page only picks the files, decodes them to pixels and shows what the engine found; the reading and the building are the engine's
+// (`plan_import_prepare`, `plan_import`). Nothing is filled in for the owner: heights, thickness and axis distances are typed here.
+const PI = { drawings: [], title: "", xn: "", xs: "", yn: "", ys: "", v: { storey: "", thick: "", door: "", win: "", sill: "" }, report: null };
+const piHex = c => "#" + c.map(v => v.toString(16).padStart(2, "0")).join("");
+const piSame = (a, b) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+async function piDecode(p) {
+  const url = URL.createObjectURL(new Blob([b64bytes(p.b64)], { type: p.mime })); const img = new Image();
+  await new Promise((ok, no) => { img.onload = ok; img.onerror = () => no(new Error(p.name + ": " + L("الصورة لا تُقرأ", "the image cannot be read"))); img.src = url; });
+  const cv = document.createElement("canvas"); cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+  const cx = cv.getContext("2d", { willReadFrequently: true }); cx.fillStyle = "#fff"; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(img, 0, 0); URL.revokeObjectURL(url);
+  const px = cx.getImageData(0, 0, cv.width, cv.height).data, rgb = new Uint8Array(cv.width * cv.height * 3);
+  for (let i = 0, j = 0; i < px.length; i += 4) { rgb[j++] = px[i]; rgb[j++] = px[i + 1]; rgb[j++] = px[i + 2]; }
+  let b = ""; for (let i = 0; i < rgb.length; i += 0x8000) b += String.fromCharCode.apply(null, rgb.subarray(i, i + 0x8000));
+  return { w: cv.width, h: cv.height, rgb_b64: btoa(b), cv };
+}
+// The picture with the bubbles the engine took for axes drawn on it (once the axes are typed and checked), so the owner sees what was used.
+function piThumb(d) {
+  const c = document.createElement("canvas"); c.width = d.w; c.height = d.h; const x = c.getContext("2d"); x.drawImage(d.cv, 0, 0);
+  x.strokeStyle = "#00a86b"; x.fillStyle = "#006b43"; x.lineWidth = 3; x.font = "bold 13px sans-serif";
+  const f = d.fit; if (f) {
+    const mark = (px, py, name) => { x.beginPath(); x.arc(px, py, 17, 0, 7); x.stroke(); x.fillText(name, px - 14, py + 32); };
+    f.fit.x.matched.forEach(m => mark(m[0], f.row_y, m[1])); f.fit.y.matched.forEach(m => mark(f.col_x, m[0], m[1]));
+  }
+  return c.toDataURL("image/png");
+}
+// Asks the engine what is in each picture; with the axes typed (when they can be read) it also tells which circles are axis bubbles.
+async function piPrepare() {
+  if (!PI.drawings.length) return;
+  let ax = {}; try { ax = { x_axes: piAxes(PI.xn, PI.xs, ""), y_axes: piAxes(PI.yn, PI.ys, "") }; } catch (e) { ax = {}; }
+  const r = await call("plan_import_prepare", { ...ax, drawings: PI.drawings.map(d => ({ name: d.file, width: d.w, height: d.h, rgb_b64: d.rgb_b64 })) });
+  r.drawings.forEach((x, i) => { const d = PI.drawings[i]; d.colours = x.colours; d.candidates = x.candidates; d.fit = x.fit; d.fitError = x.fit_error; });
+}
+async function piAdd() {
+  const r = (await call("pick_plans")).picked; if (!r || !r.length) return;
+  for (const p of r) PI.drawings.push({ file: p.name, level: p.name.replace(/\.[^.]+$/, ""), ...(await piDecode(p)), colours: [], candidates: 0, fit: null, fitError: null, walls: [] });
+  await piPrepare(); piBuild();
+}
+// The names and the gaps between neighbouring axes, as the drawing's dimension chain gives them, to positions from the first axis.
+function piAxes(names, gaps, side) {
+  const n = names.trim().split(/[\s,;]+/).filter(Boolean), g = gaps.trim().split(/[\s,;]+/).filter(Boolean).map(Number);
+  if (n.length < 2) throw new Error(L(`${side}: اكتب اسمي محورين على الأقل`, `${side}: give at least two axis names`));
+  if (g.length !== n.length - 1 || g.some(v => !(v > 0))) throw new Error(L(`${side}: عدد المسافات يجب أن يكون أقل من عدد المحاور بواحد، وكلها أكبر من صفر`, `${side}: there must be one gap fewer than axes, each above zero`));
+  let pos = 0; return n.map((name, i) => { if (i) pos += g[i - 1]; return { name, pos_mm: pos }; });
+}
+async function piRun() {
+  const num = v => (v === "" || v == null ? null : Number(v));
+  let spec; try { spec = { title: PI.title.trim(), storey_mm: num(PI.v.storey), wall_thickness_mm: num(PI.v.thick), door_height_mm: num(PI.v.door), window_height_mm: num(PI.v.win), window_sill_mm: num(PI.v.sill), x_axes: piAxes(PI.xn, PI.xs, L("المحاور الأفقية", "Columns")), y_axes: piAxes(PI.yn, PI.ys, L("المحاور الرأسية", "Rows")) }; } catch (e) { toast(e.message, "err"); return; }
+  if (!PI.drawings.length) { toast(L("اختر المساقط أولاً", "Pick the plans first"), "err"); return; }
+  const missing = PI.drawings.find(d => !d.walls.length); if (missing) { toast(L(`اختر لون الجدران في ${missing.file}`, `Choose the wall colour of ${missing.file}`), "err"); return; }
+  const st = await call("status"); if (st.dirty && !(await uiAsk({ message: t("discard_q") }))) return;
+  if (DR.on) await drToggle(false);
+  drResetSession();
+  const r = await call("plan_import", { spec, drawings: PI.drawings.map(d => ({ name: d.file, level: d.level.trim(), width: d.w, height: d.h, rgb_b64: d.rgb_b64, wall_colours: d.walls })) });
+  applySettings(r.settings || {}); state.alts = []; state.sel = -1; state.qto = null; state.sched = null; state.notes = null; state.notes_ar = null; state.notes_en = null; $("alts").innerHTML = `<div class="empty">${t("alts_empty")}</div>`;
+  showPlan(r.svg); setLevels(r.levels); state.rooms_out = r.rooms; applyProject(r.settings || {}); renderSbc(r.sbc); refreshBim(); renderNotes(); setPlanButtons(true); refreshStatus();
+  PI.report = r.report; piBuild(); await drToggle(true);
+  toast(L(`بُني المشروع: ${r.report.levels.length} أدوار`, `Project built: ${r.report.levels.length} level(s)`));
+}
+// A piece of the picture round an open gap, the gap marked on it, so the owner sees which one a row is about.
+function piGapCrop(d, g) {
+  const [x1, y1, x2, y2] = g.px, cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, half = Math.max(45, Math.hypot(x2 - x1, y2 - y1) * 0.9), k = 2;
+  const c = document.createElement("canvas"); c.width = c.height = Math.round(half * 2 * k); const x = c.getContext("2d");
+  x.imageSmoothingEnabled = false; x.drawImage(d.cv, cx - half, cy - half, half * 2, half * 2, 0, 0, c.width, c.height);
+  x.strokeStyle = "#e8590c"; x.lineWidth = 4; x.setLineDash([7, 5]); x.beginPath(); x.moveTo((x1 - cx + half) * k, (y1 - cy + half) * k); x.lineTo((x2 - cx + half) * k, (y2 - cy + half) * k); x.stroke();
+  return c.toDataURL("image/png");
+}
+// Closes one open gap of a level with a room separator or a wall (the owner's thickness and storey height): the engine does it.
+async function piClose(li, n, how) {
+  const g = PI.report.levels[li].open_gaps.find(q => q.n === n), num = v => (v === "" || v == null ? null : Number(v));
+  const r = await call("plan_gap_close", { level: li, a: g.a, b: g.b, how, thickness_mm: num(PI.v.thick), height_mm: num(PI.v.storey) });
+  g.closed = how; showPlan(r.svg); if (r.levels) setLevels(r.levels); state.rooms_out = r.rooms; renderNotes(); refreshStatus(); piBuild();
+}
+function piGaps(l, li) {
+  const d = PI.drawings[li]; if (!l.open_gaps || !l.open_gaps.length) return "";
+  const done = { separator: L("أُغلقت بفاصل غرف", "closed with a separator"), wall: L("أُغلقت بجدار", "closed with a wall") };
+  const rows = l.open_gaps.map(g => `<div class="pi-gap">${d && d.cv ? `<img alt="" src="${piGapCrop(d, g)}">` : ""}<div><b>${L("فتحة", "Gap")} ${g.n}</b> · <span dir="ltr">${g.width_mm} mm</span><div class="hint">${g.kind === "passage" ? L("خالية", "bare") : L("عبرها شيء مرسوم", "something is drawn across it")}</div>
+    ${g.closed ? `<span class="badge ok">${done[g.closed]}</span>` : `<div class="bar tight"><button data-gap="${li}:${g.n}:separator">${L("فاصل غرف", "Separator")}</button><button data-gap="${li}:${g.n}:wall">${L("جدار", "Wall")}</button></div>`}</div></div>`).join("");
+  return `<div class="hint">${L("فتحات تُركت مفتوحة: أغلق منها ما هو حدّ غرفة. الفاصل يفصل الغرفتين بلا جدار؛ والجدار بسماكة الجدران وارتفاع الدور المكتوبين أعلاه.", "Gaps left open: close the ones that are a room boundary. A separator divides the two rooms without a wall; a wall takes the thickness and storey height typed above.")}</div><div class="pi-gaps">${rows}</div>`;
+}
+function piReport() {
+  const R = PI.report; if (!R) return "";
+  // The reasons something was not built, in the page's language (an English-only one is marked EN, as the other engine messages are).
+  const kv = a => (a || []).map(x => `<li dir="auto">${x.count} × ${lang === "ar" ? `${x.en_only ? `<span class="badge">EN</span> ` : ""}${esc(x.ar)}` : esc(x.en)}</li>`).join("");
+  const rows = R.levels.map(l => `<tr><td dir="auto">${esc(l.level)}</td><td>${l.mm_per_px.toFixed(1)}</td><td>${l.column_bubbles_fitted} / ${l.row_bubbles_fitted}</td><td>${l.walls_built} / ${l.walls_read}</td><td>${l.doors_built}</td><td>${l.windows_built}</td><td>${l.passages_built}</td><td>${l.gaps_left_open}</td><td>${l.rooms}</td><td>${l.composite_rooms}</td></tr>`).join("");
+  const detail = R.levels.map((l, li) => `<details ${PI.openLevel === li ? "open" : ""} data-lv-detail="${li}"><summary dir="auto">${esc(l.level)}</summary>
+    ${piGaps(l, li)}
+    ${l.walls_refused.length ? `<div class="hint">${L("جدران لم تُبنَ", "Walls not built")}</div><ul class="clean">${kv(l.walls_refused)}</ul>` : ""}
+    ${l.openings_not_built.length ? `<div class="hint">${L("فتحات لم تُبنَ", "Openings not built")}</div><ul class="clean">${kv(l.openings_not_built)}</ul>` : ""}
+    <div class="hint">${L("ملاحظات", "Notes")}</div><ul class="clean">${msgList("", l.notes, l.notes_ar, l.notes_en_only)}</ul></details>`).join("");
+  return `<h2>${L("تقرير الاستيراد", "Import report")}</h2><div style="overflow-x:auto"><table><thead><tr><th>${L("الدور", "Level")}</th><th>${L("مم/بكسل", "mm/px")}</th><th>${L("فقاعات أعمدة/صفوف", "Bubbles col/row")}</th><th>${L("جدران", "Walls")}</th><th>${L("أبواب", "Doors")}</th><th>${L("نوافذ", "Windows")}</th><th>${L("ممرات", "Passages")}</th><th>${L("فتحات تُركت", "Left open")}</th><th>${L("غرف", "Rooms")}</th><th>${L("منها على أجزاء", "In parts")}</th></tr></thead><tbody>${rows}</tbody></table></div>${detail}
+    <ul class="clean">${msgList("hint", R.notes, R.notes_ar, R.notes_en_only)}</ul>`;
+}
+function piBuild() {
+  const box = $("p-pi"); if (!box) return; $("tab-pi").textContent = L("استيراد مساقط", "Import plans");
+  const v = PI.v, inp = (id, val, ph) => `<input id="${id}" value="${esc(val)}" inputmode="decimal" placeholder="${esc(ph)}">`;
+  const cards = PI.drawings.map((d, i) => `<div class="pi-card" data-i="${i}">
+    <div class="bar flat"><b dir="auto">${esc(d.file)}</b><span class="badge">${d.w}×${d.h}px</span><span class="badge">${L("دوائر محتملة", "circles")}: ${d.candidates}</span>${d.fit ? `<span class="badge ok">${L("المقياس", "scale")} ${d.fit.fit.mm_per_px.toFixed(1)} ${L("مم/بكسل", "mm/px")} · ${d.fit.fit.x.matched.length}+${d.fit.fit.y.matched.length} ${L("فقاعات", "bubbles")}</span>` : ""}${d.fitError ? `<span class="badge warn" dir="auto">${esc(d.fitError)}</span>` : ""}
+      <button data-up="${i}" ${i ? "" : "disabled"} title="${L("أدنى", "Lower")}">↑</button><button data-dn="${i}" ${i < PI.drawings.length - 1 ? "" : "disabled"} title="${L("أعلى", "Higher")}">↓</button><button data-rm="${i}">${L("أزل", "Remove")}</button></div>
+    <label>${L("اسم الدور (الأول هو الأدنى)", "Level name (the first is the lowest)")}<input data-lv="${i}" value="${esc(d.level)}" dir="auto"></label>
+    <img src="${piThumb(d)}" alt="">
+    <div class="hint">${L("ألوان الجدران المحتملة (الصلبة السميكة): اختر ما يُبنى", "Possible wall colours (thick ink): choose what is built")}</div>
+    <div>${d.colours.map((c, k) => `<span class="pi-sw ${d.walls.some(w => piSame(w, c.rgb)) ? "on" : ""}" data-sw="${i}:${k}" title="${(c.thick_share * 100).toFixed(0)}% ${L("سميك", "thick")}"><i style="background:${piHex(c.rgb)}"></i>${piHex(c.rgb)} · ${c.pixels}px</span>`).join("") || `<span class="hint">${L("لا ألوان", "none")}</span>`}</div></div>`).join("");
+  box.innerHTML = `<div class="note">${L("مسقط لكل دور (صورة). يجد البرنامج فقاعات المحاور ويطابقها مع المسافات التي تكتبها فيعاير المقياس ويحاذي الأدوار، ثم يقرأ الجدران بالألوان التي تختارها ويبني الأدوار والجدران والأبواب والنوافذ والغرف. الارتفاعات والسماكة قيمك أنت؛ لا قيم افتراضية.", "One plan image per level. The program finds the axis bubbles and matches them with the distances you type, so it sets the scale and aligns the levels; then it reads the walls in the colours you choose and builds the levels, walls, doors, windows and rooms. Heights and thickness are yours: there are no defaults.")}</div>
+    <div class="bar flat"><button id="pi-add">${L("اختر المساقط…", "Pick the plans…")}</button></div>${cards}
+    <h2>${L("المحاور (من سلسلة الأبعاد في الرسم)", "Axes (from the drawing's dimension chain)")}</h2>
+    <div class="pi-grid"><label>${L("أسماء المحاور الأفقية، يساراً لليمين", "Column axis names, left to right")}${inp("pi-xn", PI.xn, "AX3 AX4 AX5 AX6")}</label><label>${L("المسافات بينها (مم)", "Gaps between them (mm)")}${inp("pi-xs", PI.xs, "6180 5185 5325")}</label>
+    <label>${L("أسماء المحاور الرأسية، من الأعلى", "Row axis names, top down")}${inp("pi-yn", PI.yn, "AY6 AY5 AY4 AY3 AY2 AY1")}</label><label>${L("المسافات بينها (مم)", "Gaps between them (mm)")}${inp("pi-ys", PI.ys, "4654 4500 3200 4820 5472")}</label></div>
+    <h2>${L("قيم المالك (مم)", "Owner's values (mm)")}</h2>
+    <div class="pi-grid"><label>${L("اسم المشروع", "Project name")}<input id="pi-t" value="${esc(PI.title)}" dir="auto"></label><label>${L("ارتفاع الدور", "Storey height")}${inp("pi-storey", v.storey, "")}</label><label>${L("سماكة الجدران", "Wall thickness")}${inp("pi-thick", v.thick, "")}</label>
+    <label>${L("ارتفاع الباب", "Door height")}${inp("pi-door", v.door, "")}</label><label>${L("ارتفاع النافذة", "Window height")}${inp("pi-win", v.win, "")}</label><label>${L("جلسة النافذة", "Window sill")}${inp("pi-sill", v.sill, "")}</label></div>
+    <div class="bar"><button id="pi-check">${L("تحقق من المحاور", "Check the axes")}</button><button id="pi-run" class="primary">${L("ابنِ المشروع", "Build the project")}</button></div>${piReport()}`;
+  const bind = (id, f) => { const e = $(id); if (e) e.oninput = () => f(e.value); };
+  bind("pi-xn", x => PI.xn = x); bind("pi-xs", x => PI.xs = x); bind("pi-yn", x => PI.yn = x); bind("pi-ys", x => PI.ys = x); bind("pi-t", x => PI.title = x);
+  bind("pi-storey", x => v.storey = x); bind("pi-thick", x => v.thick = x); bind("pi-door", x => v.door = x); bind("pi-win", x => v.win = x); bind("pi-sill", x => v.sill = x);
+  box.querySelectorAll("[data-gap]").forEach(b => b.onclick = () => { const [li, n, how] = b.dataset.gap.split(":"); PI.openLevel = Number(li); busy(() => piClose(Number(li), Number(n), how)); });
+  $("pi-add").onclick = () => busy(piAdd); $("pi-run").onclick = () => busy(piRun); $("pi-check").onclick = () => busy(async () => { await piPrepare(); piBuild(); });
+  box.querySelectorAll("[data-lv]").forEach(e => e.oninput = () => { PI.drawings[+e.dataset.lv].level = e.value; });
+  box.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { PI.drawings.splice(+b.dataset.rm, 1); piBuild(); });
+  box.querySelectorAll("[data-up]").forEach(b => b.onclick = () => { const i = +b.dataset.up; [PI.drawings[i - 1], PI.drawings[i]] = [PI.drawings[i], PI.drawings[i - 1]]; piBuild(); });
+  box.querySelectorAll("[data-dn]").forEach(b => b.onclick = () => { const i = +b.dataset.dn; [PI.drawings[i + 1], PI.drawings[i]] = [PI.drawings[i], PI.drawings[i + 1]]; piBuild(); });
+  box.querySelectorAll("[data-sw]").forEach(b => b.onclick = () => { const [i, k] = b.dataset.sw.split(":").map(Number), d = PI.drawings[i], c = d.colours[k].rgb, at = d.walls.findIndex(w => piSame(w, c)); if (at >= 0) d.walls.splice(at, 1); else d.walls.push(c); piBuild(); });
+}
 
 // ---------------------------------------------------------------- the menu bar: eight drop-downs on one row
 // Every control keeps its own id and handler; the menus only host them. A panel opens on click, Enter, Space or the arrow keys, and closes on a command,

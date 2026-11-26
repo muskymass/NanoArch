@@ -175,6 +175,7 @@ fn respond(app: &Shared, body: &str) -> String {
         "save_project" => save_project(app),
         "open_project" => open_project(app),
         "pick_sketch" => pick_sketch(),
+        "pick_plans" => pick_plans(),
         // A project folder: the user picks it, the engine reads its files, and the page may then open the drawings inside that folder only.
         "pick_folder" => pick_folder(),
         "folder_import" => {
@@ -348,6 +349,23 @@ fn dwg_to_dxf_file(args: &Value) -> Result<Value, String> {
     }
     let bytes = std::fs::read(&path).map_err(|e| format!("dwg: {}: {e}", path.display()))?;
     Ok(json!({ "dxf": dwg::dwg_to_dxf(&bytes)? }))
+}
+
+/// Several plan images at once (one per level) for a plan import. The user picks them in a dialog; `NANOARCH_PLAN_FILES` (paths separated
+/// by `;`) is the seam an end-to-end test of the real window uses instead.
+fn pick_plans() -> Result<Value, String> {
+    let paths: Vec<PathBuf> = match std::env::var_os("NANOARCH_PLAN_FILES") {
+        Some(p) => std::env::split_paths(&p).collect::<Vec<_>>().into_iter().flat_map(|q| q.to_string_lossy().split(';').filter(|x| !x.is_empty()).map(PathBuf::from).collect::<Vec<_>>()).collect(),
+        None => rfd::FileDialog::new().add_filter("Plans (png, jpg, bmp, webp)", &["png", "jpg", "jpeg", "bmp", "webp"]).pick_files().unwrap_or_default(),
+    };
+    let mut out = Vec::new();
+    for path in &paths {
+        if sketch_kind(path).is_some_and(|(kind, _)| kind == "pdf") {
+            return Err(format!("{}: a PDF is not read here: export the page as an image first", path.display()));
+        }
+        out.push(read_sketch(path)?);
+    }
+    Ok(json!({ "picked": out }))
 }
 
 fn pick_sketch() -> Result<Value, String> {

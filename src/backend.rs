@@ -529,7 +529,9 @@ impl App {
             // The page's language: only what the screen shows changes (generated room names); the reply carries the plan and rooms to show again.
             "ui_lang" => {
                 self.ui_arabic = args.get("lang").and_then(Value::as_str) == Some("ar");
-                Ok(json!({ "svg": self.render_or_null()?, "rooms": self.rooms_json() }))
+                // The page asks at start-up, before any project is open: then there is no plan to draw again, and that is not an error.
+                let svg = if self.doc.is_some() { self.render_or_null()? } else { Value::Null };
+                Ok(json!({ "svg": svg, "rooms": self.rooms_json() }))
             }
             // The plan as a file: always with the stored names, whatever language the screen is in, so an exported SVG says the same as the
             // DXF, IFC and PDF made from the same project.
@@ -657,6 +659,11 @@ impl App {
             "draft_props" => self.draft_props(args),
             "draft_set" => self.draft_set(args),
             "project_blank" => self.project_blank(args),
+            "level_add" => self.level_add(args),
+            "plan_import_prepare" => Self::plan_import_prepare(args),
+            // What these two refuse is shown to the owner as it is, so it is said in the interface's language.
+            "plan_import" => self.plan_import(args).map_err(|e| if self.ui_arabic { nnx_core::msgs::localize(&e).0 } else { e }),
+            "plan_gap_close" => self.plan_gap_close(args).map_err(|e| if self.ui_arabic { nnx_core::msgs::localize(&e).0 } else { e }),
             "draft_grid" => self.draft_grid(args),
             "draft_dimension" => self.draft_dimension(args),
             "draft_tag" => self.draft_tag(args),
@@ -2242,8 +2249,8 @@ impl App {
         }
         editing::commit_with_sync(self.doc.as_mut().ok_or("choose a layout first")?, &so, label, cmds, level)?;
         let mut notes = edit.notes;
-        if sync.not_rect > 0 {
-            notes.push(format!("{} enclosed region(s) are not rectangles and got no room: split them with a wall", sync.not_rect));
+        if sync.composite > 0 && !sync.added.is_empty() {
+            notes.push(format!("{} room(s) are not rectangles and are made of several rectangular parts, counted as one room each", sync.composite));
         }
         if !sync.overlapping.is_empty() {
             notes.push(format!("a new enclosed region overlaps the room(s) {} and was not made a room", sync.overlapping.join(", ")));
@@ -2259,6 +2266,127 @@ impl App {
         v["rooms"] = json!(self.rooms_json());
         v["sbc"] = self.sbc_json();
         Ok(v)
+    }
+
+    /// What the program sees in each drawing of a plan import, for the owner to confirm: the axis bubbles it finds, how many of them stand in a
+    /// row and in a column, and the colours walls may be drawn in. `drawings`: `[{ name, width, height, rgb_b64 }]`.
+    fn plan_import_prepare(args: &Value) -> Result<Value, String> {
+        let list = args.get("drawings").and_then(Value::as_array).ok_or("plan import: 'drawings' (the plans to read) is missing")?;
+        let mut out = Vec::new();
+        for d in list {
+            let name = d.get("name").and_then(Value::as_str).unwrap_or("drawing").to_string();
+            let (rgb, w, h) = Self::raster_rgb(d)?;
+            let colours = nnx_core::rasterwalls::wall_colour_candidates(&rgb, w, h).map_err(|e| format!("{name}: {e}"))?;
+            let (lo, hi) = ((w / 60).max(4), (w / 25).max(6));
+            let candidates = nnx_core::planaxes::find_bubbles(&rgb, w, h, lo, hi).map_err(|e| format!("{name}: {e}"))?;
+            // With the owner's axes the circles that are axis bubbles are told from the rest, and the scale they give is shown for confirming.
+            let axes = |k: &str| -> Option<Vec<nnx_core::planaxes::Axis>> { args.get(k).filter(|v| !v.is_null()).and_then(|v| serde_json::from_value(v.clone()).ok()) };
+            let fit = match (axes("x_axes"), axes("y_axes")) {
+                (Some(x), Some(y)) => Some(nnx_core::planaxes::fit_sheet(&candidates, &x, &y)),
+                _ => None,
+            };
+            out.push(json!({ "name": name, "colours": colours, "candidates": candidates.len(), "bubble_radius_px": [lo, hi],
+                "fit": fit.as_ref().and_then(|f| f.as_ref().ok()), "fit_error": fit.as_ref().and_then(|f| f.as_ref().err()) }));
+        }
+        Ok(json!({ "drawings": out }))
+    }
+
+    /// The import report with the Arabic of each of its messages beside the English one: the notes (`notes`, `notes_ar`, `notes_en_only`) and the
+    /// reasons something was not built (`[{ en, ar, en_only, count }]`). The page shows the one for its language.
+    fn report_with_arabic(mut r: Value) -> Value {
+        use nnx_core::msgs;
+        let strings = |v: &Value| -> Vec<String> { v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default() };
+        let add_notes = |o: &mut Value| {
+            let en = strings(&o["notes"]);
+            o["notes_ar"] = json!(msgs::localize_all(&en));
+            o["notes_en_only"] = json!(msgs::untranslated(&en));
+        };
+        let reasons = |m: &Value| -> Value {
+            json!(m.as_object().map(|o| o.iter().map(|(k, n)| { let (ar, known) = msgs::localize(k); json!({ "en": k, "ar": ar, "en_only": !known, "count": n }) }).collect::<Vec<_>>()).unwrap_or_default())
+        };
+        add_notes(&mut r);
+        if let Some(levels) = r["levels"].as_array_mut() {
+            for l in levels {
+                add_notes(l);
+                l["walls_refused"] = reasons(&l["walls_refused"]);
+                l["openings_not_built"] = reasons(&l["openings_not_built"]);
+            }
+        }
+        r
+    }
+
+    /// Builds a project from plans, one per level (`nnx_core::planimport`): axes, scale and alignment from the bubbles and the owner's axis
+    /// distances; walls and openings in the owner's wall colours; heights and thickness the owner's. Replaces the open project.
+    /// `{ spec, drawings: [{ name, level, width, height, rgb_b64, wall_colours: [[r, g, b]] }] }`.
+    fn plan_import(&mut self, args: &Value) -> Result<Value, String> {
+        let spec: nnx_core::planimport::Spec = serde_json::from_value(args.get("spec").cloned().ok_or("plan import: 'spec' (axes, heights, thickness) is missing")?).map_err(|e| format!("plan import: the spec is not valid: {e}"))?;
+        let list = args.get("drawings").and_then(Value::as_array).ok_or("plan import: 'drawings' (the plans to read) is missing")?;
+        let mut drawings = Vec::new();
+        for d in list {
+            let (rgb, width, height) = Self::raster_rgb(d)?;
+            let name = d.get("name").and_then(Value::as_str).unwrap_or("drawing").to_string();
+            let level = d.get("level").and_then(Value::as_str).ok_or_else(|| format!("plan import: {name} needs its level name"))?.to_string();
+            let wall_colours: Vec<[u8; 3]> = serde_json::from_value(d.get("wall_colours").cloned().ok_or_else(|| format!("plan import: {name} needs its wall colours"))?).map_err(|e| format!("plan import: the wall colours of {name} are not valid: {e}"))?;
+            drawings.push(nnx_core::planimport::Drawing { name, level, width, height, rgb, wall_colours });
+        }
+        let (doc, report) = nnx_core::planimport::import(&spec, &drawings)?;
+        self.alternatives.clear();
+        self.plan = None;
+        self.draft = None;
+        self.cur_level = 0;
+        self.show_structure = false;
+        self.doc = Some(doc);
+        let mut v = self.draft_frame()?;
+        v["svg"] = self.render_or_null()?;
+        v["rooms"] = json!(self.rooms_json());
+        v["levels"] = self.levels_json();
+        v["settings"] = self.form_state();
+        v["sbc"] = self.sbc_json();
+        v["report"] = Self::report_with_arabic(serde_json::to_value(report).map_err(|e| e.to_string())?);
+        Ok(v)
+    }
+
+    /// Closes a gap the plan import left open, on the level with that index, as one undoable step: `how` is `separator` (two rooms, no
+    /// wall) or `wall` (then `thickness_mm` and `height_mm` are required: the owner's values, there is no default). The gap's ends `a`
+    /// and `b` are moved onto the walls beside it by the engine, and the rooms are found again. The level becomes the one on screen.
+    fn plan_gap_close(&mut self, args: &Value) -> Result<Value, String> {
+        use nnx_core::planimport::{CloseHow, close_gap};
+        let (a, b) = (Self::int_point(args.get("a"), "a")?, Self::int_point(args.get("b"), "b")?);
+        let index = args.get("level").and_then(Value::as_u64).ok_or("closing a gap: 'level' (its place in the building, from 0) is missing")? as usize;
+        let need = |k: &str, what: &str| args.get(k).and_then(Value::as_i64).filter(|n| *n > 0).ok_or_else(|| format!("closing a gap with a wall: {what} is missing or not above zero: it is the owner's to give, there is no default"));
+        let how = match args.get("how").and_then(Value::as_str) {
+            Some("separator") => CloseHow::Separator,
+            Some("wall") => CloseHow::Wall { thickness: need("thickness_mm", "the wall thickness")?, height: need("height_mm", "the storey height")? },
+            _ => return Err("closing a gap: 'how' must be 'separator' or 'wall'".into()),
+        };
+        if index >= self.level_list().len() {
+            return Err("closing a gap: there is no such level".into());
+        }
+        self.cur_level = index;
+        let level = self.current_level();
+        let (cmd, id) = close_gap(&self.doc()?.model, level, a, b, how)?;
+        let label = if how == CloseHow::Separator { "Close gap with a room separator" } else { "Close gap with a wall" };
+        let mut v = self.draft_commit(label, nnx_core::draft::Edit { cmds: vec![cmd], created: vec![id], notes: vec![] }, level)?;
+        v["levels"] = self.levels_json();
+        v["closed"] = json!(id.to_string());
+        Ok(v)
+    }
+
+    /// Adds a level above the highest one of the open project and makes it the one on screen, so walls drawn next go on it. `name` is
+    /// required and must be new. Its elevation is not stored: it follows from the walls of the levels below (and their slabs), as for every
+    /// level of the model.
+    fn level_add(&mut self, args: &Value) -> Result<Value, String> {
+        let name = args.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()).ok_or("level_add: give the level a name")?.to_string();
+        let doc = self.doc.as_mut().ok_or("level_add: open or start a project first")?;
+        let existing: Vec<(i64, String)> = nnx_core::building::levels(&doc.model).into_iter().filter_map(|(i, id)| Some((i, doc.model.get(&id)?.typed::<nnx_core::typed::Level>().ok()?.name))).collect();
+        if existing.iter().any(|(_, n)| n.eq_ignore_ascii_case(&name)) {
+            return Err(format!("level_add: a level named '{name}' already exists"));
+        }
+        let index = existing.iter().map(|(i, _)| *i).max().map_or(0, |m| m + 1);
+        let el = nnx_core::typed::element_of(&nnx_core::typed::Level { name, index, extra: Default::default() }, nnx_core::Source::User);
+        doc.commit("Add level", nnx_core::Origin::User, vec![nnx_core::Command::Create(el)]).map_err(|e| e.to_string())?;
+        self.cur_level = self.level_list().len().saturating_sub(1);
+        Ok(json!({ "svg": self.render_or_null()?, "levels": self.levels_json(), "rooms": self.rooms_json(), "level_index": index }))
     }
 
     /// A new empty project: its project element and the level LVL-1. Drafting (walls, doors, windows, grid lines, dimensions, tags) then
@@ -2415,10 +2543,7 @@ impl App {
         let level = self.current_level();
         let sync = nnx_core::annot::rooms_sync(&self.doc()?.model, level);
         if sync.cmds.is_empty() {
-            let mut why = vec!["no new room: every enclosed rectangle already has one".to_string()];
-            if sync.not_rect > 0 {
-                why.push(format!("{} enclosed region(s) are not rectangles", sync.not_rect));
-            }
+            let why = ["no new room: every enclosed rectangle already has one".to_string()];
             return Err(why.join("; "));
         }
         let mut v = self.draft_commit_with("Find rooms", nnx_core::draft::Edit { cmds: sync.cmds.clone(), created: vec![], notes: sync.notes.iter().chain(sync.blocked.iter()).cloned().collect() }, level, false)?;
@@ -2597,12 +2722,17 @@ impl App {
         let level = self.current_level();
         let labels = self.display_labels();
         let locked = self.project().map(|p| p.meta.locked_rooms).unwrap_or_default();
-        self.doc
-            .iter()
-            .flat_map(|d| d.model.elements.values())
+        let Some(doc) = self.doc.as_ref() else { return Vec::new() };
+        doc.model.elements.values()
             .filter(|e| level.is_none() || e.level_id == level)
-            .filter_map(|e| e.typed::<nnx_core::typed::Space>().ok())
-            .map(|s| json!({ "key": s.requirement_key, "locked": locked.contains(&s.requirement_key), "name": nnx_core::annot::room_name(&s, &labels).unwrap_or(s.requirement_key.clone()), "func": s.func, "area": s.area, "net_area": s.net_area, "target": s.target_area }))
+            .filter_map(|e| Some((e.level_id, e.typed::<nnx_core::typed::Space>().ok()?)))
+            // A room made of several rectangles is one row, with the areas of all of them.
+            .filter(|(_, s)| nnx_core::annot::part_of(s).is_none())
+            .map(|(lv, s)| {
+                let t = nnx_core::annot::room_total(&doc.model, lv, &s);
+                let target = if t.parts == 1 { s.target_area } else { t.area };
+                json!({ "key": s.requirement_key, "locked": locked.contains(&s.requirement_key), "name": nnx_core::annot::room_name(&s, &labels).unwrap_or(s.requirement_key.clone()), "func": s.func, "area": t.area, "net_area": t.net_area, "target": target, "parts": t.parts })
+            })
             .collect()
     }
 
@@ -5733,9 +5863,11 @@ mod tests {
         let c = app.handle("raster_wall_colours", &json!({ "width": w, "height": h, "rgb_b64": b64 })).unwrap();
         assert_eq!(c["colours"].as_array().unwrap().len(), 1, "{c}");
         let r = app.handle("raster_walls", &json!({ "width": w, "height": h, "rgb_b64": b64, "params": { "mm_per_px": 50.0, "wall_colours": [wall] } })).unwrap();
-        assert_eq!(r["walls"].as_array().unwrap().len(), 5, "{r}");
-        assert_eq!(r["openings"].as_array().unwrap().len(), 1, "{r}");
-        assert_eq!(r["openings"][0]["hi_px"].as_f64().unwrap() - r["openings"][0]["lo_px"].as_f64().unwrap(), 20.0);
+        // A gap with nothing in it is not built over: the partition is two walls and the passage lies between them.
+        assert_eq!(r["walls"].as_array().unwrap().len(), 6, "{r}");
+        assert!(r["openings"].as_array().unwrap().is_empty(), "{r}");
+        assert_eq!(r["passages"].as_array().unwrap().len(), 1, "{r}");
+        assert_eq!(r["passages"][0]["hi_px"].as_f64().unwrap() - r["passages"][0]["lo_px"].as_f64().unwrap(), 20.0);
         // Nothing is read without the scale, the wall colours or the settings object, and the reply says which is missing.
         assert!(app.handle("raster_walls", &json!({ "width": w, "height": h, "rgb_b64": b64 })).unwrap_err().contains("params"));
         assert!(app.handle("raster_walls", &json!({ "width": w, "height": h, "rgb_b64": b64, "params": { "mm_per_px": 0.0, "wall_colours": [wall] } })).unwrap_err().contains("scale"));
@@ -10167,6 +10299,86 @@ COL-1,10,10
 
     fn draw(app: &mut App, a: [i64; 2], b: [i64; 2]) -> Value {
         app.handle("draft_wall", &json!({ "a": a, "b": b, "thickness": 200, "height": 3000 })).unwrap()
+    }
+
+    #[test]
+    fn plans_become_a_project_through_prepare_and_import_and_nothing_is_built_without_the_owners_values() {
+        let (w, h, wall) = (320usize, 240usize, [28u8, 124, 108]);
+        let mut g = vec![240u8; w * h * 3];
+        let mut rect = |x0: usize, y0: usize, x1: usize, y1: usize, c: [u8; 3]| {
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    g[(y * w + x) * 3..(y * w + x) * 3 + 3].copy_from_slice(&c);
+                }
+            }
+        };
+        rect(57, 67, 263, 73, wall);
+        rect(57, 147, 263, 153, wall);
+        rect(57, 67, 63, 153, wall);
+        rect(257, 67, 263, 153, wall);
+        for (cx, cy) in [(60.0, 26.0), (160.0, 26.0), (260.0, 26.0), (294.0, 70.0), (294.0, 150.0)] {
+            for y in 0..h {
+                for x in 0..w {
+                    if ((x as f64 - cx).hypot(y as f64 - cy) - 13.0).abs() <= 1.0 {
+                        g[(y * w + x) * 3..(y * w + x) * 3 + 3].copy_from_slice(&[150, 160, 160]);
+                    }
+                }
+            }
+        }
+        let b64 = nnx_core::xlsx::base64_encode(&g);
+        let mut app = App::default();
+        let p = app.handle("plan_import_prepare", &json!({ "drawings": [{ "name": "ground", "width": w, "height": h, "rgb_b64": b64 }] })).unwrap();
+        assert!(p["drawings"][0]["candidates"].as_u64().unwrap() >= 5, "{p}");
+        assert!(p["drawings"][0]["fit"].is_null() && p["drawings"][0]["fit_error"].is_null(), "no axes given: nothing is fitted");
+        assert!(p["drawings"][0]["colours"].as_array().unwrap().iter().any(|c| c["rgb"] == json!(wall)), "{p}");
+        let axes = |names: &[&str], pos: &[f64]| names.iter().zip(pos).map(|(n, p)| json!({ "name": n, "pos_mm": p })).collect::<Vec<_>>();
+        let spec = json!({ "title": "Synthetic", "storey_mm": 3000, "wall_thickness_mm": 300, "door_height_mm": 2000, "window_height_mm": 1500, "window_sill_mm": 500,
+            "x_axes": axes(&["A", "B", "C"], &[0.0, 5000.0, 10000.0]), "y_axes": axes(&["1", "2"], &[0.0, 4000.0]) });
+        let drawing = json!({ "name": "ground", "level": "Ground", "width": w, "height": h, "rgb_b64": b64, "wall_colours": [wall] });
+        let r = app.handle("plan_import", &json!({ "spec": spec, "drawings": [drawing] })).unwrap();
+        assert_eq!(r["levels"]["list"][0]["name"], "Ground", "{r}");
+        assert_eq!(r["report"]["levels"][0]["walls_built"], 4, "{r}");
+        // Every message of the report has its Arabic: none is left to be shown in English in the Arabic page.
+        let rep = &r["report"];
+        let flags = |v: &Value| v.as_array().unwrap().iter().all(|x| x == false);
+        assert!(flags(&rep["notes_en_only"]) && flags(&rep["levels"][0]["notes_en_only"]), "{rep}");
+        assert!(rep["levels"][0]["openings_not_built"].as_array().unwrap().iter().all(|x| x["en_only"] == false), "{rep}");
+        assert!(rep["levels"][0]["origin_x_mm"].is_number() && rep["levels"][0]["origin_y_mm"].is_number());
+        assert_eq!(r["rooms"].as_array().unwrap().len(), 1, "{r}");
+        // Without the owner's storey height nothing is built, and the open project is the one that was there.
+        let mut bad = spec.clone();
+        bad["storey_mm"] = json!(null);
+        assert!(app.handle("plan_import", &json!({ "spec": bad, "drawings": [drawing] })).unwrap_err().contains("storey_mm"));
+        assert_eq!(app.handle("status", &json!({})).unwrap()["has_doc"], true);
+        assert!(app.handle("plan_import", &json!({ "spec": spec })).unwrap_err().contains("drawings"));
+        assert!(app.handle("plan_import", &json!({ "spec": spec, "drawings": [{ "name": "x", "level": "L", "width": w, "height": h, "rgb_b64": b64 }] })).unwrap_err().contains("wall colours"));
+    }
+
+    #[test]
+    fn the_language_is_told_to_the_program_before_any_project_is_open_without_an_error() {
+        let mut app = App::default();
+        let r = app.handle("ui_lang", &json!({ "lang": "ar" })).unwrap();
+        assert!(r["svg"].is_null() && r["rooms"].as_array().unwrap().is_empty(), "{r}");
+        assert!(app.ui_arabic);
+    }
+
+    #[test]
+    fn a_level_is_added_above_the_others_and_walls_drawn_next_go_on_it() {
+        let mut app = blank_app();
+        assert!(app.handle("level_add", &json!({})).unwrap_err().contains("name"));
+        let r = app.handle("level_add", &json!({ "name": "First floor" })).unwrap();
+        assert_eq!(r["levels"]["list"].as_array().unwrap().len(), 2, "{r}");
+        assert_eq!(r["levels"]["current"], 1);
+        assert!(app.handle("level_add", &json!({ "name": "first FLOOR" })).unwrap_err().contains("already"));
+        // A wall drawn now is on the new level; the first level has none.
+        draw(&mut app, [1000, 1000], [7000, 1000]);
+        let on = |app: &App, i: usize| {
+            let lv = nnx_core::building::levels(model_of(app));
+            model_of(app).elements.values().filter(|e| e.kind == "Wall" && e.level_id == Some(lv[i].1)).count()
+        };
+        assert_eq!((on(&app, 0), on(&app, 1)), (0, 1));
+        let back = app.handle("level", &json!({ "index": 0 })).unwrap();
+        assert_eq!(back["levels"]["current"], 0);
     }
 
     #[test]

@@ -132,7 +132,7 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
     let mut o = String::new();
     let _ = write!(
         o,
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w:.1} {h:.1}" width="{w:.0}" height="{h:.0}" font-family="Segoe UI, Tahoma, Arial, sans-serif">
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w:.1} {h:.1}" width="{w:.0}" height="{h:.0}" direction="ltr" font-family="Segoe UI, Tahoma, Arial, sans-serif">
 <style>
  .bg{{fill:#fff}} .room{{fill:#fafaf7;stroke:none}} .room.wet{{fill:#e6f0f7}}
  .wall{{fill:#2b2b2b}} .wall.int{{fill:#4a4a4a}} .cut{{fill:#fff}}
@@ -287,21 +287,23 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
 
     // Labels (a room with a tag is labelled by its tag).
     let tagged = crate::annot::tagged_rooms(model, level);
-    for (e, sp) in spaces.iter().filter(|(e, _)| !tagged.contains(&e.id)) {
+    // A room made of several rectangles is labelled once, on its largest one, with the whole room's area.
+    for (e, sp) in spaces.iter().filter(|(e, sp)| !tagged.contains(&e.id) && crate::annot::part_of(sp).is_none()) {
         let name = crate::annot::room_name(sp, &opts.labels).or_else(|| opts.labels.get(&sp.func).cloned()).unwrap_or_else(|| sp.requirement_key.clone());
-        let area = sp.net_area.unwrap_or(sp.area);
+        let total = crate::annot::room_total(model, e.level_id, sp);
+        let area = total.net_area.unwrap_or(total.area);
+        // The sides are those of one rectangle: a room of several has no single width and length to print.
+        let sides = if total.parts == 1 { format!("  ·  {:.2} × {:.2}", sp.w as f64 / 1000.0, sp.h as f64 / 1000.0) } else { String::new() };
         let cx = tx(sp.x as f64 + sp.w as f64 / 2.0);
         let cy = ty(sp.y as f64 + sp.h as f64 / 2.0);
         let _ = writeln!(o, r#"<text class="name" data-for="{}" x="{:.1}" y="{:.1}">{}</text>"#, e.id, cx, cy - 4.0, esc(&name));
         let _ = writeln!(
             o,
-            r#"<text class="meta" data-for="{}" x="{:.1}" y="{:.1}">{:.1} m²  ·  {:.2} × {:.2}</text>"#,
+            r#"<text class="meta" data-for="{}" x="{:.1}" y="{:.1}">{:.1} m²{sides}</text>"#,
             e.id,
             cx,
             cy + 10.0,
-            area,
-            sp.w as f64 / 1000.0,
-            sp.h as f64 / 1000.0
+            area
         );
     }
 

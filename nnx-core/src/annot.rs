@@ -4,7 +4,7 @@
 //! - **Blank project**: `blank_project_commands` makes a project element and the level `LVL-1`; nothing else. Drafting then works with no
 //!   generated layout.
 //! - **Rooms from walls**: `rooms_sync` finds the regions the wall centre lines enclose. A region that is a rectangle becomes a room
-//!   (`Source::Computed`); one that is not a rectangle is reported, not guessed. Rooms it made are removed again when their walls go.
+//!   (`Source::Computed`); one that is not a rectangle is cut into rectangles that are parts of one room. Rooms it made are removed again when their walls go.
 //!   Rooms from a layout, or ones the user made, are never touched.
 //! - **Grid lines** have unique names (letters for vertical lines, numbers for horizontal ones), belong to the project and are drawn on every
 //!   plan, elevation and section.
@@ -273,7 +273,10 @@ pub fn tag_lines(model: &Model, host: &Element, tag: &Tag, labels: &BTreeMap<Str
     let (name, size): (String, String) = match host.kind.as_str() {
         "Space" => {
             let Ok(sp) = host.typed::<Space>() else { return Vec::new() };
-            (room_name(&sp, labels).or_else(|| labels.get(&sp.func).cloned()).unwrap_or_else(|| sp.requirement_key.clone()), format!("{:.2} m²", sp.net_area.unwrap_or(sp.area)))
+            (room_name(&sp, labels).or_else(|| labels.get(&sp.func).cloned()).unwrap_or_else(|| sp.requirement_key.clone()), {
+                let t = room_total(model, host.level_id, &sp);
+                format!("{:.2} m²", t.net_area.unwrap_or(t.area))
+            })
         }
         "Door" => match host.typed::<Door>() {
             Ok(d) => ("Door".into(), format!("{} × {}", d.width, d.height)),
@@ -306,6 +309,33 @@ pub fn tag_lines(model: &Model, host: &Element, tag: &Tag, labels: &BTreeMap<Str
     v
 }
 
+// ------------------------------------------------------------------ rooms made of several rectangles
+
+/// The key of the room this rectangle is a part of (`partOf`), when it is not a room by itself.
+pub fn part_of(sp: &Space) -> Option<&str> {
+    sp.extra.get("partOf").and_then(|v| v.as_str())
+}
+
+/// A room of `level` with the rectangles that are its parts: gross area, net area and how many rectangles. The net area is the sum over the
+/// rectangles when any of them has one; a rectangle without one has no wall on any side, so its gross area is its net area.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RoomTotal {
+    pub area: f64,
+    pub net_area: Option<f64>,
+    pub parts: usize,
+}
+
+pub fn room_total(model: &Model, level: Option<Id>, sp: &Space) -> RoomTotal {
+    let others: Vec<Space> = model.elements.values().filter(|e| e.kind == Space::KIND && on_level(e, level)).filter_map(|e| e.typed::<Space>().ok()).filter(|o| part_of(o) == Some(sp.requirement_key.as_str())).collect();
+    let all = || std::iter::once(sp).chain(others.iter());
+    let cents = |v: f64| (v * 100.0).round() / 100.0;
+    RoomTotal {
+        area: cents(all().map(|s| s.area).sum()),
+        net_area: all().any(|s| s.net_area.is_some()).then(|| cents(all().map(|s| s.net_area.unwrap_or(s.area)).sum())),
+        parts: 1 + others.len(),
+    }
+}
+
 // ------------------------------------------------------------------ rooms from enclosed walls
 
 #[derive(Debug, Clone, Default)]
@@ -313,8 +343,8 @@ pub struct RoomSync {
     pub cmds: Vec<Command>,
     pub added: Vec<String>,
     pub removed: Vec<String>,
-    /// Enclosed regions that are not rectangles: they get no room.
-    pub not_rect: usize,
+    /// Enclosed regions that are not rectangles (an L, a T, a room with a bay): each is made of several rectangles, one room in parts.
+    pub composite: usize,
     /// Regions that were not made rooms because a room of a layout already covers part of them.
     pub overlapping: Vec<String>,
     /// What was done to the rooms of a layout that room separators divide (or that stopped being divided), one sentence each.
@@ -516,13 +546,21 @@ fn split_generated(model: &Model, level: Option<Id>, out: &mut RoomSync) {
 
 /// The rectangles (x, y, w, h) the wall centre lines of the level enclose, and how many enclosed regions are not rectangles.
 pub fn enclosed_rects(model: &Model, level: Option<Id>) -> (Vec<[i64; 4]>, usize) {
+    let regions = enclosed_regions(model, level);
+    let not_rect = regions.iter().filter(|r| r.len() > 1).count();
+    (regions.into_iter().filter(|r| r.len() == 1).flatten().collect(), not_rect)
+}
+
+/// The regions the wall centre lines of the level enclose, each as the rectangles (x, y, w, h) it is made of, largest first: one rectangle
+/// for a rectangular region, several for an L, a T or any other region whose sides are all horizontal or vertical.
+pub fn enclosed_regions(model: &Model, level: Option<Id>) -> Vec<Vec<[i64; 4]>> {
     // Wall centre lines and room separators bound a region alike: (x1, y1, x2, y2).
     let mut lines: Vec<(i64, i64, i64, i64)> = model.elements.values().filter(|e| e.kind == Wall::KIND && on_level(e, level)).filter_map(|e| e.typed::<Wall>().ok()).map(|w| (w.x1, w.y1, w.x2, w.y2)).collect();
     if lines.is_empty() {
-        return (Vec::new(), 0);
+        return Vec::new();
     }
     lines.extend(model.elements.values().filter(|e| e.kind == RoomSeparator::KIND && on_level(e, level)).filter_map(|e| e.typed::<RoomSeparator>().ok()).map(|s| (s.x1, s.y1, s.x2, s.y2)));
-    regions(&lines)
+    region_parts(&lines)
 }
 
 /// Net floor area (m2, two decimals) of a room rectangle `r` ([x, y, w, h]) whose sides are wall centre lines: every side is drawn in by
@@ -560,6 +598,61 @@ pub fn net_area_of(model: &Model, level: Option<Id>, r: &[i64; 4]) -> Option<f64
 /// The rectangles (x, y, w, h) that the lines (x1, y1, x2, y2, each horizontal or vertical) enclose, and how many enclosed regions are not
 /// rectangles.
 fn regions(lines: &[(i64, i64, i64, i64)]) -> (Vec<[i64; 4]>, usize) {
+    let all = region_parts(lines);
+    let not_rect = all.iter().filter(|r| r.len() > 1).count();
+    (all.into_iter().filter(|r| r.len() == 1).flatten().collect(), not_rect)
+}
+
+/// The rectangles a set of cells (column, row) is cut into, by joining runs along a row and then equal runs of consecutive rows
+/// (`by_rows`), or along a column and then equal runs of consecutive columns (`!by_rows`). The cells' extents are `xs` and `ys`.
+fn cut_cells(cells: &[(usize, usize)], by_rows: bool, xs: &[i64], ys: &[i64]) -> Vec<[i64; 4]> {
+    let set: BTreeSet<(usize, usize)> = cells.iter().copied().collect();
+    // A cell is (a, b) with `a` along the run and `b` across it.
+    let cell = |a: usize, b: usize| if by_rows { (a, b) } else { (b, a) };
+    let along = |c: &(usize, usize)| if by_rows { c.0 } else { c.1 };
+    let across = |c: &(usize, usize)| if by_rows { c.1 } else { c.0 };
+    let amax = cells.iter().map(along).max().unwrap_or(0);
+    let (bmin, bmax) = (cells.iter().map(across).min().unwrap_or(0), cells.iter().map(across).max().unwrap_or(0));
+    let mut open: Vec<(usize, usize, usize)> = Vec::new(); // (a0, a1, b0): a run going on from line b0 to the line before the current one
+    let mut out: Vec<(usize, usize, usize, usize)> = Vec::new(); // (a0, a1, b0, b1)
+    for b in bmin..=bmax + 1 {
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        if b <= bmax {
+            let mut a = 0;
+            while a <= amax {
+                if set.contains(&cell(a, b)) {
+                    let a0 = a;
+                    while a < amax && set.contains(&cell(a + 1, b)) {
+                        a += 1;
+                    }
+                    runs.push((a0, a));
+                }
+                a += 1;
+            }
+        }
+        let mut next: Vec<(usize, usize, usize)> = Vec::new();
+        for (a0, a1, b0) in open.drain(..) {
+            if let Some(k) = runs.iter().position(|r| *r == (a0, a1)) {
+                runs.remove(k);
+                next.push((a0, a1, b0));
+            } else {
+                out.push((a0, a1, b0, b - 1));
+            }
+        }
+        next.extend(runs.into_iter().map(|(a0, a1)| (a0, a1, b)));
+        open = next;
+    }
+    out.into_iter()
+        .map(|(a0, a1, b0, b1)| {
+            let (c0, c1, r0, r1) = if by_rows { (a0, a1, b0, b1) } else { (b0, b1, a0, a1) };
+            [xs[c0 - 1], ys[r0 - 1], xs[c1] - xs[c0 - 1], ys[r1] - ys[r0 - 1]]
+        })
+        .collect()
+}
+
+/// Every region the lines enclose, each as the rectangles it is made of (largest first, then top to bottom, left to right). A rectangular
+/// region is one rectangle; any other is cut both ways, along rows and along columns, and the cut with fewer rectangles is kept (rows on a tie).
+fn region_parts(lines: &[(i64, i64, i64, i64)]) -> Vec<Vec<[i64; 4]>> {
     let mut xs: Vec<i64> = lines.iter().flat_map(|w| [w.0, w.2]).collect();
     let mut ys: Vec<i64> = lines.iter().flat_map(|w| [w.1, w.3]).collect();
     xs.sort_unstable();
@@ -605,22 +698,31 @@ fn regions(lines: &[(i64, i64, i64, i64)]) -> (Vec<[i64; 4]>, usize) {
         n += 1;
     }
     let outside = comp[0];
-    let (mut rects, mut not_rect) = (Vec::new(), 0);
+    let mut all: Vec<Vec<[i64; 4]>> = Vec::new();
     for k in (0..n).filter(|k| *k != outside) {
         let cells: Vec<usize> = (0..cols * rows).filter(|i| comp[*i] == k).collect();
         let (cmin, cmax) = (cells.iter().map(|i| i % cols).min().unwrap_or(0), cells.iter().map(|i| i % cols).max().unwrap_or(0));
         let (rmin, rmax) = (cells.iter().map(|i| i / cols).min().unwrap_or(0), cells.iter().map(|i| i / cols).max().unwrap_or(0));
         let area: i128 = cells.iter().map(|i| i128::from(xs[i % cols] - xs[i % cols - 1]) * i128::from(ys[i / cols] - ys[i / cols - 1])).sum();
         let (x0, x1, y0, y1) = (xs[cmin - 1], xs[cmax], ys[rmin - 1], ys[rmax]);
-        if area == i128::from(x1 - x0) * i128::from(y1 - y0) { rects.push([x0, y0, x1 - x0, y1 - y0]) } else { not_rect += 1 }
+        if area == i128::from(x1 - x0) * i128::from(y1 - y0) {
+            all.push(vec![[x0, y0, x1 - x0, y1 - y0]]);
+            continue;
+        }
+        let rc: Vec<(usize, usize)> = cells.iter().map(|i| (i % cols, i / cols)).collect();
+        let (a, b) = (cut_cells(&rc, true, &xs, &ys), cut_cells(&rc, false, &xs, &ys));
+        let mut parts = if b.len() < a.len() { b } else { a };
+        parts.sort_by_key(|r| (std::cmp::Reverse(i128::from(r[2]) * i128::from(r[3])), r[1], r[0]));
+        all.push(parts);
     }
-    (rects, not_rect)
+    all
 }
 
 /// What to add and remove so the level's computed rooms match the regions its walls enclose.
 pub fn rooms_sync(model: &Model, level: Option<Id>) -> RoomSync {
-    let (rects, not_rect) = enclosed_rects(model, level);
-    let mut out = RoomSync { not_rect, ..Default::default() };
+    let regions = enclosed_regions(model, level);
+    let rects: Vec<[i64; 4]> = regions.iter().flatten().copied().collect();
+    let mut out = RoomSync { composite: regions.iter().filter(|r| r.len() > 1).count(), ..Default::default() };
     // Rooms of a layout that the separators cut from side to side are divided first; the regions below are then matched against the result.
     split_generated(model, level, &mut out);
     let gone: BTreeSet<Id> = out.cmds.iter().filter_map(|c| if let Command::Delete(id) = c { Some(*id) } else { None }).collect();
@@ -658,22 +760,48 @@ pub fn rooms_sync(model: &Model, level: Option<Id>) -> RoomSync {
     }
     let mut keys: BTreeSet<String> = model.elements.values().filter(|e| e.kind == Space::KIND).filter_map(|e| e.props.get("requirementKey").and_then(|v| v.as_str()).map(str::to_string)).chain(existing.iter().map(|x| x.2.clone())).collect();
     let overlaps = |a: &[i64; 4], b: &[i64; 4]| a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3];
-    for r in &rects {
-        if existing.iter().any(|(_, _, _, x)| x == r) {
-            continue;
+    // Region by region, largest part first: the first part's key names the room, and each other part says which room it is part of
+    // (`partOf`), so a room made of several rectangles is counted and measured as one.
+    for region in &regions {
+        let mut lead: Option<String> = None;
+        for (i, r) in region.iter().enumerate() {
+            if let Some((id, src, key, _)) = existing.iter().find(|(_, _, _, x)| x == r) {
+                if i == 0 {
+                    lead = Some(key.clone());
+                }
+                if *src == Source::Computed {
+                    let want = if i == 0 { None } else { lead.clone() };
+                    let now = model.get(id).and_then(|e| e.props.get("partOf")).and_then(|v| v.as_str()).map(str::to_string);
+                    if want != now {
+                        out.cmds.push(Command::SetProp { id: *id, key: "partOf".into(), value: want.map(|k| serde_json::json!(k)) });
+                    }
+                }
+                continue;
+            }
+            if let Some((_, _, key, _)) = existing.iter().find(|(_, src, _, x)| *src != Source::Computed && overlaps(x, r)) {
+                out.overlapping.push(key.clone());
+                continue;
+            }
+            let part_of = if i == 0 { None } else { lead.clone() };
+            let key = match &part_of {
+                Some(l) => (2..).map(|n| format!("{l}-{n}")).find(|k| !keys.contains(k)).unwrap_or_default(),
+                None => (1..).map(|n| format!("R{n}")).find(|k| !keys.contains(k)).unwrap_or_default(),
+            };
+            keys.insert(key.clone());
+            if i == 0 {
+                lead = Some(key.clone());
+            }
+            let area = ((r[2] as f64 * r[3] as f64) / 1e6 * 100.0).round() / 100.0;
+            let mut extra = serde_json::Map::new();
+            if let Some(l) = part_of {
+                extra.insert("partOf".into(), serde_json::json!(l));
+            }
+            let sp = Space { func: "room".into(), requirement_key: key.clone(), area, target_area: area, x: r[0], y: r[1], w: r[2], h: r[3], boundary: vec![[r[0], r[1]], [r[0] + r[2], r[1]], [r[0] + r[2], r[1] + r[3]], [r[0], r[1] + r[3]]], net_area: net_area_of(model, level, r), glazing_ratio: None, extra };
+            let mut el = element_of(&sp, Source::Computed);
+            el.level_id = level;
+            out.cmds.push(Command::Create(el));
+            out.added.push(key);
         }
-        if let Some((_, _, key, _)) = existing.iter().find(|(_, src, _, x)| *src != Source::Computed && overlaps(x, r)) {
-            out.overlapping.push(key.clone());
-            continue;
-        }
-        let key = (1..).map(|i| format!("R{i}")).find(|k| !keys.contains(k)).unwrap_or_default();
-        keys.insert(key.clone());
-        let area = ((r[2] as f64 * r[3] as f64) / 1e6 * 100.0).round() / 100.0;
-        let sp = Space { func: "room".into(), requirement_key: key.clone(), area, target_area: area, x: r[0], y: r[1], w: r[2], h: r[3], boundary: vec![[r[0], r[1]], [r[0] + r[2], r[1]], [r[0] + r[2], r[1] + r[3]], [r[0], r[1] + r[3]]], net_area: net_area_of(model, level, r), glazing_ratio: None, extra: Default::default() };
-        let mut el = element_of(&sp, Source::Computed);
-        el.level_id = level;
-        out.cmds.push(Command::Create(el));
-        out.added.push(key);
     }
     out
 }

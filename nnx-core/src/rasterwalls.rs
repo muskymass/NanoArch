@@ -10,6 +10,10 @@
 //! - **Openings.** On every scan line a gap between two wall runs is an opening when both runs are long (the wall carries on at both
 //!   sides: up to `open_both_mm`) or when one is long (a door beside a corner: up to `open_one_mm`). Two walls seen across have short
 //!   runs on both sides, so the room between them stays open.
+//! - **What closes a gap stays; an empty gap does not.** Walls are read twice. After the first reading, only the gaps in which a window or
+//!   a door is drawn stay sealed. A bare gap in a wall that carries on at both sides and is no wider than a door is a passage: the wall ends
+//!   at both its edges and a room separator is offered across it, so the two rooms stay two without a wall that is not drawn. Every other
+//!   gap (a bare gap beside a corner, a gap wider than a door, stair treads, a gap crossed by furniture) is left open, and listed.
 //! - **Segments.** Along each direction, wall pixels lying in a run of at least `min_wall_mm` form blobs; a blob is projected on its
 //!   axis and cut where its middle moves, so two walls side by side are two segments. Ends are moved onto the axis of the wall they meet.
 //! - **Nothing is confirmed, and heights are not here.** A plan has no wall height, door height or sill: those are the user's to give.
@@ -61,7 +65,7 @@ pub struct WallSeg {
 pub enum OpeningKind {
     /// Lines are drawn inside the wall's thickness (frame and glass).
     Window,
-    /// A bare gap with a swing arc drawn beside it.
+    /// A swing arc drawn beside the gap: the gap is bare, or no wider than a door and crossed by the drawn leaf.
     Door,
     /// A bare gap with no arc: an opening without a leaf.
     Passage,
@@ -88,14 +92,32 @@ pub struct Opening {
     pub kind: OpeningKind,
     /// Share of the pixels inside the wall band that are not a flat light fill. The measure `kind` was decided on.
     pub ink_share: f64,
-    /// Thin wall-colour ink in the square beside the gap (the fuller side), per pixel of width. Measured for bare gaps only.
+    /// Thin wall-colour ink in the square beside the gap (the fuller side), per pixel of width. Measured for every gap that is not a window.
+    pub arc_measure: Option<f64>,
+}
+
+/// A gap with nothing that closes it, along the line of a wall.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Gap {
+    pub horizontal: bool,
+    pub axis_px: f64,
+    pub lo_px: f64,
+    pub hi_px: f64,
+    /// `Passage` or `Unclear`.
+    pub kind: OpeningKind,
+    pub ink_share: f64,
     pub arc_measure: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FoundWalls {
     pub walls: Vec<WallSeg>,
+    /// The windows and doors: gaps that stay part of their wall.
     pub openings: Vec<Opening>,
+    /// Passages: each ends exactly on the ends of the two walls beside it, ready to be a room separator.
+    pub passages: Vec<Gap>,
+    /// The other empty gaps: nothing is built there.
+    pub left_open: Vec<Gap>,
     pub mm_per_px: f64,
     /// Pixels of the wall colours that are thick enough to be walls.
     pub wall_pixels: u64,
@@ -383,6 +405,124 @@ pub fn wall_colour_candidates(rgb: &[u8], width: u32, height: u32) -> Result<Vec
     Ok(out)
 }
 
+/// How far (pixels) a wall end may stand from a passage's edge and still be the end beside it.
+const DEFAULT_PASSAGE_REACH_PX: u32 = 3;
+
+impl WallSeg {
+    /// The rows (horizontal wall) or columns (vertical) the wall covers: `[from, to)`.
+    fn band(&self, w: usize, h: usize) -> (usize, usize) {
+        let r = |v: f64| v.round_ties_even().max(0.0) as usize;
+        let half = f64::from(self.thickness_px) / 2.0;
+        let across = if self.horizontal { h } else { w };
+        (r(self.axis_px - half), r(self.axis_px + half).min(across))
+    }
+}
+
+/// What one reading of a sealed wall mask needs besides the mask.
+struct Scan<'a> {
+    w: usize,
+    h: usize,
+    /// Shortest wall piece kept, pixels.
+    k: usize,
+    mm_per_px: f64,
+    min_open_mm: f64,
+    is_fill: &'a [bool],
+    thin: &'a [u8],
+}
+
+impl Scan<'_> {
+    /// The segments of a sealed mask and the openings along them (`bh`, `bv`: which pixels were bridged along rows and along columns).
+    fn read(&self, sealed: &[u8], bh: &[u8], bv: &[u8]) -> Result<(Vec<WallSeg>, Vec<Opening>), String> {
+        let Scan { w, h, k, mm_per_px, min_open_mm, is_fill, thin } = *self;
+        let sealed_t = transpose(sealed, w, h);
+        let mut walls: Vec<WallSeg> = lines(sealed, w, h, k).into_iter().map(|(c, lo, hi, t)| WallSeg { horizontal: true, axis_px: c, lo_px: lo, hi_px: hi, thickness_px: t }).collect();
+        walls.extend(lines(&sealed_t, h, w, k).into_iter().map(|(c, lo, hi, t)| WallSeg { horizontal: false, axis_px: c, lo_px: lo, hi_px: hi, thickness_px: t }));
+        if walls.is_empty() {
+            return Err(format!("no wall at least {} mm long was found in the given colours", (k as f64 * mm_per_px).round()));
+        }
+        // Pieces of one wall line (segments of one direction whose axes lie within a pixel of each other) take the axis of the longest of
+        // them: a wall cut by an empty gap stays one straight line, so what closes the gap later meets both pieces.
+        for horizontal in [true, false] {
+            let mut idx: Vec<usize> = (0..walls.len()).filter(|&i| walls[i].horizontal == horizontal).collect();
+            idx.sort_by(|&a, &b| walls[a].axis_px.total_cmp(&walls[b].axis_px));
+            let mut g0 = 0;
+            for e in 1..=idx.len() {
+                if e == idx.len() || walls[idx[e]].axis_px - walls[idx[g0]].axis_px > 1.0 {
+                    let longest = idx[g0..e].iter().copied().max_by(|&a, &b| (walls[a].hi_px - walls[a].lo_px).total_cmp(&(walls[b].hi_px - walls[b].lo_px)));
+                    if let Some(l) = longest {
+                        let axis = walls[l].axis_px;
+                        for &i in &idx[g0..e] {
+                            walls[i].axis_px = axis;
+                        }
+                    }
+                    g0 = e;
+                }
+            }
+        }
+        // Corners and T-junctions: an end that stops on a perpendicular wall is moved onto that wall's axis.
+        for i in 0..walls.len() {
+            for end in 0..2 {
+                let (c, at) = (walls[i].axis_px, if end == 0 { walls[i].lo_px } else { walls[i].hi_px });
+                let best = walls
+                    .iter()
+                    .filter(|o| o.horizontal != walls[i].horizontal && o.lo_px - f64::from(o.thickness_px) <= c && c <= o.hi_px + f64::from(o.thickness_px))
+                    .map(|o| ((o.axis_px - at).abs(), o.axis_px, f64::from(o.thickness_px)))
+                    .filter(|(d, _, t)| *d <= t + 1.0)
+                    .min_by(|a, b| a.0.total_cmp(&b.0));
+                if let Some((_, axis, _)) = best {
+                    if end == 0 { walls[i].lo_px = axis } else { walls[i].hi_px = axis }
+                }
+            }
+        }
+        let r = |v: f64| v.round_ties_even().max(0.0) as usize;
+        // Openings: the sealed gaps along each wall, where at least half of its thickness was bridged.
+        let mut openings = Vec::new();
+        for (i, s) in walls.iter().enumerate() {
+            let (a, b) = s.band(w, h);
+            let (lo, hi) = (r(s.lo_px), r(s.hi_px));
+            let (across, along) = if s.horizontal { (h, w) } else { (w, h) };
+            let hi = hi.min(along);
+            if b <= a || hi <= lo {
+                continue;
+            }
+            let bridged = |q: usize, t: usize| if s.horizontal { bh[q * w + t] } else { bv[t * w + q] };
+            let prof: Vec<u8> = (lo..hi).map(|t| u8::from((a..b).filter(|&q| bridged(q, t) == 1).count() >= ((b - a) / 2).max(1))).collect();
+            for (x0, x1) in row_runs(&prof) {
+                if (x1 - x0) as f64 * mm_per_px >= min_open_mm {
+                    let (g0, g1) = (lo + x0, lo + x1);
+                    // Door, window or passage: what is drawn in the gap and beside it (see `OpeningKind`). Both measures are returned.
+                    let at = |q: usize, t: usize| if s.horizontal { q * w + t } else { t * w + q };
+                    let band = (b - a) * (g1 - g0);
+                    let inked = (a..b).map(|q| (g0..g1).filter(|&t| !is_fill[at(q, t)]).count()).sum::<usize>();
+                    let ink_share = inked as f64 / band.max(1) as f64;
+                    let width = g1 - g0;
+                    let side = |from: usize, to: usize| (from..to.min(across)).map(|q| (g0..g1).filter(|&t| thin[at(q, t)] == 1).count()).sum::<usize>();
+                    let reach = s.thickness_px as usize / 2 + 1;
+                    let axis = r(s.axis_px);
+                    let after = side(axis + reach, axis + reach + width);
+                    let before = side(axis.saturating_sub(reach).saturating_sub(width), axis.saturating_sub(reach));
+                    let arc = after.max(before) as f64 / width.max(1) as f64;
+                    let bare = ink_share < BARE_INK_SHARE;
+                    let kind = if ink_share >= WINDOW_INK_SHARE {
+                        OpeningKind::Window
+                    } else if (ARC_MIN..=ARC_MAX).contains(&arc) && (bare || width as f64 * mm_per_px <= f64::from(DEFAULT_OPEN_ONE_MM)) {
+                        // The swing arc is what shows a door. A leaf drawn across the opening inks the band, so an inked gap counts too
+                        // when it is no wider than a door.
+                        OpeningKind::Door
+                    } else if bare && (arc < NO_ARC || width as f64 * mm_per_px > f64::from(DEFAULT_OPEN_ONE_MM)) {
+                        // No arc; or a gap wider than any door, whose square caught furniture, not an arc.
+                        OpeningKind::Passage
+                    } else {
+                        OpeningKind::Unclear
+                    };
+                    openings.push(Opening { wall: i, lo_px: g0 as f64, hi_px: g1 as f64, kind, ink_share, arc_measure: (kind != OpeningKind::Window).then_some(arc) });
+                }
+            }
+        }
+        Ok((walls, openings))
+    }
+}
+
 /// Walls and openings of a coloured plan. See the module notes for the method and its limits.
 pub fn read_walls(rgb: &[u8], width: u32, height: u32, p: &WallParams) -> Result<FoundWalls, String> {
     let (w, h) = check(rgb, width, height)?;
@@ -393,18 +533,32 @@ pub fn read_walls(rgb: &[u8], width: u32, height: u32, p: &WallParams) -> Result
         return Err("no wall colour was given: choose which colours of the drawing are walls".into());
     }
     let mut notes = Vec::new();
-    let mut setting = |given: Option<u32>, default: u32, what: &str, unit: &str| -> u32 {
-        if given.is_none() {
-            notes.push(format!("{what} was taken as {default} {unit}; give it if this drawing differs"));
-        }
-        given.unwrap_or(default)
-    };
-    let tol = setting(p.colour_tolerance, DEFAULT_COLOUR_TOLERANCE, "the colour tolerance", "(RGB distance)");
-    let both = px(setting(p.open_both_mm, DEFAULT_OPEN_BOTH_MM, "the widest opening in a wall that carries on at both sides", "mm"), p.mm_per_px);
-    let one = px(setting(p.open_one_mm, DEFAULT_OPEN_ONE_MM, "the widest opening beside a corner", "mm"), p.mm_per_px);
-    let long = px(setting(p.long_run_mm, DEFAULT_LONG_RUN_MM, "the shortest wall run that counts as a wall carrying on", "mm"), p.mm_per_px);
-    let k = px(setting(p.min_wall_mm, DEFAULT_MIN_WALL_MM, "the shortest wall kept", "mm"), p.mm_per_px);
-    let min_open_mm = f64::from(setting(p.min_opening_mm, DEFAULT_MIN_OPENING_MM, "the narrowest opening reported", "mm"));
+    // A setting the caller did not give is taken at its stated default and named in the notes (each note is a whole sentence, so that it has its Arabic).
+    let tol = p.colour_tolerance.unwrap_or_else(|| {
+        notes.push(format!("the colour tolerance was taken as {DEFAULT_COLOUR_TOLERANCE} (RGB distance); give it if this drawing differs"));
+        DEFAULT_COLOUR_TOLERANCE
+    });
+    let both_mm = p.open_both_mm.unwrap_or_else(|| {
+        notes.push(format!("the widest opening in a wall that carries on at both sides was taken as {DEFAULT_OPEN_BOTH_MM} mm; give it if this drawing differs"));
+        DEFAULT_OPEN_BOTH_MM
+    });
+    let one_mm = p.open_one_mm.unwrap_or_else(|| {
+        notes.push(format!("the widest opening beside a corner was taken as {DEFAULT_OPEN_ONE_MM} mm; give it if this drawing differs"));
+        DEFAULT_OPEN_ONE_MM
+    });
+    let long_mm = p.long_run_mm.unwrap_or_else(|| {
+        notes.push(format!("the shortest wall run that counts as a wall carrying on was taken as {DEFAULT_LONG_RUN_MM} mm; give it if this drawing differs"));
+        DEFAULT_LONG_RUN_MM
+    });
+    let min_wall_mm = p.min_wall_mm.unwrap_or_else(|| {
+        notes.push(format!("the shortest wall kept was taken as {DEFAULT_MIN_WALL_MM} mm; give it if this drawing differs"));
+        DEFAULT_MIN_WALL_MM
+    });
+    let min_open_mm = f64::from(p.min_opening_mm.unwrap_or_else(|| {
+        notes.push(format!("the narrowest opening reported was taken as {DEFAULT_MIN_OPENING_MM} mm; give it if this drawing differs"));
+        DEFAULT_MIN_OPENING_MM
+    }));
+    let (both, one, long, k) = (px(both_mm, p.mm_per_px), px(one_mm, p.mm_per_px), px(long_mm, p.mm_per_px), px(min_wall_mm, p.mm_per_px));
 
     let wall = open3(&colour_mask(rgb, w, h, &p.wall_colours, tol), w, h);
     let wall_pixels: u64 = wall.iter().map(|&v| u64::from(v)).sum();
@@ -417,82 +571,63 @@ pub fn read_walls(rgb: &[u8], width: u32, height: u32, p: &WallParams) -> Result
     let bv_t: Vec<u8> = bridge_rows(&wall_t, h, w, both, one, long).iter().zip(&wall_t).map(|(&b, &m)| b & (1 - m)).collect();
     let bv = transpose(&bv_t, h, w);
     let sealed: Vec<u8> = (0..w * h).map(|i| wall[i] | bh[i] | bv[i]).collect();
-    let sealed_t = transpose(&sealed, w, h);
 
-    let mut walls: Vec<WallSeg> = lines(&sealed, w, h, k).into_iter().map(|(c, lo, hi, t)| WallSeg { horizontal: true, axis_px: c, lo_px: lo, hi_px: hi, thickness_px: t }).collect();
-    walls.extend(lines(&sealed_t, h, w, k).into_iter().map(|(c, lo, hi, t)| WallSeg { horizontal: false, axis_px: c, lo_px: lo, hi_px: hi, thickness_px: t }));
-    if walls.is_empty() {
-        return Err(format!("no wall at least {} mm long was found in the given colours", (k as f64 * p.mm_per_px).round()));
-    }
-    // Corners and T-junctions: an end that stops on a perpendicular wall is moved onto that wall's axis.
-    for i in 0..walls.len() {
-        for end in 0..2 {
-            let (c, at) = (walls[i].axis_px, if end == 0 { walls[i].lo_px } else { walls[i].hi_px });
-            let best = walls
-                .iter()
-                .filter(|o| o.horizontal != walls[i].horizontal && o.lo_px - f64::from(o.thickness_px) <= c && c <= o.hi_px + f64::from(o.thickness_px))
-                .map(|o| ((o.axis_px - at).abs(), o.axis_px, f64::from(o.thickness_px)))
-                .filter(|(d, _, t)| *d <= t + 1.0)
-                .min_by(|a, b| a.0.total_cmp(&b.0));
-            if let Some((_, axis, _)) = best {
-                if end == 0 { walls[i].lo_px = axis } else { walls[i].hi_px = axis }
-            }
-        }
-    }
-    let r = |v: f64| v.round_ties_even().max(0.0) as usize;
     // For telling doors from windows: the flat light fills of the drawing (floors, paper), and the THIN ink of the wall colours
     // (door arcs), which the wall mask threw away. Arcs are anti-aliased, so they are looked for with a wider tolerance.
     let fills = light_fills(rgb);
-    let is_fill = |i: usize| {
-        let px = &rgb[i * 3..i * 3 + 3];
-        fills.iter().any(|f| (0..3).map(|k| (i64::from(px[k]) - i64::from(f[k])).pow(2)).sum::<i64>() <= FILL_TOLERANCE * FILL_TOLERANCE)
-    };
+    let is_fill: Vec<bool> = rgb.as_chunks::<3>().0.iter().map(|px| fills.iter().any(|f| (0..3).map(|k| (i64::from(px[k]) - i64::from(f[k])).pow(2)).sum::<i64>() <= FILL_TOLERANCE * FILL_TOLERANCE)).collect();
     let loose = colour_mask(rgb, w, h, &p.wall_colours, ARC_COLOUR_TOLERANCE);
     let thick = dilate3(&open3(&loose, w, h), w, h);
     let thin: Vec<u8> = loose.iter().zip(&thick).map(|(&m, &t)| m & (1 - t)).collect();
-    // Openings: the sealed gaps along each wall, where at least half of its thickness was bridged.
-    let mut openings = Vec::new();
-    for (i, s) in walls.iter().enumerate() {
-        let half = f64::from(s.thickness_px) / 2.0;
-        let (a, b) = (r(s.axis_px - half), r(s.axis_px + half));
-        let (lo, hi) = (r(s.lo_px), r(s.hi_px));
-        let (across, along) = if s.horizontal { (h, w) } else { (w, h) };
-        let (b, hi) = (b.min(across), hi.min(along));
-        if b <= a || hi <= lo {
-            continue;
-        }
-        let bridged = |q: usize, t: usize| if s.horizontal { bh[q * w + t] } else { bv[t * w + q] };
-        let prof: Vec<u8> = (lo..hi).map(|t| u8::from((a..b).filter(|&q| bridged(q, t) == 1).count() >= ((b - a) / 2).max(1))).collect();
-        for (x0, x1) in row_runs(&prof) {
-            if (x1 - x0) as f64 * p.mm_per_px >= min_open_mm {
-                let (g0, g1) = (lo + x0, lo + x1);
-                // Door, window or passage: what is drawn in the gap and beside it (see `OpeningKind`). Both measures are returned.
-                let at = |q: usize, t: usize| if s.horizontal { q * w + t } else { t * w + q };
-                let band = (b - a) * (g1 - g0);
-                let inked = (a..b).map(|q| (g0..g1).filter(|&t| !is_fill(at(q, t))).count()).sum::<usize>();
-                let ink_share = inked as f64 / band.max(1) as f64;
-                let width = g1 - g0;
-                let side = |from: usize, to: usize| (from..to.min(across)).map(|q| (g0..g1).filter(|&t| thin[at(q, t)] == 1).count()).sum::<usize>();
-                let reach = s.thickness_px as usize / 2 + 1;
-                let axis = r(s.axis_px);
-                let after = side(axis + reach, axis + reach + width);
-                let before = side(axis.saturating_sub(reach).saturating_sub(width), axis.saturating_sub(reach));
-                let arc = after.max(before) as f64 / width.max(1) as f64;
-                let bare = ink_share < BARE_INK_SHARE;
-                let kind = if ink_share >= WINDOW_INK_SHARE {
-                    OpeningKind::Window
-                } else if bare && (ARC_MIN..=ARC_MAX).contains(&arc) {
-                    OpeningKind::Door
-                } else if bare && (arc < NO_ARC || width as f64 * p.mm_per_px > f64::from(DEFAULT_OPEN_ONE_MM)) {
-                    // No arc; or a gap wider than any door, whose square caught furniture, not an arc.
-                    OpeningKind::Passage
-                } else {
-                    OpeningKind::Unclear
-                };
-                openings.push(Opening { wall: i, lo_px: g0 as f64, hi_px: g1 as f64, kind, ink_share, arc_measure: bare.then_some(arc) });
+    let scan = Scan { w, h, k, mm_per_px: p.mm_per_px, min_open_mm, is_fill: &is_fill, thin: &thin };
+    // First reading: every gap the rule bridges is sealed, and what is in it is looked at.
+    let (first_walls, first_openings) = scan.read(&sealed, &bh, &bv)?;
+    // Second reading: the gaps with nothing that closes them are opened again.
+    let (mut bh, mut bv) = (bh, bv);
+    let mut empty: Vec<(Gap, bool)> = Vec::new();
+    for o in first_openings.iter().filter(|o| matches!(o.kind, OpeningKind::Passage | OpeningKind::Unclear)) {
+        let s = &first_walls[o.wall];
+        let (a, b) = s.band(w, h);
+        let (g0, g1) = (o.lo_px as usize, o.hi_px as usize);
+        let mask = if s.horizontal { &mut bh } else { &mut bv };
+        for q in a..b {
+            for t in g0..g1 {
+                mask[if s.horizontal { q * w + t } else { t * w + q }] = 0;
             }
         }
+        // Does the wall carry on, for a long run, at both edges of the gap?
+        let along = if s.horizontal { w } else { h };
+        let solid = |t: usize| (a..b).filter(|&q| wall[if s.horizontal { q * w + t } else { t * w + q }] == 1).count() * 2 >= (b - a);
+        let before = (0..g0).rev().take_while(|&t| solid(t)).count();
+        let after = (g1..along).take_while(|&t| solid(t)).count();
+        let in_a_wall = before >= long && after >= long && (g1 - g0) as f64 * p.mm_per_px <= f64::from(one_mm);
+        empty.push((Gap { horizontal: s.horizontal, axis_px: s.axis_px, lo_px: o.lo_px, hi_px: o.hi_px, kind: o.kind, ink_share: o.ink_share, arc_measure: o.arc_measure }, o.kind == OpeningKind::Passage && in_a_wall));
     }
+    // A pixel sealed from the other direction belongs to that direction's gap, so it stays only where its own gap stayed.
+    let sealed: Vec<u8> = (0..w * h).map(|i| wall[i] | bh[i] | bv[i]).collect();
+    let (mut walls, openings) = scan.read(&sealed, &bh, &bv)?;
+    // Each passage is laid between the ends of the two walls that now stand beside it; without both, there is nothing to hang it on.
+    let (mut passages, mut left_open) = (Vec::new(), Vec::new());
+    for (mut g, is_passage) in empty {
+        let near = f64::from(DEFAULT_PASSAGE_REACH_PX);
+        let side = |walls: &[WallSeg], edge: f64, before: bool| {
+            (0..walls.len())
+                .filter(|&i| walls[i].horizontal == g.horizontal && (walls[i].axis_px - g.axis_px).abs() <= f64::from(walls[i].thickness_px) / 2.0 + 1.0)
+                .map(|i| (i, ((if before { walls[i].hi_px } else { walls[i].lo_px }) - edge).abs()))
+                .filter(|(_, d)| *d <= near)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(i, _)| i)
+        };
+        match (is_passage, side(&walls, g.lo_px, true), side(&walls, g.hi_px, false)) {
+            (true, Some(i), Some(j)) if i != j && (walls[i].axis_px - walls[j].axis_px).abs() <= 1.0 => {
+                walls[j].axis_px = walls[i].axis_px;
+                (g.axis_px, g.lo_px, g.hi_px) = (walls[i].axis_px, walls[i].hi_px, walls[j].lo_px);
+                passages.push(g);
+            }
+            _ => left_open.push(g),
+        }
+    }
+    let r = |v: f64| v.round_ties_even().max(0.0) as usize;
     // The segments drawn again, against the sealed walls they came from: the caller sees how much was lost or added.
     let mut again = vec![0u8; w * h];
     for s in &walls {
@@ -513,14 +648,14 @@ pub fn read_walls(rgb: &[u8], width: u32, height: u32, p: &WallParams) -> Result
     notes.push("a plan holds no heights: wall height, door and window height and sill height must be given before these walls can be built".into());
     let count = |k: OpeningKind| openings.iter().filter(|o| o.kind == k).count();
     notes.push(format!(
-        "openings by what is drawn: {} window(s) (lines inside the wall), {} door(s) (a bare gap with a swing arc), {} passage(s) (a bare gap, no arc), {} unclear: each carries the measures it was decided on, for review",
+        "openings by what is drawn: {} window(s) (lines inside the wall), {} door(s) (a bare gap with a swing arc); {} passage(s) (a bare gap no wider than a door in a wall that carries on) offered as room separators; {} other empty gap(s) left open: each carries the measures it was decided on, for review",
         count(OpeningKind::Window),
         count(OpeningKind::Door),
-        count(OpeningKind::Passage),
-        count(OpeningKind::Unclear)
+        passages.len(),
+        left_open.len()
     ));
     notes.push("stairs drawn with thick treads come out as short walls and openings: review that area".into());
-    Ok(FoundWalls { walls, openings, mm_per_px: p.mm_per_px, wall_pixels, lost_pixels, added_pixels, notes })
+    Ok(FoundWalls { walls, openings, passages, left_open, mm_per_px: p.mm_per_px, wall_pixels, lost_pixels, added_pixels, notes })
 }
 
 #[cfg(test)]
@@ -585,11 +720,43 @@ mod tests {
         let mut g = plan();
         paint(&mut g, 125, 70, 143, 71, [235, 235, 235]); // the arc is gone
         let f = read_walls(&g, W as u32, H as u32, &params()).unwrap();
-        let o = f.openings.iter().find(|o| (o.hi_px - o.lo_px) == 20.0).expect("the gap in the partition");
-        assert_eq!(o.kind, OpeningKind::Passage, "{o:#?}");
-        assert_eq!((o.ink_share, o.arc_measure), (0.0, Some(0.0)));
+        // No wall is built across it: the partition is two walls, and the passage runs between their ends.
+        assert_eq!(f.passages.len(), 1, "{f:#?}");
+        let o = &f.passages[0];
+        assert_eq!((o.kind, o.ink_share, o.arc_measure), (OpeningKind::Passage, 0.0, Some(0.0)));
+        let ends: Vec<(f64, f64)> = f.walls.iter().filter(|s| !s.horizontal && (s.axis_px - o.axis_px).abs() < 0.01).map(|s| (s.lo_px, s.hi_px)).collect();
+        assert!(ends.len() == 2 && ends.iter().any(|e| e.1 == o.lo_px) && ends.iter().any(|e| e.0 == o.hi_px), "{ends:?} {o:?}");
+        assert!(f.openings.iter().all(|o| o.kind != OpeningKind::Passage));
         let win = f.openings.iter().find(|o| (o.hi_px - o.lo_px) == 30.0).unwrap();
         assert!(win.ink_share >= WINDOW_INK_SHARE && win.arc_measure.is_none(), "{win:#?}");
+    }
+
+    #[test]
+    fn a_door_whose_leaf_is_drawn_across_the_opening_is_still_a_door() {
+        let mut g = plan();
+        paint(&mut g, 117, 76, 123, 78, [90, 100, 110]); // a leaf line across the 1000 mm gap, arc beside it
+        let f = read_walls(&g, W as u32, H as u32, &params()).unwrap();
+        let o = f.openings.iter().find(|o| (o.hi_px - o.lo_px) == 20.0).expect("the door stays in its wall");
+        assert_eq!(o.kind, OpeningKind::Door, "{o:#?}");
+        assert!(o.ink_share >= BARE_INK_SHARE && o.ink_share < WINDOW_INK_SHARE, "{o:#?}");
+    }
+
+    #[test]
+    fn an_empty_gap_wider_than_a_door_or_beside_a_corner_is_left_open() {
+        // The partition's gap grows to 40 px (2000 mm): wider than a door, so no separator and no wall across it.
+        let mut g = plan();
+        paint(&mut g, 125, 70, 143, 71, [235, 235, 235]);
+        paint(&mut g, 117, 60, 123, 100, [235, 235, 235]);
+        let f = read_walls(&g, W as u32, H as u32, &params()).unwrap();
+        assert!(f.passages.is_empty() && f.left_open.len() == 1, "{:#?} {:#?}", f.passages, f.left_open);
+        // A 1000 mm gap that starts at the corner, with only the outer wall's thickness before it.
+        let mut g = plan();
+        paint(&mut g, 125, 70, 143, 71, [235, 235, 235]);
+        paint(&mut g, 117, 70, 123, 90, WALL);
+        paint(&mut g, 117, 26, 123, 46, [235, 235, 235]);
+        let f = read_walls(&g, W as u32, H as u32, &params()).unwrap();
+        assert!(f.passages.is_empty() && f.left_open.len() == 1, "{:#?} {:#?}", f.passages, f.left_open);
+        assert!(!f.walls.iter().any(|s| !s.horizontal && (s.axis_px - 120.0).abs() < 1.0 && s.lo_px < 40.0), "{:#?}", f.walls);
     }
 
     #[test]

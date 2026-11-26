@@ -150,23 +150,33 @@ fn a_partition_makes_two_rooms_and_removing_it_takes_them_back_to_one_with_the_t
 }
 
 #[test]
-fn a_wall_that_does_not_split_a_room_and_a_door_gap_change_nothing_and_a_non_rectangle_is_reported() {
+fn a_wall_that_does_not_split_a_room_changes_nothing_and_a_non_rectangle_is_one_room_in_parts() {
     let mut doc = blank();
     box_room(&mut doc);
     wall(&mut doc, [3000, 1000], [3000, 3000]); // a stub: the room goes round it
     let s = sync(&mut doc, "Find rooms");
-    assert_eq!((s.added.len(), s.not_rect), (1, 0));
+    assert_eq!((s.added.len(), s.composite), (1, 0));
     assert_eq!(rooms(&doc)[0].1, [1000, 1000, 6000, 4000]);
     // An L: two rooms' worth of walls whose enclosed region is not a rectangle.
     let mut l = blank();
     for (a, b) in [([0, 0], [4000, 0]), ([4000, 0], [4000, 2000]), ([4000, 2000], [2000, 2000]), ([2000, 2000], [2000, 4000]), ([2000, 4000], [0, 4000]), ([0, 4000], [0, 0])] {
         wall(&mut l, a, b);
     }
-    let s = annot::rooms_sync(&l.model, level(&l));
-    assert_eq!((s.added.len(), s.not_rect), (0, 1), "no room is invented for an L");
-    // Splitting the L with a wall gives its two rectangles.
+    let lv = level(&l);
+    let s = sync(&mut l, "Find rooms");
+    assert_eq!((s.added.len(), s.composite), (2, 1), "an L is one room of two rectangles");
+    let parts = |d: &Document| -> Vec<Space> { d.model.elements.values().filter_map(|e| e.typed::<Space>().ok()).collect() };
+    let lead = parts(&l).into_iter().find(|s| annot::part_of(s).is_none()).expect("one part names the room");
+    assert!(parts(&l).iter().filter(|s| annot::part_of(s) == Some(lead.requirement_key.as_str())).count() == 1, "the other says which room it is part of");
+    let t = annot::room_total(&l.model, lv, &lead);
+    assert_eq!((t.parts, t.area), (2, 12.0), "4 x 2 + 2 x 2 m, counted once");
+    // Syncing again changes nothing.
+    assert!(annot::rooms_sync(&l.model, lv).cmds.is_empty());
+    // A wall between the parts makes them two rooms: the same rectangles stay, neither is part of the other.
     wall(&mut l, [0, 2000], [2000, 2000]);
-    assert_eq!(annot::rooms_sync(&l.model, level(&l)).added.len(), 2);
+    let s = sync(&mut l, "Find rooms");
+    assert_eq!((s.added.len(), s.composite), (0, 0));
+    assert!(parts(&l).iter().all(|s| annot::part_of(s).is_none()), "{:?}", parts(&l));
 }
 
 #[test]
