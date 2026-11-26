@@ -98,6 +98,9 @@ pub fn run(model: &Model) -> Report {
         k.extend(wall_rooms.get(&lvl).cloned().unwrap_or_default());
         k
     };
+    // A room made of several rectangles is one room: a door or a wall that names one of its parts counts for the whole room.
+    let whole: BTreeMap<(Option<Id>, String), String> = spaces.iter().flat_map(|(lvl, l)| l.iter().filter_map(|(_, s)| Some(((*lvl, s.requirement_key.clone()), crate::annot::part_of(s)?.to_string())))).collect();
+    let whole_of = |lvl: Option<Id>, k: String| whole.get(&(lvl, k.clone())).cloned().unwrap_or(k);
     let mut spans: BTreeMap<Id, Vec<(i64, i64, Id, &'static str)>> = BTreeMap::new();
     let mut entered: BTreeSet<(Option<Id>, String)> = BTreeSet::new();
     for e in model.elements.values() {
@@ -106,7 +109,7 @@ pub fn run(model: &Model) -> Report {
             let Ok(d) = e.typed::<Door>() else { continue };
             for k in [&d.from, &d.to] {
                 if !k.is_empty() && k != "outside" && k != "out" {
-                    entered.insert((e.level_id, k.clone()));
+                    entered.insert((e.level_id, whole_of(e.level_id, k.clone())));
                     if !known.contains(k) {
                         issues.push(Issue { level: Level::Warning, code: "DOOR.UNKNOWN_ROOM", message: format!("{}: a door names room '{k}', which is not on the level", at(e.level_id)), elements: vec![e.id] });
                     }
@@ -149,11 +152,11 @@ pub fn run(model: &Model) -> Report {
         .elements
         .values()
         .filter(|e| e.kind == Wall::KIND)
-        .filter_map(|e| e.typed::<Wall>().ok().map(|w| (e.level_id, w.room_a)))
+        .filter_map(|e| e.typed::<Wall>().ok().map(|w| (e.level_id, whole_of(e.level_id, w.room_a))))
         .collect();
     for (lvl, list) in &spaces {
         for (id, s) in list {
-            if s.func == "courtyard" || !walled.contains(&(*lvl, s.requirement_key.clone())) {
+            if s.func == "courtyard" || crate::annot::part_of(s).is_some() || !walled.contains(&(*lvl, s.requirement_key.clone())) {
                 continue;
             }
             if !entered.contains(&(*lvl, s.requirement_key.clone())) {

@@ -401,8 +401,7 @@ pub fn set_opening(doc: &mut Document, so: &StructOpts, id: Id, width: Option<i6
     // A position typed by the user is never moved behind their back: one that would stand in a column is refused.
     let mut probe = Document::new(doc.model.clone());
     probe.commit("probe", Origin::User, cmds.clone()).map_err(|e| e.to_string())?;
-    let (fix, _) = building::clear_openings(&probe.model, &[level]);
-    if fix.iter().any(|c| matches!(c, Command::SetProp { id: i, .. } if *i == id)) {
+    if building::stands_in_column(&probe.model, &id) {
         return Err("that position or width would put the opening in a column: choose another".into());
     }
     commit_with_sync(doc, so, "edit opening", cmds, level)

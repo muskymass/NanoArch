@@ -121,12 +121,45 @@ const OPENING_GAP_MM: i64 = 100;
 /// Clear space kept between an opening and a column face.
 const COLUMN_CLEAR_MM: i64 = 50;
 
+/// The stretches of a wall, along its axis, that the columns standing on it take: each column face plus its clearance.
+fn column_stretches(cols: &[Column], w: &crate::typed::Wall) -> Vec<(i64, i64)> {
+    let (s, end, cl, half_t) = (w.start(), w.start() + w.length, w.centre_line(), w.thickness / 2);
+    cols.iter()
+        .filter(|c| {
+            let (along, across) = if w.horizontal() { (c.x, c.y) } else { (c.y, c.x) };
+            (across - cl).abs() <= half_t.max(c.b / 2) && along >= s - c.b / 2 && along <= end + c.b / 2
+        })
+        .map(|c| {
+            let along = if w.horizontal() { c.x } else { c.y };
+            (along - c.b / 2 - COLUMN_CLEAR_MM, along + c.b / 2 + COLUMN_CLEAR_MM)
+        })
+        .collect()
+}
+
+/// Whether the door or window `id` stands in a column of its level (the column face plus its clearance).
+pub fn stands_in_column(model: &Model, id: &crate::model::Id) -> bool {
+    use crate::typed::{Door, Wall, Window};
+    let Some(e) = model.get(id) else { return false };
+    let Some(w) = e.host_id.and_then(|h| model.get(&h)).and_then(|h| h.typed::<Wall>().ok()) else { return false };
+    let (centre, width) = match (e.typed::<Door>(), e.typed::<Window>()) {
+        (Ok(d), _) if e.kind == Door::KIND => (d.offset_center, d.width),
+        (_, Ok(win)) if e.kind == Window::KIND => (win.offset_center, win.width),
+        _ => return false,
+    };
+    let cols: Vec<Column> = model.elements.values().filter(|c| c.kind == Column::KIND && c.level_id == e.level_id).filter_map(|c| c.typed::<Column>().ok()).collect();
+    let c = w.start() + centre;
+    column_stretches(&cols, &w).iter().any(|&(lo, hi)| c - width / 2 < hi && c + width / 2 > lo)
+}
+
 /// Doors and windows that stand in a column, moved along their wall to the nearest position that clears every column
 /// and every other opening and keeps the wall's end margins. `levels` are the levels to check (`None` for a model
-/// without levels). Returns the `SetProp` commands and one note per opening that cannot be moved clear (the wall is
-/// too short, or the columns leave no gap wide enough): those are left exactly where they are.
+/// without levels). Returns the `SetProp` commands and one note per opening that stays in its column: one that cannot
+/// be moved clear (the wall is too short, or the columns leave no gap wide enough), and one that was drawn by hand or
+/// read from a drawing, which is never moved (its place is the owner's). Those are left exactly where they are, and no
+/// opening is ever moved onto another one, wherever that one stands.
 pub fn clear_openings(model: &Model, levels: &[Option<crate::model::Id>]) -> (Vec<crate::command::Command>, Vec<String>) {
     use crate::command::Command;
+    use crate::model::Source;
     use crate::typed::{Door, Wall, Window};
     let mut cmds = Vec::new();
     let mut notes = Vec::new();
@@ -137,45 +170,44 @@ pub fn clear_openings(model: &Model, levels: &[Option<crate::model::Id>]) -> (Ve
             continue;
         }
         for (wid, w) in model.elements.values().filter(|e| e.kind == Wall::KIND && (lvl.is_none() || e.level_id == *lvl)).filter_map(|e| Some((e.id, e.typed::<Wall>().ok()?))) {
-            let (s, end, cl, half_t) = (w.start(), w.start() + w.length, w.centre_line(), w.thickness / 2);
-            // Blocked stretches along this wall: each column face plus its clearance.
-            let blocked: Vec<(i64, i64)> = cols
-                .iter()
-                .filter(|c| {
-                    let (along, across) = if w.horizontal() { (c.x, c.y) } else { (c.y, c.x) };
-                    (across - cl).abs() <= half_t.max(c.b / 2) && along >= s - c.b / 2 && along <= end + c.b / 2
-                })
-                .map(|c| {
-                    let along = if w.horizontal() { c.x } else { c.y };
-                    (along - c.b / 2 - COLUMN_CLEAR_MM, along + c.b / 2 + COLUMN_CLEAR_MM)
-                })
-                .collect();
+            let (s, end) = (w.start(), w.start() + w.length);
+            let blocked = column_stretches(&cols, &w);
             if blocked.is_empty() {
                 continue;
             }
-            // (element id, centre along the wall, width, is a door)
-            let mut ops: Vec<(crate::model::Id, i64, i64, bool)> = Vec::new();
+            // (element id, centre along the wall, width, is a door, drawn by hand or read from a drawing)
+            let mut ops: Vec<(crate::model::Id, i64, i64, bool, bool)> = Vec::new();
             for e in model.elements.values().filter(|e| e.host_id == Some(wid)) {
+                let drawn = e.provenance.source == Source::User;
                 if let Ok(d) = e.typed::<Door>() {
-                    ops.push((e.id, s + d.offset_center, d.width, true));
+                    ops.push((e.id, s + d.offset_center, d.width, true, drawn));
                 } else if let Ok(win) = e.typed::<Window>() {
-                    ops.push((e.id, s + win.offset_center, win.width, false));
+                    ops.push((e.id, s + win.offset_center, win.width, false, drawn));
                 }
             }
             ops.sort_by_key(|o| (o.1, o.0));
             let hits = |c: i64, wd: i64| blocked.iter().any(|&(lo, hi)| c - wd / 2 < hi && c + wd / 2 > lo);
-            // Openings that already clear every column stay where they are and constrain the others.
-            let mut placed: Vec<(i64, i64)> = ops.iter().filter(|o| !hits(o.1, o.2)).map(|o| (o.1 - o.2 / 2, o.1 + o.2 / 2)).collect();
-            for (id, c0, wd, door) in ops.iter().filter(|o| hits(o.1, o.2)) {
-                let fits = |c: i64| c - wd / 2 >= s + END_MARGIN_MM && c + wd / 2 <= end - END_MARGIN_MM && !hits(c, *wd) && placed.iter().all(|&(lo, hi)| c - wd / 2 >= hi + OPENING_GAP_MM || c + wd / 2 <= lo - OPENING_GAP_MM);
+            // Where every opening stands now. One that stays in its column is still there, so the others keep clear of it too.
+            let mut at: Vec<(i64, i64)> = ops.iter().map(|o| (o.1 - o.2 / 2, o.1 + o.2 / 2)).collect();
+            for (i, (id, c0, wd, door, drawn)) in ops.iter().enumerate() {
+                if !hits(*c0, *wd) {
+                    continue;
+                }
+                let what = if *door { "door" } else { "window" };
+                if *drawn {
+                    notes.push(format!("a {what} {wd} mm wide stands in a column on a {} mm wall: it was drawn there and is not moved (move it, or the column)", w.length));
+                    continue;
+                }
+                let fits = |c: i64| c - wd / 2 >= s + END_MARGIN_MM && c + wd / 2 <= end - END_MARGIN_MM && !hits(c, *wd) && at.iter().enumerate().all(|(j, &(lo, hi))| j == i || c - wd / 2 >= hi + OPENING_GAP_MM || c + wd / 2 <= lo - OPENING_GAP_MM);
                 let mut candidates: Vec<i64> = blocked.iter().flat_map(|&(lo, hi)| [round10(hi + wd / 2), round10(lo - wd / 2)]).collect();
                 candidates.sort_by_key(|c| ((c - c0).abs(), *c));
-                match candidates.into_iter().find(|&c| fits(c)) {
+                let found = candidates.into_iter().find(|&c| fits(c));
+                match found {
                     Some(c) => {
-                        placed.push((c - wd / 2, c + wd / 2));
+                        at[i] = (c - wd / 2, c + wd / 2);
                         cmds.push(Command::SetProp { id: *id, key: "offsetCenter".into(), value: Some(serde_json::json!(c - s)) });
                     }
-                    None => notes.push(format!("a {} {} mm wide stands in a column on a {} mm wall and cannot be moved clear of it", if *door { "door" } else { "window" }, wd, w.length)),
+                    None => notes.push(format!("a {what} {wd} mm wide stands in a column on a {} mm wall and cannot be moved clear of it", w.length)),
                 }
             }
         }

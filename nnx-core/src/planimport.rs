@@ -305,6 +305,27 @@ pub fn import(spec: &Spec, drawings: &[Drawing]) -> Result<(Document, Report), S
                 }
             }
         }
+        // The passages first: a separator can split a room, and the doors and windows below must name the rooms as they end up.
+        for g in &r.walls.passages {
+            let (a, b) = if g.horizontal { ([wx(g.lo_px), wy(g.axis_px)], [wx(g.hi_px), wy(g.axis_px)]) } else { ([wx(g.axis_px), wy(g.hi_px)], [wx(g.axis_px), wy(g.lo_px)]) };
+            match annot::separator_command(&doc.model, level, (a[0], a[1]), (b[0], b[1])) {
+                Ok((cmd, _)) => {
+                    doc.commit("plan import: passage", Origin::User, vec![cmd]).map_err(|e| format!("{}: {e}", r.level))?;
+                    lr.passages_built += 1;
+                    let sync = annot::rooms_sync(&doc.model, level);
+                    composite = sync.composite;
+                    if !sync.cmds.is_empty() {
+                        doc.commit("plan import: rooms", Origin::User, sync.cmds).map_err(|e| format!("{}: {e}", r.level))?;
+                    }
+                }
+                Err(e) => *lr.openings_not_built.entry(reason(&e)).or_default() += 1,
+            }
+        }
+        // Every wall was drawn before the rooms it bounds existed: now that they do, each learns its rooms and whether it is exterior.
+        let learnt = draft::refresh_walls(&doc.model, level);
+        if !learnt.is_empty() {
+            doc.commit("plan import: the walls' rooms", Origin::User, learnt).map_err(|e| format!("{}: {e}", r.level))?;
+        }
         for o in &r.walls.openings {
             let (kind, label) = match o.kind {
                 OpeningKind::Door => (BuildKind::Door, "door"),
@@ -325,21 +346,6 @@ pub fn import(spec: &Spec, drawings: &[Drawing]) -> Result<(Document, Report), S
             match outcome {
                 Ok(()) if label == "door" => lr.doors_built += 1,
                 Ok(()) => lr.windows_built += 1,
-                Err(e) => *lr.openings_not_built.entry(reason(&e)).or_default() += 1,
-            }
-        }
-        for g in &r.walls.passages {
-            let (a, b) = if g.horizontal { ([wx(g.lo_px), wy(g.axis_px)], [wx(g.hi_px), wy(g.axis_px)]) } else { ([wx(g.axis_px), wy(g.hi_px)], [wx(g.axis_px), wy(g.lo_px)]) };
-            match annot::separator_command(&doc.model, level, (a[0], a[1]), (b[0], b[1])) {
-                Ok((cmd, _)) => {
-                    doc.commit("plan import: passage", Origin::User, vec![cmd]).map_err(|e| format!("{}: {e}", r.level))?;
-                    lr.passages_built += 1;
-                    let sync = annot::rooms_sync(&doc.model, level);
-                    composite = sync.composite;
-                    if !sync.cmds.is_empty() {
-                        doc.commit("plan import: rooms", Origin::User, sync.cmds).map_err(|e| format!("{}: {e}", r.level))?;
-                    }
-                }
                 Err(e) => *lr.openings_not_built.entry(reason(&e)).or_default() += 1,
             }
         }

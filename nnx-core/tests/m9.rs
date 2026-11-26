@@ -907,3 +907,73 @@ fn a_snapshot_labels_a_divided_part_by_its_display_name_without_changing_what_a_
     let old: snapshot::Snapshot = serde_json::from_value(serde_json::to_value(&plain).unwrap()).unwrap();
     assert_eq!(label_of(&old, "living"), "living");
 }
+
+// ------------------------------------------------------------------ the rooms that doors and windows name
+
+fn opening(doc: &mut Document, kind: draft::OpeningKind, wall: Id, offset: i64) -> Id {
+    let door = matches!(kind, draft::OpeningKind::Door);
+    let spec = draft::OpeningSpec { kind, wall, offset, width: 900, height: if door { 2000 } else { 1500 }, sill: (!door).then_some(500), side: door.then_some(1) };
+    let (cmds, id) = draft::opening_command(&doc.model, &spec).unwrap_or_else(|e| panic!("{e}"));
+    doc.commit("opening", Origin::User, cmds).unwrap_or_else(|e| panic!("{e}"));
+    id
+}
+
+fn refresh(doc: &mut Document) {
+    let lv = level(doc);
+    for cmds in [draft::refresh_walls(&doc.model, lv), draft::refresh_openings(&doc.model, lv)] {
+        if !cmds.is_empty() {
+            doc.commit("refresh", Origin::User, cmds).unwrap_or_else(|e| panic!("{e}"));
+        }
+    }
+}
+
+fn text(doc: &Document, id: Id, key: &str) -> String {
+    doc.model.get(&id).unwrap().props[key].as_str().unwrap_or_default().to_string()
+}
+
+#[test]
+fn doors_and_windows_drawn_before_their_rooms_name_the_room_they_stand_on_not_the_one_at_the_middle_of_the_wall() {
+    // One long wall along two rooms; the openings are placed while no room exists yet, as when a drawing is read.
+    let mut doc = blank();
+    let south = wall(&mut doc, [0, 0], [8000, 0]);
+    wall(&mut doc, [8000, 0], [8000, 4000]);
+    wall(&mut doc, [8000, 4000], [0, 4000]);
+    wall(&mut doc, [0, 4000], [0, 0]);
+    let mid = wall(&mut doc, [4000, 0], [4000, 4000]);
+    let window = opening(&mut doc, draft::OpeningKind::Window, south, 6000);
+    let front = opening(&mut doc, draft::OpeningKind::Door, south, 1500);
+    let between = opening(&mut doc, draft::OpeningKind::Door, mid, 2000);
+    assert_eq!((text(&doc, window, "room"), text(&doc, front, "from")), (String::new(), String::new()), "no room exists yet");
+    sync(&mut doc, "Find rooms");
+    refresh(&mut doc);
+    let key_at = |x: i64| rooms(&doc).into_iter().find(|(_, r, _)| r[0] <= x && x < r[0] + r[2]).unwrap().0;
+    let (left, right) = (key_at(1000), key_at(6000));
+    assert_ne!(left, right);
+    assert_eq!(text(&doc, window, "room"), right, "the window stands on the right-hand room, though the wall's middle is at the partition");
+    assert_eq!((text(&doc, front, "from"), text(&doc, front, "to")), (left.clone(), "out".to_string()));
+    assert_eq!((text(&doc, between, "from"), text(&doc, between, "to")), (left, right));
+    // Nothing left to change, and the integrity check has nothing to say about rooms without doors or openings without rooms.
+    assert!(draft::refresh_openings(&doc.model, level(&doc)).is_empty());
+    let codes: Vec<&str> = precheck::run(&doc.model).issues.iter().map(|i| i.code).collect();
+    assert!(!codes.iter().any(|c| ["ROOM.NO_DOOR", "DOOR.UNKNOWN_ROOM", "WINDOW.UNKNOWN_ROOM"].contains(c)), "{codes:?}");
+}
+
+#[test]
+fn an_opening_on_one_part_of_a_room_names_the_whole_room_and_a_door_into_a_part_is_a_door_into_the_room() {
+    let mut l = blank();
+    let mut ids = Vec::new();
+    for (a, b) in [([0, 0], [4000, 0]), ([4000, 0], [4000, 2000]), ([4000, 2000], [2000, 2000]), ([2000, 2000], [2000, 4000]), ([2000, 4000], [0, 4000]), ([0, 4000], [0, 0])] {
+        ids.push(wall(&mut l, a, b));
+    }
+    let s = sync(&mut l, "Find rooms");
+    assert_eq!(s.composite, 1);
+    let parts: Vec<Space> = l.model.elements.values().filter_map(|e| e.typed::<Space>().ok()).collect();
+    let lead = parts.iter().find(|s| annot::part_of(s).is_none()).unwrap().requirement_key.clone();
+    // One opening on each rectangle of the L: the wall along the top of its upper arm, and the wall at the end of its lower arm.
+    let door = opening(&mut l, draft::OpeningKind::Door, ids[4], 1000);
+    let window = opening(&mut l, draft::OpeningKind::Window, ids[1], 1000);
+    assert_eq!((text(&l, door, "from"), text(&l, door, "to"), text(&l, window, "room")), (lead.clone(), "out".to_string(), lead.clone()), "both name the room, whichever rectangle they stand on");
+    refresh(&mut l);
+    let report = precheck::run(&l.model);
+    assert!(!report.issues.iter().any(|i| i.code == "ROOM.NO_DOOR"), "{:?}", report.issues.iter().map(|i| &i.message).collect::<Vec<_>>());
+}

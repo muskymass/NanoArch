@@ -240,6 +240,61 @@ fn rooms_beside(rects: &[RoomRect], a: Ax, thickness: i64) -> (Option<String>, O
     (room_at(rects, x0, y0), room_at(rects, x1, y1))
 }
 
+/// The room on each side of a wall at `along` (a position on its axis), by the name of the whole room: a rectangle that is one part of a
+/// room answers with that room. A long wall passes several rooms, so an opening asks at its own position, not at the wall's middle.
+fn rooms_at(model: &Model, level: Option<Id>, a: Ax, thickness: i64, along: i64) -> (Option<String>, Option<String>) {
+    let spaces: Vec<Space> = model.elements.values().filter(|e| e.kind == Space::KIND && on_level(e, level)).filter_map(|e| e.typed::<Space>().ok()).collect();
+    let whole = |x: i64, y: i64| spaces.iter().find(|s| x > s.x && x < s.x + s.w && y > s.y && y < s.y + s.h).map(|s| crate::annot::part_of(s).unwrap_or(&s.requirement_key).to_string());
+    let off = thickness / 2 + 20;
+    let (x0, y0) = xy(a.horiz, along, a.line - off);
+    let (x1, y1) = xy(a.horiz, along, a.line + off);
+    (whole(x0, y0), whole(x1, y1))
+}
+
+/// `(from, to)` of a door from the rooms either side of it: two rooms, or one room and the outside. Where the rooms' rectangles say
+/// nothing (no room found on either side), the host wall's own rooms answer.
+fn door_rooms(wall: &Wall, lo: &Option<String>, hi: &Option<String>) -> (String, String) {
+    match (lo, hi) {
+        (Some(a), Some(b)) if a != b => (a.clone(), b.clone()),
+        (Some(a), Some(_)) => (a.clone(), String::new()),
+        (Some(a), None) | (None, Some(a)) => (a.clone(), "out".into()),
+        (None, None) => (wall.room_a.clone(), wall.room_b.clone().unwrap_or_else(|| if wall.is_exterior { "out".into() } else { String::new() })),
+    }
+}
+
+/// After the level's rooms were found or changed: the rooms that the doors and windows the user drew (or that were read from a drawing)
+/// name, derived again from where each one stands. A door placed before its room existed, or whose room was renumbered, names the
+/// right rooms here. Openings of a generated layout are left as they are.
+pub fn refresh_openings(model: &Model, level: Option<Id>) -> Vec<Command> {
+    let mut cmds = Vec::new();
+    let mut set = |id: Id, key: &str, old: &str, new: &str| {
+        if old != new {
+            cmds.push(Command::SetProp { id, key: key.into(), value: Some(json!(new)) });
+        }
+    };
+    for e in model.elements.values().filter(|e| (e.kind == Door::KIND || e.kind == Window::KIND) && on_level(e, level) && e.provenance.source == Source::User) {
+        let Some(wall) = e.host_id.and_then(|h| model.get(&h)).and_then(|h| h.typed::<Wall>().ok()) else { continue };
+        let a = ax(&wall);
+        if let Ok(d) = e.typed::<Door>()
+            && e.kind == Door::KIND
+        {
+            let (lo, hi) = rooms_at(model, level, a, wall.thickness, a.lo + d.offset_center);
+            let (from, to) = door_rooms(&wall, &lo, &hi);
+            // The side it opens into stays the side it was on: the room that was `to` is now the new `to`.
+            let into = if !d.to.is_empty() && d.opens_into == d.to && !to.is_empty() && to != "out" { to.clone() } else { from.clone() };
+            set(e.id, "from", &d.from, &from);
+            set(e.id, "to", &d.to, &to);
+            set(e.id, "opensInto", &d.opens_into, &into);
+        } else if let Ok(w) = e.typed::<Window>() {
+            let (lo, hi) = rooms_at(model, level, a, wall.thickness, a.lo + w.offset_center);
+            if let Some(room) = lo.or(hi) {
+                set(e.id, "room", &w.room, &room);
+            }
+        }
+    }
+    cmds
+}
+
 /// `(room_a, room_b, is_exterior)` of a wall: its rooms from the geometry; exterior when exactly one side is inside a room.
 fn wall_rooms(rects: &[RoomRect], a: Ax, thickness: i64) -> (String, Option<String>, bool) {
     let (lo, hi) = rooms_beside(rects, a, thickness);
@@ -347,12 +402,11 @@ pub fn opening_command(model: &Model, spec: &OpeningSpec) -> Result<(Vec<Command
             return Err(format!("it would overlap another opening ({}) in that wall", wall_label(dep)));
         }
     }
-    let rects = room_rects(model, host.level_id);
-    let (rlo, rhi) = rooms_beside(&rects, ax(&wall), wall.thickness);
+    let a = ax(&wall);
+    let (rlo, rhi) = rooms_at(model, host.level_id, a, wall.thickness, a.lo + spec.offset);
     let mut el = match spec.kind {
         OpeningKind::Door => {
-            let from = if wall.room_a.is_empty() { rlo.clone().or(rhi.clone()).unwrap_or_default() } else { wall.room_a.clone() };
-            let to = wall.room_b.clone().unwrap_or_else(|| if wall.is_exterior { "out".into() } else { String::new() });
+            let (from, to) = door_rooms(&wall, &rlo, &rhi);
             let opens_into = match spec.side {
                 Some(s) if s < 0 => rlo.clone(),
                 Some(_) => rhi.clone(),
@@ -366,7 +420,7 @@ pub fn opening_command(model: &Model, spec: &OpeningSpec) -> Result<(Vec<Command
             if sill < 0 {
                 return Err("the sill height must be zero or more".into());
             }
-            let room = if wall.room_a.is_empty() { rlo.or(rhi).unwrap_or_default() } else { wall.room_a.clone() };
+            let room = rlo.or(rhi).unwrap_or_else(|| wall.room_a.clone());
             element_of(&Window { width: spec.width, height: spec.height, sill_height: sill, offset_center: spec.offset, room, extra: Default::default() }, Source::User)
         }
     };
@@ -376,8 +430,7 @@ pub fn opening_command(model: &Model, spec: &OpeningSpec) -> Result<(Vec<Command
     // A position that would stand in a column is refused, not moved behind the user's back.
     let mut probe = crate::Document::new(model.clone());
     probe.commit("probe", crate::Origin::User, vec![Command::Create(el.clone())]).map_err(|e| e.to_string())?;
-    let (fix, _) = building::clear_openings(&probe.model, &[host.level_id]);
-    if fix.iter().any(|c| matches!(c, Command::SetProp { id: i, .. } | Command::Delete(i) if *i == id)) {
+    if building::stands_in_column(&probe.model, &id) {
         return Err("that position would put the opening in a column: choose another".into());
     }
     Ok((vec![Command::Create(el)], id))

@@ -2246,6 +2246,8 @@ impl App {
                 scratch.commit(label, nnx_core::Origin::User, sync.cmds.clone()).map_err(|e| e.to_string())?;
             }
             cmds.extend(nnx_core::draft::refresh_walls(&scratch.model, level));
+            // The doors and windows too: a room that was split, joined or renumbered is named anew by each opening that stands on it.
+            cmds.extend(nnx_core::draft::refresh_openings(&scratch.model, level));
         }
         editing::commit_with_sync(self.doc.as_mut().ok_or("choose a layout first")?, &so, label, cmds, level)?;
         let mut notes = edit.notes;

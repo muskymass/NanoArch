@@ -273,15 +273,29 @@ fn a_door_in_a_column_moves_to_the_nearest_clear_position_and_stays_clear() {
 }
 
 #[test]
-fn an_opening_that_cannot_be_moved_clear_is_left_alone_and_named() {
-    let (mut doc, door, win) = wall_with_column(true);
+fn an_opening_that_cannot_be_moved_clear_is_left_alone_and_named_and_none_is_moved_onto_another() {
+    let (doc, door, win) = wall_with_column(true);
     let (cmds, notes) = building::clear_openings(&doc.model, &[None]);
-    // The door takes the only gap (1200..2100); the 1500 mm window then has nowhere to go on this wall.
-    assert_eq!(cmds.len(), 1, "only the door moves");
-    assert!(notes.len() == 1 && notes[0].contains("window") && notes[0].contains("1500"), "{notes:?}");
-    doc.commit("clear", Origin::Generator, cmds).unwrap();
-    assert_eq!(offset_of(&doc.model, door), 1650);
-    assert_eq!(offset_of(&doc.model, win.unwrap()), 1900, "the window is exactly where it was");
+    // The window (1150..2650) has nowhere to go on this wall and stays; the door's only gap (1200..2100) is where the window stands,
+    // so the door stays too: an opening is never moved onto another one.
+    assert!(cmds.is_empty(), "{cmds:?}");
+    assert!(notes.len() == 2 && notes.iter().any(|n| n.contains("window") && n.contains("1500")) && notes.iter().any(|n| n.contains("door") && n.contains("900")), "{notes:?}");
+    assert_eq!((offset_of(&doc.model, door), offset_of(&doc.model, win.unwrap())), (1000, 1900));
+    assert!(building::stands_in_column(&doc.model, &door) && building::stands_in_column(&doc.model, &win.unwrap()));
+}
+
+#[test]
+fn an_opening_drawn_by_hand_is_never_moved_out_of_a_column_only_named() {
+    use nnx_core::model::Source;
+    let (mut doc, door, _) = wall_with_column(false);
+    // The same door, as the owner drew it (or as it was read from a drawing): its place is the owner's.
+    let mut drawn = doc.model.get(&door).unwrap().clone();
+    drawn.provenance.source = Source::User;
+    doc.commit("drawn", Origin::User, vec![Command::Delete(door), Command::Create(drawn)]).unwrap();
+    let (cmds, notes) = building::clear_openings(&doc.model, &[None]);
+    assert!(cmds.is_empty(), "{cmds:?}");
+    assert!(notes.len() == 1 && notes[0].contains("door") && notes[0].contains("is not moved"), "{notes:?}");
+    assert_eq!(offset_of(&doc.model, door), 1000);
 }
 
 #[test]

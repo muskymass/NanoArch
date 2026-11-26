@@ -34,6 +34,8 @@ pub const TABLE: &[(&str, &str)] = &[
     ("no rate for {}: enter one for the code {} in the BOQ library", "لا سعر لـ {}: أدخل سعراً للرمز {} في مكتبة BOQ"),
     ("a door {} mm wide stands in a column on a {} mm wall and cannot be moved clear of it", "باب بعرض {} مم يقع في عمود على جدار طوله {} مم ولا يمكن إبعاده عنه"),
     ("a window {} mm wide stands in a column on a {} mm wall and cannot be moved clear of it", "نافذة بعرض {} مم تقع في عمود على جدار طوله {} مم ولا يمكن إبعادها عنه"),
+    ("a door {} mm wide stands in a column on a {} mm wall: it was drawn there and is not moved (move it, or the column)", "باب بعرض {} مم يقع في عمود على جدار طوله {} مم: رُسم هناك فلا يُنقل (انقله أو انقل العمود)"),
+    ("a window {} mm wide stands in a column on a {} mm wall: it was drawn there and is not moved (move it, or the column)", "نافذة بعرض {} مم تقع في عمود على جدار طوله {} مم: رُسمت هناك فلا تُنقل (انقلها أو انقل العمود)"),
     // Where each setback came from: the citation (clause, page) is kept as written; only the words around it change.
     ("Ground floor: room '{}' needs daylight but has no window (no exterior wall space)", "الدور الأرضي: الفراغ '{}' يحتاج إضاءة طبيعية ولا نافذة له (لا جدار خارجي متاح)"),
     ("Floor {}: room '{}' needs daylight but has no window (no exterior wall space)", "الدور {}: الفراغ '{}' يحتاج إضاءة طبيعية ولا نافذة له (لا جدار خارجي متاح)"),
