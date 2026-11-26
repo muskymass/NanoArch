@@ -1366,8 +1366,23 @@ function renderNotes() {
     const box = $("precheck"); if (!box) return;
     const rows = r.issues || [];
     box.innerHTML = `<h2>${L("فحص سلامة النموذج", "Model integrity check")}</h2>` + (rows.length
-      ? `<ul class="clean">${rows.map((i, n) => `<li class="${i.level === "error" ? "bad" : "warn"}" dir="auto"><b>${esc(i.code)}</b> ${lang === "ar" ? `${(r.messages_en_only || [])[n] ? `<span class="badge">EN</span> ` : ""}${esc((r.messages_ar || [])[n] || i.message)}` : esc(i.message)}</li>`).join("")}</ul>`
+      ? `<ul class="clean">${rows.map((i, n) => `<li class="${i.level === "error" ? "bad" : "warn"}" dir="auto"><b>${esc(i.code)}</b> ${lang === "ar" ? `${(r.messages_en_only || [])[n] ? `<span class="badge">EN</span> ` : ""}${esc((r.messages_ar || [])[n] || i.message)}` : esc(i.message)}${(i.elements || []).length ? ` <button data-pc-show="${n}" title="${L("حدّد العناصر التي يسمّيها هذا التنبيه على المخطط", "Select the elements this notice names on the plan")}">${L("أظهرها", "Show")}</button>` : ""}</li>`).join("")}</ul>`
       : `<div class="ok">${L("لا أخطاء ولا تنبيهات", "No errors or warnings")}</div>`);
+    box.querySelectorAll("[data-pc-show]").forEach(b => b.onclick = async () => {
+      // The elements level by level: each press shows the next level that holds some of them.
+      const n = +b.dataset.pcShow, at = (r.element_levels || [])[n] || [], groups = new Map();
+      rows[n].elements.forEach((id, k) => { const lv = at[k] == null ? null : at[k]; if (!groups.has(lv)) groups.set(lv, []); groups.get(lv).push(id); });
+      const keys = [...groups.keys()], turn = (+b.dataset.turn || 0) % keys.length, lv = keys[turn], ids = groups.get(lv);
+      b.dataset.turn = turn + 1;
+      // Columns and beams are drawn only with the structure shown, and an element that is not drawn cannot be marked.
+      if (/^(COLUMN|BEAM|SLAB|FOOTING)\./.test(rows[n].code)) $("showstruct").checked = true;
+      await selectIds(ids, { level: lv, src: "table" });
+      const p = await call("svg", { show_structure: $("showstruct").checked }); showPlan(p.svg);
+      SEL.ids = new Set(ids); selApply2d();
+      const name = lv == null ? "" : (((state.levels || {}).list || [])[lv] || {}).name || "";
+      const part = keys.length > 1 ? L(` (${turn + 1} من ${keys.length} أدوار؛ اضغط ثانية للتالي)`, ` (level ${turn + 1} of ${keys.length}; press again for the next)`) : "";
+      toast(L(`حُدّد ${ids.length} عنصراً${name ? ` في ${name}` : ""}${part}`, `${ids.length} element(s) selected${name ? ` on ${name}` : ""}${part}`));
+    });
   }).catch(() => {});
 }
 async function loadQto() { try { state.qto = await call("qto", { phase: state.qtoPhase || "" }); renderQto(); } catch (e) { $("p-qto").innerHTML = `<div class="bad">${esc(e.message)}</div>`; } }

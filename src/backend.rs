@@ -689,7 +689,13 @@ impl App {
                 // Each message with its Arabic, and which ones the table has none for (the page marks those, it does not hide them).
                 let en: Vec<&str> = r.issues.iter().map(|i| i.message.as_str()).collect();
                 let (ar, en_only) = (nnx_core::msgs::localize_all(&en), nnx_core::msgs::untranslated(&en));
+                // Where each element of each issue stands (its level's place in the level list), so the page can show it on the plan:
+                // one issue can name elements of several levels.
+                let order = self.level_list();
+                let doc = self.doc()?;
+                let levels: Vec<Vec<Option<usize>>> = r.issues.iter().map(|i| i.elements.iter().map(|id| doc.model.get(id).and_then(|e| e.level_id).and_then(|l| order.iter().position(|(_, id, _)| *id == l))).collect()).collect();
                 let mut out = json!(r);
+                out["element_levels"] = json!(levels);
                 out["messages_ar"] = json!(ar);
                 out["messages_en_only"] = json!(en_only);
                 Ok(out)
@@ -6022,6 +6028,7 @@ mod tests {
         // Every issue comes with its Arabic, in the same order.
         let at = r["issues"].as_array().unwrap().iter().position(|i| i["code"] == "ROOM.OVERLAP").unwrap();
         assert_eq!(r["messages_ar"].as_array().unwrap().len(), r["issues"].as_array().unwrap().len());
+        assert_eq!(r["element_levels"][at], json!([0, 0]), "both overlapping rooms stand on the ground level, the first of the list");
         assert!(r["messages_ar"][at].as_str().unwrap().contains("متراكبتان") && r["messages_en_only"][at] == false, "{}", r["messages_ar"][at]);
         let e = app.handle("export_ifc", &json!({})).unwrap_err();
         assert!(e.contains("ROOM.OVERLAP"), "{e}");
