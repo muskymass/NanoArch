@@ -686,7 +686,13 @@ impl App {
                 for m in self.project().map(|p| nnx_core::project::input_conflicts(&p)).unwrap_or_default() {
                     r.issues.push(nnx_core::precheck::Issue { level: nnx_core::precheck::Level::Warning, code: "INPUT.CONFLICT", message: m, elements: Vec::new() });
                 }
-                Ok(json!(r))
+                // Each message with its Arabic, and which ones the table has none for (the page marks those, it does not hide them).
+                let en: Vec<&str> = r.issues.iter().map(|i| i.message.as_str()).collect();
+                let (ar, en_only) = (nnx_core::msgs::localize_all(&en), nnx_core::msgs::untranslated(&en));
+                let mut out = json!(r);
+                out["messages_ar"] = json!(ar);
+                out["messages_en_only"] = json!(en_only);
+                Ok(out)
             }
             "export_ifc" => self.gate(args).and_then(|_| self.export_ifc(args)),
             "export_bundle" => self.gate(args).and_then(|_| self.export_bundle(args)),
@@ -6008,6 +6014,10 @@ mod tests {
         }
         let r = app.handle("precheck", &json!({})).unwrap();
         assert!(r["issues"].as_array().unwrap().iter().any(|i| i["code"] == "ROOM.OVERLAP" && i["level"] == "error"));
+        // Every issue comes with its Arabic, in the same order.
+        let at = r["issues"].as_array().unwrap().iter().position(|i| i["code"] == "ROOM.OVERLAP").unwrap();
+        assert_eq!(r["messages_ar"].as_array().unwrap().len(), r["issues"].as_array().unwrap().len());
+        assert!(r["messages_ar"][at].as_str().unwrap().contains("متراكبتان") && r["messages_en_only"][at] == false, "{}", r["messages_ar"][at]);
         let e = app.handle("export_ifc", &json!({})).unwrap_err();
         assert!(e.contains("ROOM.OVERLAP"), "{e}");
         assert!(app.handle("export_dxf", &json!({})).is_err() && app.handle("pdf_html", &json!({})).is_err());

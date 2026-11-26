@@ -74,6 +74,23 @@ pub const TABLE: &[(&str, &str)] = &[
     ("no new room: every enclosed rectangle already has one", "لا غرفة جديدة: لكل مستطيل محاط غرفة"),
     ("closing a gap: its two ends must share an x or a y, and differ", "إغلاق فتحة: طرفاها يجب أن يشتركا في x أو y وأن يختلفا"),
     ("closing a gap: the walls at its two ends are not in one line ({} mm apart): draw it by hand", "إغلاق فتحة: الجداران عند طرفيها ليسا على خط واحد (بينهما {} مم): ارسمها يدوياً"),
+    ("level {}: rooms '{}' and '{}' overlap by {} m2", "الدور {}: الغرفتان '{}' و'{}' متراكبتان بمساحة {} م²"),
+    ("model: rooms '{}' and '{}' overlap by {} m2", "النموذج: الغرفتان '{}' و'{}' متراكبتان بمساحة {} م²"),
+    ("level {}: a door names room '{}', which is not on the level", "الدور {}: باب يسمّي الغرفة '{}' وهي ليست في الدور"),
+    ("model: a door names room '{}', which is not on the level", "النموذج: باب يسمّي الغرفة '{}' وهي ليست في الدور"),
+    ("level {}: a window names room '{}', which is not on the level", "الدور {}: نافذة تسمّي الغرفة '{}' وهي ليست في الدور"),
+    ("model: a window names room '{}', which is not on the level", "النموذج: نافذة تسمّي الغرفة '{}' وهي ليست في الدور"),
+    ("level {}: a door and a door overlap on the same wall", "الدور {}: بابان متراكبان على الجدار نفسه"),
+    ("model: a door and a door overlap on the same wall", "النموذج: بابان متراكبان على الجدار نفسه"),
+    ("level {}: a door and a window overlap on the same wall", "الدور {}: باب ونافذة متراكبان على الجدار نفسه"),
+    ("model: a door and a window overlap on the same wall", "النموذج: باب ونافذة متراكبان على الجدار نفسه"),
+    ("level {}: a window and a door overlap on the same wall", "الدور {}: نافذة وباب متراكبان على الجدار نفسه"),
+    ("model: a window and a door overlap on the same wall", "النموذج: نافذة وباب متراكبان على الجدار نفسه"),
+    ("level {}: a window and a window overlap on the same wall", "الدور {}: نافذتان متراكبتان على الجدار نفسه"),
+    ("model: a window and a window overlap on the same wall", "النموذج: نافذتان متراكبتان على الجدار نفسه"),
+    ("level {}: room '{}' has no door", "الدور {}: الغرفة '{}' بلا باب ولا ممر مفتوح إليها"),
+    ("model: room '{}' has no door", "النموذج: الغرفة '{}' بلا باب ولا ممر مفتوح إليها"),
+    ("level {}: the column at ({}, {}) mm has no column below it", "الدور {}: العمود عند ({}, {}) مم بلا عمود تحته"),
     ("{} door(s) or window(s) stand in a column and can be moved clear of it", "{} باب أو نافذة تقف في عمود ويمكن إبعادها عنه"),
     ("{} door(s) or window(s) stand in a column and are not moved clear of it: check each on the drawing", "{} باب أو نافذة تقف في عمود ولا تُبعد عنه: راجع كلاً منها على الرسم"),
     ("{} door(s) or window(s) stand in a column: {} can be moved clear of it and {} are not moved: check each on the drawing", "{} باب أو نافذة تقف في عمود: {} يمكن إبعادها عنه و{} لا تُبعد: راجع كلاً منها على الرسم"),
@@ -159,6 +176,30 @@ mod tests {
         for (en, ar) in TABLE {
             assert_eq!(en.matches("{}").count(), ar.matches("{}").count(), "{en}");
         }
+    }
+
+    #[test]
+    fn every_message_of_the_integrity_check_has_its_arabic() {
+        for m in [
+            "level 1: rooms 'R1' and 'R2' overlap by 3.25 m2",
+            "model: rooms 'R1' and 'R2' overlap by 3.25 m2",
+            "level 0: a door names room 'R9', which is not on the level",
+            "model: a window names room 'R9', which is not on the level",
+            "level 2: a door and a window overlap on the same wall",
+            "level 2: a window and a window overlap on the same wall",
+            "level 1: the column at (12105, 12314) mm has no column below it",
+            "level 2: room 'R25' has no door",
+            "model: room 'R25' has no door",
+            "7 door(s) or window(s) stand in a column and are not moved clear of it: check each on the drawing",
+            "2 door(s) or window(s) stand in a column and can be moved clear of it",
+            "9 door(s) or window(s) stand in a column: 2 can be moved clear of it and 7 are not moved: check each on the drawing",
+        ] {
+            let (ar, known) = localize(m);
+            assert!(known, "no Arabic for: {m}");
+            assert!(!ar.contains("level") && !ar.contains("room"), "{ar}");
+        }
+        let (ar, _) = localize("level 2: room 'R25' has no door");
+        assert!(ar.starts_with("الدور 2:") && ar.contains("'R25'"), "{ar}");
     }
 
     #[test]

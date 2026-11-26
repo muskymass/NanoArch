@@ -1366,7 +1366,7 @@ function renderNotes() {
     const box = $("precheck"); if (!box) return;
     const rows = r.issues || [];
     box.innerHTML = `<h2>${L("فحص سلامة النموذج", "Model integrity check")}</h2>` + (rows.length
-      ? `<ul class="clean">${rows.map(i => `<li class="${i.level === "error" ? "bad" : "warn"}"><b>${esc(i.code)}</b> ${esc(i.message)}</li>`).join("")}</ul>`
+      ? `<ul class="clean">${rows.map((i, n) => `<li class="${i.level === "error" ? "bad" : "warn"}" dir="auto"><b>${esc(i.code)}</b> ${lang === "ar" ? `${(r.messages_en_only || [])[n] ? `<span class="badge">EN</span> ` : ""}${esc((r.messages_ar || [])[n] || i.message)}` : esc(i.message)}</li>`).join("")}</ul>`
       : `<div class="ok">${L("لا أخطاء ولا تنبيهات", "No errors or warnings")}</div>`);
   }).catch(() => {});
 }
