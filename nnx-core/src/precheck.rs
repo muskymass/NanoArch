@@ -143,8 +143,10 @@ pub fn run(model: &Model) -> Report {
     }
 
     // Warnings: engineer's attention.
-    for (lvl, x, y) in building::unsupported_columns(model) {
-        issues.push(Issue { level: Level::Warning, code: "COLUMN.UNSUPPORTED", message: format!("level {lvl}: the column at ({x}, {y}) mm has no column below it", ), elements: vec![] });
+    for (lvl, id, c) in building::unsupported_column_elements(model) {
+        // A column that stands on named axes is called by them: "AX4/AY3" is found on the drawing, a pair of coordinates is not.
+        let message = if c.grid_ref.is_empty() { format!("level {lvl}: the column at ({}, {}) mm has no column below it", c.x, c.y) } else { format!("level {lvl}: the column at {} ({}, {}) mm has no column below it", c.grid_ref, c.x, c.y) };
+        issues.push(Issue { level: Level::Warning, code: "COLUMN.UNSUPPORTED", message, elements: vec![id] });
     }
     let level_ids: Vec<Option<Id>> = if level_name.is_empty() { vec![None] } else { level_name.keys().map(|id| Some(*id)).collect() };
     let (moves, stuck) = building::clear_openings(model, &level_ids);
@@ -155,7 +157,9 @@ pub fn run(model: &Model) -> Report {
             (0, s) => format!("{s} door(s) or window(s) stand in a column and are not moved clear of it: check each on the drawing"),
             (m, s) => format!("{} door(s) or window(s) stand in a column: {m} can be moved clear of it and {s} are not moved: check each on the drawing", m + s),
         };
-        issues.push(Issue { level: Level::Warning, code: "OPENING.IN_COLUMN", message, elements: vec![] });
+        // The doors and windows themselves, so that whoever reads the warning can be shown each one.
+        let elements: Vec<Id> = model.elements.values().filter(|e| e.kind == Door::KIND || e.kind == Window::KIND).filter(|e| building::stands_in_column(model, &e.id)).map(|e| e.id).collect();
+        issues.push(Issue { level: Level::Warning, code: "OPENING.IN_COLUMN", message, elements });
     }
     // A room separator is an open boundary, a passage with no wall: the rooms on its two sides are entered through it, door or no door.
     for e in model.elements.values().filter(|e| e.kind == RoomSeparator::KIND) {

@@ -90,6 +90,8 @@ pub const TABLE: &[(&str, &str)] = &[
     ("model: a window and a window overlap on the same wall", "النموذج: نافذتان متراكبتان على الجدار نفسه"),
     ("level {}: room '{}' has no door", "الدور {}: الغرفة '{}' بلا باب ولا ممر مفتوح إليها"),
     ("model: room '{}' has no door", "النموذج: الغرفة '{}' بلا باب ولا ممر مفتوح إليها"),
+    ("level {}: the column at {} ({}, {}) mm has no column below it", "الدور {}: العمود {} عند ({}, {}) مم بلا عمود تحته"),
+    ("export stopped, the model has errors (run the precheck, fix them, or export with force): {}", "توقف التصدير لأن في النموذج أخطاء (شغّل فحص السلامة وأصلحها، أو صدّر بالإجبار): {}"),
     ("level {}: the column at ({}, {}) mm has no column below it", "الدور {}: العمود عند ({}, {}) مم بلا عمود تحته"),
     ("{} door(s) or window(s) stand in a column and can be moved clear of it", "{} باب أو نافذة تقف في عمود ويمكن إبعادها عنه"),
     ("{} door(s) or window(s) stand in a column and are not moved clear of it: check each on the drawing", "{} باب أو نافذة تقف في عمود ولا تُبعد عنه: راجع كلاً منها على الرسم"),
@@ -188,6 +190,7 @@ mod tests {
             "level 2: a door and a window overlap on the same wall",
             "level 2: a window and a window overlap on the same wall",
             "level 1: the column at (12105, 12314) mm has no column below it",
+            "level 1: the column at AX4/AY3 (12105, 12314) mm has no column below it",
             "level 2: room 'R25' has no door",
             "model: room 'R25' has no door",
             "7 door(s) or window(s) stand in a column and are not moved clear of it: check each on the drawing",
@@ -200,6 +203,8 @@ mod tests {
         }
         let (ar, _) = localize("level 2: room 'R25' has no door");
         assert!(ar.starts_with("الدور 2:") && ar.contains("'R25'"), "{ar}");
+        let (ar, _) = localize("level 1: the column at AX4/AY3 (12105, 12314) mm has no column below it");
+        assert_eq!(ar, "الدور 1: العمود AX4/AY3 عند (12105, 12314) مم بلا عمود تحته");
     }
 
     #[test]

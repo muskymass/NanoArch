@@ -840,6 +840,11 @@ impl App {
         }
         let report = nnx_core::precheck::run(&doc.model);
         if report.has_errors() {
+            // In Arabic, each error in Arabic too: the refusal is the first thing the user reads about the fault.
+            if self.ui_arabic {
+                let list = report.errors().map(|i| format!("[{}] {}", i.code, nnx_core::msgs::localize(&i.message).0)).collect::<Vec<_>>().join("؛ ");
+                return Err(nnx_core::msgs::localize(&format!("export stopped, the model has errors (run the precheck, fix them, or export with force): {list}")).0);
+            }
             return Err(format!("export stopped, the model has errors (run the precheck, fix them, or export with force): {}", report.error_text()));
         }
         Ok(())
@@ -6020,6 +6025,11 @@ mod tests {
         assert!(r["messages_ar"][at].as_str().unwrap().contains("متراكبتان") && r["messages_en_only"][at] == false, "{}", r["messages_ar"][at]);
         let e = app.handle("export_ifc", &json!({})).unwrap_err();
         assert!(e.contains("ROOM.OVERLAP"), "{e}");
+        // The same refusal for an Arabic user: Arabic around the code, and the error itself in Arabic.
+        app.ui_arabic = true;
+        let e = app.handle("export_ifc", &json!({})).unwrap_err();
+        assert!(e.starts_with("توقف التصدير") && e.contains("[ROOM.OVERLAP]") && e.contains("متراكبتان") && !e.contains("overlap"), "{e}");
+        app.ui_arabic = false;
         assert!(app.handle("export_dxf", &json!({})).is_err() && app.handle("pdf_html", &json!({})).is_err());
         assert!(app.handle("export_ifc", &json!({ "force": true })).is_ok(), "force exports anyway");
     }

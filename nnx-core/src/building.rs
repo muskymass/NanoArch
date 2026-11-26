@@ -100,15 +100,20 @@ pub fn levels(model: &Model) -> Vec<(i64, crate::model::Id)> {
 /// Columns of an upper level that have no column of the level below at the same position: their load has nowhere
 /// to go. Returned as `(level index, x, y)`.
 pub fn unsupported_columns(model: &Model) -> Vec<(i64, i64, i64)> {
+    unsupported_column_elements(model).into_iter().map(|(lvl, _, c)| (lvl, c.x, c.y)).collect()
+}
+
+/// The same columns as `unsupported_columns`, each with its level index, its element id and itself (its axis name is its `grid_ref`).
+pub fn unsupported_column_elements(model: &Model) -> Vec<(i64, crate::model::Id, Column)> {
     let lv = levels(model);
-    let cols = |id: crate::model::Id| -> Vec<Column> { model.elements.values().filter(|e| e.kind == Column::KIND && e.level_id == Some(id)).filter_map(|e| e.typed::<Column>().ok()).collect() };
+    let cols = |id: crate::model::Id| -> Vec<(crate::model::Id, Column)> { model.elements.values().filter(|e| e.kind == Column::KIND && e.level_id == Some(id)).filter_map(|e| Some((e.id, e.typed::<Column>().ok()?))).collect() };
     let mut out = Vec::new();
     for pair in lv.windows(2) {
         let (below, above) = (cols(pair[0].1), cols(pair[1].1));
-        for c in &above {
+        for (id, c) in above {
             let tol = c.b / 2;
-            if !below.iter().any(|d| (d.x - c.x).abs() <= tol && (d.y - c.y).abs() <= tol) {
-                out.push((pair[1].0, c.x, c.y));
+            if !below.iter().any(|(_, d)| (d.x - c.x).abs() <= tol && (d.y - c.y).abs() <= tol) {
+                out.push((pair[1].0, id, c));
             }
         }
     }
