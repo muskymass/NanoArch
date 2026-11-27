@@ -13,7 +13,7 @@
 use crate::building;
 use crate::drawing::{DrawOpts, plan_svg};
 use crate::model::{Id, Model};
-use crate::typed::{Level, Space, Typed};
+use crate::typed::Level;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -169,25 +169,6 @@ pub(crate) fn valid_date(d: &str) -> bool {
     b.len() == 10 && b[4] == b'-' && b[7] == b'-' && b.iter().enumerate().all(|(k, c)| k == 4 || k == 7 || c.is_ascii_digit()) && (1..=12).contains(&d[5..7].parse::<u32>().unwrap_or(0)) && (1..=31).contains(&d[8..10].parse::<u32>().unwrap_or(0))
 }
 
-fn func_ar(f: &str) -> &str {
-    match f {
-        "majlis" => "مجلس",
-        "living" => "صالة",
-        "dining" => "طعام",
-        "kitchen" => "مطبخ",
-        "bedroom" => "نوم",
-        "bathroom" => "حمام",
-        "stair" => "درج",
-        "lift" => "مصعد",
-        "courtyard" => "فناء",
-        "hall" => "ردهة",
-        "room" => "غرفة",
-        "other" => "أخرى",
-        "circulation_reserve" => "حركة وتنقل",
-        other => other,
-    }
-}
-
 /// The sheet number `PREFIX-NN` for the 1-based position `n`.
 pub fn sheet_number(prefix: &str, n: usize) -> String {
     format!("{}-{n:02}", prefix.trim())
@@ -341,17 +322,9 @@ pub fn build(ctx: &Context, input: &Input) -> Result<Pack, String> {
             notes.push(if ctx.arabic { format!("لا فراغات في «{title}»: لا لوحة لها.") } else { format!("No rooms in `{title}`: no sheet for it.") });
             continue;
         };
-        let mut rows = String::new();
-        let mut total = 0.0;
-        for e in model.elements.values().filter(|e| e.kind == Space::KIND && (lv.is_none() || e.level_id == *lv)) {
-            let Ok(s) = e.typed::<Space>() else { continue };
-            total += s.area;
-            let label = crate::annot::room_name(&s, &ctx.labels).unwrap_or_else(|| s.requirement_key.clone());
-            let func = if ctx.arabic { func_ar(&s.func).to_string() } else { s.func.clone() };
-            rows.push_str(&format!("<tr><td>{}</td><td>{}</td><td class=\"n\">{:.1}</td></tr>", esc(&label), esc(&func), s.area));
-        }
-        let (a, b, c) = if ctx.arabic { ("الفراغ", "النوع", "المساحة (م²)") } else { ("Room", "Type", "Area (m²)") };
-        let table = format!("<table class=\"rooms\"><tr><th>{a}</th><th>{b}</th><th>{c}</th></tr>{rows}<tr class=\"tot\"><td colspan=\"2\">{}</td><td class=\"n\">{total:.1}</td></tr></table>", if ctx.arabic { "المجموع" } else { "Total" });
+        let r = crate::printdoc::room_rows(model, *lv, &ctx.labels, ctx.arabic);
+        let net_sum = if r.has_net { format!("<td class=\"n\">{:.1}</td>", r.net_total) } else { String::new() };
+        let table = format!("<table class=\"rooms\">{}{}<tr class=\"tot\"><td colspan=\"2\">{}</td><td class=\"n\">{:.1}</td>{net_sum}</tr></table>", crate::printdoc::room_head(r.has_net, ctx.arabic), r.rows.concat(), if ctx.arabic { "المجموع" } else { "Total" }, r.total);
         drawn.push((title, svg, table));
     }
     if drawn.is_empty() {

@@ -104,3 +104,14 @@ fn the_smallest_area_is_compared_with_the_net_area() {
     let v = s.violations.iter().find(|v| v.rule == "room_min_area_m2.bedroom").expect("the built-in check agrees");
     assert!((v.value - 6.16).abs() < 1e-9 && v.ar.contains("المساحة الصافية 6.16"), "{} {}", v.value, v.ar);
 }
+
+#[test]
+fn the_permit_pack_lists_a_room_in_parts_once_like_the_printout() {
+    use nnx_core::permitpack::{Context, Engineer, Input, build};
+    let doc = bedroom(&[[0, 0, 6000, 2500], [0, 2500, 3000, 3000]], 2000);
+    let input = Input { engineer: Engineer { name: "E".into(), licence_no: "L".into(), licensing_body: "B".into(), discipline: String::new() }, project_no: "P".into(), sheet_prefix: "S".into(), revision: "0".into(), issued_for: String::new(), paper: String::new(), letterhead: Default::default() };
+    let pack = build(&Context { model: &doc.model, title: "T", labels: Default::default(), arabic: false, show_structure: false, show_mep: false, date: "2026-11-27" }, &input).unwrap();
+    let table = pack.html.split("<table class=\"rooms\">").last().unwrap().split("</table>").next().unwrap();
+    assert!(table.contains("<td>R1</td><td>bedroom</td><td class=\"n\">24.0</td>"), "{table}");
+    assert!(!table.contains("R1-2"), "{table}");
+}

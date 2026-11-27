@@ -49,6 +49,42 @@ pub(crate) fn func_ar(f: &str) -> &str {
     }
 }
 
+/// The room schedule of a level: one HTML row per room, with the totals.
+pub(crate) struct RoomRows {
+    pub rows: Vec<String>,
+    pub total: f64,
+    pub net_total: f64,
+    /// Some room has a net area, so the schedule has a net column.
+    pub has_net: bool,
+}
+
+/// One row per whole room: the rectangles that are parts of a room are counted in that room's row, not listed as rooms of their own.
+/// Every printed room schedule is built here, so no two sheets can list the same rooms differently.
+pub(crate) fn room_rows(model: &Model, level: Option<Id>, labels: &BTreeMap<String, String>, arabic: bool) -> RoomRows {
+    let rooms: Vec<(Option<Id>, Space)> = model.elements.values().filter(|e| e.kind == Space::KIND && (level.is_none() || e.level_id == level)).filter_map(|e| Some((e.level_id, e.typed::<Space>().ok()?))).filter(|(_, s)| crate::annot::part_of(s).is_none()).collect();
+    let totals: Vec<crate::annot::RoomTotal> = rooms.iter().map(|(l, s)| crate::annot::room_total(model, *l, s)).collect();
+    let has_net = totals.iter().any(|t| t.net_area.is_some());
+    let mut out = RoomRows { rows: Vec::new(), total: 0.0, net_total: 0.0, has_net };
+    for ((_, s), whole) in rooms.iter().zip(&totals) {
+        // A room with no net area has no wall on any side: its gross area is its net area.
+        let net = whole.net_area.unwrap_or(whole.area);
+        out.total += whole.area;
+        out.net_total += net;
+        let label = crate::annot::room_name(s, labels).unwrap_or_else(|| s.requirement_key.clone());
+        let func = if arabic { func_ar(&s.func).to_string() } else { s.func.clone() };
+        let net_cell = if has_net { format!("<td class=\"n\">{net:.1}</td>") } else { String::new() };
+        out.rows.push(format!("<tr><td>{}</td><td>{}</td><td class=\"n\">{:.1}</td>{net_cell}</tr>", esc(&label), esc(&func), whole.area));
+    }
+    out
+}
+
+/// The header row of the room schedule.
+pub(crate) fn room_head(has_net: bool, arabic: bool) -> String {
+    let t = |ar: &'static str, en: &'static str| if arabic { ar } else { en };
+    let net_head = if has_net { format!("<th>{}</th>", t("الصافية (م²)", "Net (m²)")) } else { String::new() };
+    format!("<tr><th>{}</th><th>{}</th><th>{}</th>{net_head}</tr>", t("الفراغ", "Room"), t("النوع", "Type"), if has_net { t("الإجمالية (م²)", "Gross (m²)") } else { t("المساحة (م²)", "Area (m²)") })
+}
+
 pub fn print_html(model: &Model, opts: &PrintOpts) -> Result<String, String> {
     let t = |ar: &'static str, en: &'static str| if opts.arabic { ar } else { en };
     let levels: Vec<Option<Id>> = {
@@ -80,25 +116,9 @@ pub fn print_html(model: &Model, opts: &PrintOpts) -> Result<String, String> {
         let draw = DrawOpts { title: title.clone(), labels: opts.labels.clone(), show_structure: opts.show_structure, show_mep: opts.show_mep, arabic: opts.arabic, ..DrawOpts::default() };
         let Ok(svg) = plan_svg(model, *lv, &draw) else { continue };
         drawn += 1;
-        let mut rows: Vec<String> = Vec::new();
-        let (mut total, mut net_total) = (0.0, 0.0);
-        // The rectangles that are parts of a room are counted in that room's row, not listed as rooms of their own.
-        let rooms: Vec<(Option<Id>, Space)> = model.elements.values().filter(|e| e.kind == Space::KIND && (lv.is_none() || e.level_id == *lv)).filter_map(|e| Some((e.level_id, e.typed::<Space>().ok()?))).filter(|(_, s)| crate::annot::part_of(s).is_none()).collect();
-        let totals: Vec<crate::annot::RoomTotal> = rooms.iter().map(|(l, s)| crate::annot::room_total(model, *l, s)).collect();
-        let has_net = totals.iter().any(|t| t.net_area.is_some());
-        for ((_, s), whole) in rooms.iter().zip(&totals) {
-            // A room with no net area has no wall on any side: its gross area is its net area.
-            let net = whole.net_area.unwrap_or(whole.area);
-            total += whole.area;
-            net_total += net;
-            let label = crate::annot::room_name(s, &opts.labels).unwrap_or_else(|| s.requirement_key.clone());
-            let func = if opts.arabic { func_ar(&s.func).to_string() } else { s.func.clone() };
-            let net_cell = if has_net { format!("<td class=\"n\">{net:.1}</td>") } else { String::new() };
-            rows.push(format!("<tr><td>{}</td><td>{}</td><td class=\"n\">{:.1}</td>{net_cell}</tr>", esc(&label), esc(&func), whole.area));
-        }
+        let RoomRows { rows, total, net_total, has_net } = room_rows(model, *lv, &opts.labels, opts.arabic);
         // A long schedule is split into two side-by-side tables so the level stays on one sheet with its footer and stamp.
-        let net_head = if has_net { format!("<th>{}</th>", t("الصافية (م²)", "Net (m²)")) } else { String::new() };
-        let head = format!("<tr><th>{}</th><th>{}</th><th>{}</th>{net_head}</tr>", t("الفراغ", "Room"), t("النوع", "Type"), if has_net { t("الإجمالية (م²)", "Gross (m²)") } else { t("المساحة (م²)", "Area (m²)") });
+        let head = room_head(has_net, opts.arabic);
         let per_table = if rows.len() > 16 { rows.len().div_ceil(2) } else { rows.len().max(1) };
         let net_sum = if has_net { format!("<td class=\"n\">{net_total:.1}</td>") } else { String::new() };
         let total_row = format!("<tr class=\"tot\"><td colspan=\"2\">{}</td><td class=\"n\">{:.1}</td>{net_sum}</tr>", t("المجموع", "Total"), total);
