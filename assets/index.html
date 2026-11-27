@@ -4853,6 +4853,8 @@ function uiLangSync() {
     if (!r.svg || !state.svgText) return;
     state.rooms_out = r.rooms; renderNotes();
     if ($("viewsel").value === "plan" && state.viewName === "plan.svg" && !V3.on) showPlan(r.svg);
+    // An elevation or a section on screen is drawn again too: its title and notice are in the page language.
+    else if (["north", "south", "east", "west", "A-A", "B-B"].includes($("viewsel").value) && /^(elevation|section)-/.test(state.viewName || "") && !V3.on) busy(showView);
   }).catch(e => toast(t("error") + ": " + e.message, "err"));
 }
 if (UIP._error) { const bad = UIP._error; delete UIP._error; toast(t("ui_prefs_bad").replace("{p}", bad), "err"); }

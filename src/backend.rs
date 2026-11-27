@@ -246,7 +246,7 @@ impl App {
         if let Some((_, _, name)) = self.level_list().get(self.cur_level) {
             title = format!("{title} — {name}");
         }
-        DrawOpts { title, labels: self.display_labels(), show_structure, show_mep: self.show_mep, blank_canvas: true, ..DrawOpts::default() }
+        DrawOpts { title, labels: self.display_labels(), show_structure, show_mep: self.show_mep, blank_canvas: true, arabic: self.ui_arabic, ..DrawOpts::default() }
     }
 
     fn render(&self) -> Result<String, String> {
@@ -4864,11 +4864,16 @@ impl App {
         nnx_core::elevation::ViewOpts { title: self.title(), parapet_m: self.project().and_then(|p| p.meta.parapet_height_m), style: self.style(), ..Default::default() }
     }
 
+    /// The view options of a drawing shown on screen: its words follow the page language. Exports use `view_opts`.
+    fn screen_view_opts(&self) -> nnx_core::elevation::ViewOpts {
+        nnx_core::elevation::ViewOpts { arabic: self.ui_arabic, ..self.view_opts() }
+    }
+
     /// An elevation of one side: `{ "side": "north" | "south" | "east" | "west" }`.
     fn elevation(&self, args: &Value) -> Result<Value, String> {
         let name = args.get("side").and_then(Value::as_str).ok_or("side is required")?;
         let side = nnx_core::elevation::Side::parse(name).ok_or_else(|| format!("unknown side '{name}' (north, south, east or west)"))?;
-        let svg = nnx_core::elevation::elevation_svg(&self.doc()?.model, side, &self.view_opts()).map_err(|e| e.to_string())?;
+        let svg = nnx_core::elevation::elevation_svg(&self.doc()?.model, side, &self.screen_view_opts()).map_err(|e| e.to_string())?;
         Ok(json!({ "svg": svg, "name": format!("elevation-{name}.svg") }))
     }
 
@@ -4882,14 +4887,14 @@ impl App {
                 nnx_core::elevation::Cut::AtY { at: a, .. } | nnx_core::elevation::Cut::AtX { at: a, .. } => *a = at,
             }
         }
-        let svg = nnx_core::elevation::section_svg(model, &cut, &self.view_opts()).map_err(|e| e.to_string())?;
+        let svg = nnx_core::elevation::section_svg(model, &cut, &self.screen_view_opts()).map_err(|e| e.to_string())?;
         Ok(json!({ "svg": svg, "name": format!("section-{name}.svg"), "cut": format!("{cut:?}") }))
     }
 
     /// Every elevation and section of the building in one call (four elevations, A-A, B-B and one section per stair shaft), each
     /// showing all levels. Read-only; the per-view `levels_missing` and the overall `complete` say whether a level was left out.
     fn auto_views(&self) -> Result<Value, String> {
-        let set = nnx_core::autoviews::build(&self.doc()?.model, &self.view_opts())?;
+        let set = nnx_core::autoviews::build(&self.doc()?.model, &self.screen_view_opts())?;
         serde_json::to_value(set).map_err(|e| e.to_string())
     }
 
@@ -11134,5 +11139,29 @@ COL-1,10,10
         assert!(!html[..log].trim_end().trim_end_matches("<section ").trim_end().ends_with("</section>"), "the log is inside the last sheet");
         let en = app.handle("pdf_html", &json!({ "lang": "en" })).unwrap()["html"].as_str().unwrap().to_string();
         assert!(en.contains("SBC-SOURCED@") && en.contains("Preliminary schematic"));
+    }
+
+    #[test]
+    fn the_notices_on_screen_drawings_follow_the_page_language_and_dxf_does_not() {
+        let mut app = App::default();
+        app.handle("generate", &json!({ "brief": brief() })).unwrap();
+        app.handle("select", &json!({ "index": 0 })).unwrap();
+        let text = |app: &mut App, cmd: &str, args: Value| app.handle(cmd, &args).unwrap()["svg"].as_str().unwrap().to_string();
+        let dxf_en = app.handle("export_dxf", &json!({ "views": true })).unwrap()["dxf"].clone();
+        app.handle("ui_lang", &json!({ "lang": "ar" })).unwrap();
+        let plan = text(&mut app, "ui_lang", json!({ "lang": "ar" }));
+        assert!(plan.contains("غير صالح للتنفيذ") && !plan.contains("Not for construction"));
+        let south = text(&mut app, "elevation", json!({ "side": "south" }));
+        assert!(south.contains("الواجهة الجنوبية") && south.contains("رسم أولي") && !south.contains("Preliminary drawing") && !south.contains("South elevation"));
+        // The view sets its own direction: on a right-to-left page an inherited one pushes the title and level names out of place.
+        assert!(south.starts_with("<svg") && south.split('>').next().unwrap().contains("direction=\"ltr\""));
+        assert!(south.contains("class=\"title\"") && south.split("class=\"title\"").nth(1).unwrap().split('>').next().unwrap().contains("direction=\"rtl\""));
+        let aa = text(&mut app, "section", json!({ "name": "A-A" }));
+        assert!(aa.contains("المقطع A-A") && aa.contains("مستوى القطع") && !aa.contains("looking north"));
+        // Files keep one language whatever the screen shows.
+        assert!(text(&mut app, "plan_svg_export", json!({})).contains("Not for construction"));
+        assert_eq!(app.handle("export_dxf", &json!({ "views": true })).unwrap()["dxf"], dxf_en);
+        app.handle("ui_lang", &json!({ "lang": "en" })).unwrap();
+        assert!(text(&mut app, "elevation", json!({ "side": "south" })).contains("South elevation"));
     }
 }

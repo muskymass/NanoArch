@@ -31,6 +31,15 @@ impl Side {
             _ => None,
         }
     }
+    fn name_ar(self) -> &'static str {
+        match self {
+            Side::North => "الواجهة الشمالية",
+            Side::South => "الواجهة الجنوبية",
+            Side::East => "الواجهة الشرقية",
+            Side::West => "الواجهة الغربية",
+        }
+    }
+
     fn name(self) -> &'static str {
         match self {
             Side::North => "North elevation",
@@ -59,11 +68,13 @@ pub struct ViewOpts {
     pub parapet_m: Option<f64>,
     /// The architectural style whose facade solids are drawn.
     pub style: Option<crate::style::Style>,
+    /// The view is shown on an Arabic screen: its title, cut description and notice are written in Arabic.
+    pub arabic: bool,
 }
 
 impl Default for ViewOpts {
     fn default() -> Self {
-        Self { title: String::new(), px_per_m: 50.0, margin_px: 70.0, parapet_m: None, style: None }
+        Self { title: String::new(), px_per_m: 50.0, margin_px: 70.0, parapet_m: None, style: None, arabic: false }
     }
 }
 
@@ -218,17 +229,19 @@ fn begin(opts: &ViewOpts, h_range: (f64, f64), top: f64, bottom: f64) -> Canvas 
     let height = 2.0 * m + (top + headroom - bottom) * s + title_h;
     let f = Frame { s, m, h0, zmax: top + headroom };
     let mut o = String::new();
-    let _ = write!(o, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {width:.1} {height:.1}\" width=\"{width:.0}\" height=\"{height:.0}\" font-family=\"Segoe UI, Tahoma, Arial, sans-serif\">\n{STYLE}\n<rect class=\"bg\" width=\"{width:.1}\" height=\"{height:.1}\"/>\n");
+    let _ = write!(o, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {width:.1} {height:.1}\" width=\"{width:.0}\" height=\"{height:.0}\" direction=\"ltr\" font-family=\"Segoe UI, Tahoma, Arial, sans-serif\">\n{STYLE}\n<rect class=\"bg\" width=\"{width:.1}\" height=\"{height:.1}\"/>\n");
     Canvas { o, f, shapes: Vec::new(), grids: Vec::new() }
 }
 
 /// Ground line with hatching, level marks, heights, title block. Call last (it needs the final extents).
 #[allow(clippy::too_many_arguments)]
-fn finish(mut c: Canvas, scene: &Scene, title: &str, subtitle: &str, h_range: (f64, f64), top: f64, bottom: f64) -> (String, ViewShapes) {
+fn finish(mut c: Canvas, scene: &Scene, title: &str, subtitle: &str, h_range: (f64, f64), top: f64, bottom: f64, arabic: bool) -> (String, ViewShapes) {
     let (h0, h1) = (h_range.0 - 1.5, h_range.1 + 1.5);
     let f = &c.f;
     let (gx0, gx1, gy) = (f.x(h0), f.x(h1), f.y(0.0));
     let mut o = String::new();
+    // Right-to-left text starts at its right end, so it is anchored there to begin at the same left margin.
+    let rtl = if arabic { r#" direction="rtl" style="text-anchor:end""# } else { "" };
     for (name, h) in &c.grids {
         let (x, y0, y1) = (f.x(*h), f.y(bottom), f.y(top + 0.3));
         let _ = writeln!(o, r#"<line class="grid" x1="{x:.1}" y1="{y0:.1}" x2="{x:.1}" y2="{y1:.1}"/><circle class="gbub" cx="{x:.1}" cy="{:.1}" r="12"/><text class="gtxt" x="{x:.1}" y="{:.1}">{}</text>"#, y1 - 12.0, y1 - 8.0, esc(name));
@@ -263,8 +276,9 @@ fn finish(mut c: Canvas, scene: &Scene, title: &str, subtitle: &str, h_range: (f
     let (xa, xb, wy) = (f.x(h_range.0), f.x(h_range.1), f.y(bottom) + 16.0);
     let _ = writeln!(o, r#"<path class="dim" d="M{xa:.1} {wy:.1} H{xb:.1} M{xa:.1} {:.1} V{:.1} M{xb:.1} {:.1} V{:.1}"/><text class="dimtxt" x="{:.1}" y="{:.1}" text-anchor="middle">{:.2}</text>"#, wy - 5.0, wy + 5.0, wy - 5.0, wy + 5.0, (xa + xb) / 2.0, wy - 4.0, h_range.1 - h_range.0);
     let ty = f.y(bottom) + 40.0;
-    let _ = writeln!(o, r#"<text class="title" x="{:.1}" y="{ty:.1}">{}</text><text class="note" x="{:.1}" y="{:.1}">{}</text>"#, f.m, esc(title), f.m, ty + 18.0, esc(subtitle));
-    let _ = writeln!(o, r#"<text class="note" x="{:.1}" y="{:.1}">Preliminary drawing: heights from the top of the ground floor slab, no site datum assumed. Metres.</text></svg>"#, f.m, ty + 34.0);
+    let _ = writeln!(o, r#"<text class="title" x="{:.1}" y="{ty:.1}"{rtl}>{}</text><text class="note" x="{:.1}" y="{:.1}"{rtl}>{}</text>"#, f.m, esc(title), f.m, ty + 18.0, esc(subtitle));
+    let notice = if arabic { "رسم أولي: الارتفاعات من أعلى بلاطة الدور الأرضي، ولا يُفترض منسوب للموقع. الأبعاد بالمتر." } else { "Preliminary drawing: heights from the top of the ground floor slab, no site datum assumed. Metres." };
+    let _ = writeln!(o, r#"<text class="note" x="{:.1}" y="{:.1}"{rtl}>{notice}</text></svg>"#, f.m, ty + 34.0);
     c.o.push_str(&o);
     let shapes = ViewShapes { title: title.to_string(), subtitle: subtitle.to_string(), shapes: c.shapes, h_range, top, bottom, levels: marks, grids: std::mem::take(&mut c.grids) };
     (c.o, shapes)
@@ -328,7 +342,8 @@ fn elevation_build(model: &Model, side: Side, opts: &ViewOpts) -> Result<(String
     let hr = h_range_side(&Box3 { id: String::new(), kind: "", class: String::new(), min: [e[0], e[1], 0.0], max: [e[2], e[3], 0.0], visual: false, level: None, discipline: "architectural" }, side);
     let top = top_of(&scene, opts.parapet_m);
     let bottom = -0.3;
-    let title = if opts.title.is_empty() { side.name().to_string() } else { format!("{} — {}", opts.title, side.name()) };
+    let name = if opts.arabic { side.name_ar() } else { side.name() };
+    let title = if opts.title.is_empty() { name.to_string() } else { format!("{} — {name}", opts.title) };
     let mut c = begin(opts, hr, top, bottom);
     c.grids = match side {
         Side::South => view_grids(model, true, 1.0, hr),
@@ -437,7 +452,7 @@ fn elevation_build(model: &Model, side: Side, opts: &ViewOpts) -> Result<(String
         let (h0, h1) = hr;
         c.rect("parapet", None, h0, h1, roof, roof + p);
     }
-    Ok(finish(c, &scene, &title, "", hr, top, bottom))
+    Ok(finish(c, &scene, &title, "", hr, top, bottom, opts.arabic))
 }
 
 /// Class used to draw a box in a section, `None` for what a section does not show.
@@ -482,9 +497,16 @@ fn section_build(model: &Model, cut: &Cut, opts: &ViewOpts) -> Result<(String, V
     let hr = if axis == 1 { (e[0], e[2]) } else { (e[1], e[3]) };
     let top = top_of(&scene, opts.parapet_m);
     let bottom = scene.boxes.iter().filter(|b| b.kind == "Footing").map(|b| b.min[2]).fold(-0.3, f64::min) - 0.1;
-    let looking = if axis == 1 { "looking north, east on the right" } else { "looking west, north on the right" };
-    let title = format!("{}{} section {name}", opts.title, if opts.title.is_empty() { "" } else { " — " });
-    let sub = format!("Plane {} = {at:.2} m, {looking}", if axis == 1 { "y" } else { "x" });
+    let join = if opts.title.is_empty() { "" } else { " — " };
+    let plane = if axis == 1 { "y" } else { "x" };
+    let (title, sub) = if opts.arabic {
+        let looking = if axis == 1 { "النظر شمالاً والشرق إلى اليمين" } else { "النظر غرباً والشمال إلى اليمين" };
+        // The equation keeps its left-to-right order inside the Arabic sentence.
+        (format!("{}{join}المقطع {name}", opts.title), format!("مستوى القطع \u{2066}{plane} = {at:.2}\u{2069} م، {looking}"))
+    } else {
+        let looking = if axis == 1 { "looking north, east on the right" } else { "looking west, north on the right" };
+        (format!("{}{join} section {name}", opts.title), format!("Plane {plane} = {at:.2} m, {looking}"))
+    };
     let mut c = begin(opts, hr, top, bottom);
     c.grids = view_grids(model, axis == 1, 1.0, hr);
     // Beyond the plane (what is seen past it), far to near; then what the plane cuts, on top.
@@ -508,5 +530,5 @@ fn section_build(model: &Model, cut: &Cut, opts: &ViewOpts) -> Result<(String, V
         c.rect("parapet", None, hr.0 - t / 2.0, hr.0 + t / 2.0, roof, roof + p);
         c.rect("parapet", None, hr.1 - t / 2.0, hr.1 + t / 2.0, roof, roof + p);
     }
-    Ok(finish(c, &scene, &title, &sub, hr, top, bottom))
+    Ok(finish(c, &scene, &title, &sub, hr, top, bottom, opts.arabic))
 }
