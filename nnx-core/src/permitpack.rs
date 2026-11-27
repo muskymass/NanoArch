@@ -336,7 +336,7 @@ pub fn build(ctx: &Context, input: &Input) -> Result<Pack, String> {
                 (n, false) => format!("Floor {n}"),
             });
         let title = if name.is_empty() { ctx.title.to_string() } else { format!("{} — {name}", ctx.title) };
-        let draw = DrawOpts { title: title.clone(), labels: ctx.labels.clone(), show_structure: ctx.show_structure, show_mep: ctx.show_mep, ..DrawOpts::default() };
+        let draw = DrawOpts { title: title.clone(), labels: ctx.labels.clone(), show_structure: ctx.show_structure, show_mep: ctx.show_mep, arabic: ctx.arabic, ..DrawOpts::default() };
         let Ok(svg) = plan_svg(model, *lv, &draw) else {
             notes.push(if ctx.arabic { format!("لا فراغات في «{title}»: لا لوحة لها.") } else { format!("No rooms in `{title}`: no sheet for it.") });
             continue;

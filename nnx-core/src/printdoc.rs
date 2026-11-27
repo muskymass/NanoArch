@@ -77,7 +77,7 @@ pub fn print_html(model: &Model, opts: &PrintOpts) -> Result<String, String> {
             .and_then(|e| e.typed::<Level>().ok())
             .map_or(String::new(), |l| if l.index == 0 { t("الدور الأرضي", "Ground floor").to_string() } else if opts.arabic { format!("الدور {}", l.index) } else { format!("Floor {}", l.index) });
         let title = if name.is_empty() { opts.title.clone() } else { format!("{} — {name}", opts.title) };
-        let draw = DrawOpts { title: title.clone(), labels: opts.labels.clone(), show_structure: opts.show_structure, show_mep: opts.show_mep, ..DrawOpts::default() };
+        let draw = DrawOpts { title: title.clone(), labels: opts.labels.clone(), show_structure: opts.show_structure, show_mep: opts.show_mep, arabic: opts.arabic, ..DrawOpts::default() };
         let Ok(svg) = plan_svg(model, *lv, &draw) else { continue };
         drawn += 1;
         let mut rows: Vec<String> = Vec::new();

@@ -13,6 +13,25 @@ use crate::typed::{Beam, Column, Door, MepPoint, Space, Typed, Wall, Window, Fea
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+/// Sizes of the two label lines in the style sheet of the plan, in drawing pixels.
+const NAME_PX: f64 = 13.0;
+const META_PX: f64 = 10.5;
+/// Below this the text of a label is no longer readable on paper.
+const MIN_PX: f64 = 6.0;
+/// Clear space kept between a label and the sides of its room.
+const LABEL_PAD: f64 = 6.0;
+
+/// An estimate of the width of a line: the sheet's fonts average a little over half the type size per character.
+fn text_width(text: &str, size: f64) -> f64 {
+    text.chars().count() as f64 * size * 0.56
+}
+
+/// The `style` attribute that makes `text` fit in `room` pixels; empty when it already fits.
+fn fitted(text: &str, size: f64, room: f64) -> String {
+    let width = text_width(text, size);
+    if width <= room { String::new() } else { format!(r#" style="font-size:{:.1}px""#, (size * room / width).max(MIN_PX)) }
+}
+
 #[derive(Debug, Clone)]
 pub struct DrawOpts {
     pub title: String,
@@ -27,11 +46,13 @@ pub struct DrawOpts {
     pub show_mep: bool,
     /// Draw a plan with no rooms (a blank project): the empty drawing area, and whatever is drafted on it.
     pub blank_canvas: bool,
+    /// The sheet is an Arabic one: the preliminary-drawing notice is written in Arabic.
+    pub arabic: bool,
 }
 
 impl Default for DrawOpts {
     fn default() -> Self {
-        Self { title: "Ground floor plan".into(), labels: BTreeMap::new(), px_per_m: 50.0, margin_px: 90.0, show_dims: true, show_structure: false, show_mep: false, blank_canvas: false }
+        Self { title: "Ground floor plan".into(), labels: BTreeMap::new(), px_per_m: 50.0, margin_px: 90.0, show_dims: true, show_structure: false, show_mep: false, blank_canvas: false, arabic: false }
     }
 }
 
@@ -293,18 +314,23 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
         let total = crate::annot::room_total(model, e.level_id, sp);
         let area = total.net_area.unwrap_or(total.area);
         // The sides are those of one rectangle: a room of several has no single width and length to print.
-        let sides = if total.parts == 1 { format!("  ·  {:.2} × {:.2}", sp.w as f64 / 1000.0, sp.h as f64 / 1000.0) } else { String::new() };
+        let sides = (total.parts == 1).then(|| format!("{:.2} × {:.2}", sp.w as f64 / 1000.0, sp.h as f64 / 1000.0));
         let cx = tx(sp.x as f64 + sp.w as f64 / 2.0);
         let cy = ty(sp.y as f64 + sp.h as f64 / 2.0);
-        let _ = writeln!(o, r#"<text class="name" data-for="{}" x="{:.1}" y="{:.1}">{}</text>"#, e.id, cx, cy - 4.0, esc(&name));
-        let _ = writeln!(
-            o,
-            r#"<text class="meta" data-for="{}" x="{:.1}" y="{:.1}">{:.1} m²{sides}</text>"#,
-            e.id,
-            cx,
-            cy + 10.0,
-            area
-        );
+        // The lines of a label stay inside the room: the sides go to a line of their own, then the type is made smaller.
+        let room = sp.w as f64 * s - LABEL_PAD;
+        let area = format!("{area:.1} m²");
+        let meta: Vec<String> = match sides {
+            Some(sides) => {
+                let one = format!("{area}  ·  {sides}");
+                if text_width(&one, META_PX) <= room { vec![one] } else { vec![area, sides] }
+            }
+            None => vec![area],
+        };
+        let _ = writeln!(o, r#"<text class="name" data-for="{}" x="{:.1}" y="{:.1}"{}>{}</text>"#, e.id, cx, cy - 4.0, fitted(&name, NAME_PX, room), esc(&name));
+        for (i, line) in meta.iter().enumerate() {
+            let _ = writeln!(o, r#"<text class="meta" data-for="{}" x="{:.1}" y="{:.1}"{}>{line}</text>"#, e.id, cx, cy + 10.0 + i as f64 * 12.0, fitted(line, META_PX, room));
+        }
     }
 
     // Grid lines, permanent dimensions and room tags.
@@ -426,9 +452,12 @@ pub fn plan_svg(model: &Model, level: Option<Id>, opts: &DrawOpts) -> Result<Str
     let _ = writeln!(o, r#"<text class="title" x="{:.1}" y="{:.1}">{}</text>"#, m, height - 36.0, esc(&opts.title));
     let _ = writeln!(
         o,
-        r#"<text class="note" x="{:.1}" y="{:.1}">Preliminary schematic. Not for construction; requires review by a licensed engineer.</text>"#,
+        r#"<text class="note" x="{:.1}" y="{:.1}"{}>{}</text>"#,
         m,
-        height - 10.0
+        height - 10.0,
+        // Right-to-left text starts at its right end, so it is anchored there to begin at the same left margin.
+        if opts.arabic { r#" direction="rtl" style="text-anchor:end""# } else { "" },
+        if opts.arabic { "مخطط أولي غير صالح للتنفيذ؛ يلزم أن يراجعه مهندس مرخّص." } else { "Preliminary schematic. Not for construction; requires review by a licensed engineer." }
     );
     o.push_str("</svg>\n");
     Ok(o)

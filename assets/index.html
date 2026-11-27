@@ -277,6 +277,7 @@ main.wide>.brief,main.wide>.rz1{display:none}
 /* ===== plan area ===== */
 .alts{display:flex;gap:8px;overflow-x:auto;padding:8px 10px;border-bottom:1px solid var(--border);background:var(--surface-2);flex:0 0 auto}
 .alts:has(.alt){min-height:116px}
+.alts:empty{display:none}
 .alt{flex:0 0 auto;width:132px;border:1px solid var(--border-strong);border-radius:var(--r);background:var(--paper);color:var(--paper-ink);cursor:pointer;padding:3px;position:relative;transition:border-color .12s,box-shadow .12s}
 .alt:hover{border-color:var(--accent)}
 .alt.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
@@ -1274,7 +1275,7 @@ $("generate").onclick = () => busy(async () => {
   const adjacency = adjacencyForBrief(); if (adjacency.length) brief.adjacency = adjacency;
   const pp = projectPayload(); const res = await call("generate", { brief, struct: structInputs(), placement: skPlacement(), meta: pp.meta, limits: pp.limits });
   state.alts = res.alternatives; state.sel = -1; state.qto = null; state.sched = null; state.rooms_out = null; state.notes = null;
-  renderAlts(); $("viewer").innerHTML = `<div class="empty">${t("alts_empty")}</div>`; setPlanButtons(false);
+  renderAlts(); $("viewer").innerHTML = `<div class="empty" data-i="alts_empty">${t("alts_empty")}</div>`; setPlanButtons(false);
   await choose(0);
   skStage(false);
 });
@@ -1288,6 +1289,8 @@ function altScore(a) {
   const tip = [`${L("الإضاءة", "Lighting")} ${f(s.lighting)}`, `${L("الاتصال", "Connectivity")} ${f(s.connectivity)}`, `${L("الخصوصية", "Privacy")} ${f(s.privacy)}`, `${L("قواعد الجوار", "Neighbour rules")} ${nb}`, ...(s.unmeasured || [])].join(" · ");
   return `<div class="sc" title="${esc(tip)}">${L("الدرجة", "Score")} <b>${f(s.overall)}</b></div>`;
 }
+// The text carries its key, so a change of language reaches it.
+function altsEmpty() { $("alts").innerHTML = `<div class="empty" data-i="alts_empty">${t("alts_empty")}</div>`; }
 function renderAlts() {
   $("alts").innerHTML = state.alts.map((a, i) => `<div class="alt ${i === state.sel ? "sel" : ""}" data-n="${i}" title="${t("cost")} ${a.cost}">${i === 0 ? `<span class="tag">${a.from_sketch ? t("sk_alt") : t("cheapest")}</span>` : (i === 1 && state.alts[0].from_sketch ? `<span class="tag">${t("cheapest")}</span>` : "")}${a.svg}${altScore(a)}</div>`).join("");
   $("alts").querySelectorAll(".alt").forEach(e => e.onclick = () => busy(() => choose(Number(e.dataset.n))));
@@ -1376,7 +1379,7 @@ function renderNotes() {
     const box = $("precheck"); if (!box) return;
     const rows = r.issues || [];
     box.innerHTML = `<h2>${L("فحص سلامة النموذج", "Model integrity check")}</h2>` + (rows.length
-      ? `<ul class="clean">${rows.map((i, n) => `<li class="${i.level === "error" ? "bad" : "warn"}" dir="auto"><b>${esc(i.code)}</b> ${lang === "ar" ? `${(r.messages_en_only || [])[n] ? `<span class="badge">EN</span> ` : ""}${esc((r.messages_ar || [])[n] || i.message)}` : esc(i.message)}${(i.elements || []).length ? ` <button data-pc-show="${n}" title="${L("حدّد العناصر التي يسمّيها هذا التنبيه على المخطط", "Select the elements this notice names on the plan")}">${L("أظهرها", "Show")}</button>` : ""}</li>`).join("")}</ul>`
+      ? `<ul class="clean">${rows.map((i, n) => `<li class="${i.level === "error" ? "bad" : "warn"}"><b><bdi dir="ltr">${esc(i.code)}</bdi></b> ${lang === "ar" && (r.messages_en_only || [])[n] ? `<span class="badge">EN</span> ` : ""}<span dir="auto">${esc(lang === "ar" ? (r.messages_ar || [])[n] || i.message : i.message)}</span>${(i.elements || []).length ? ` <button data-pc-show="${n}" title="${L("حدّد العناصر التي يسمّيها هذا التنبيه على المخطط", "Select the elements this notice names on the plan")}">${L("أظهرها", "Show")}</button>` : ""}</li>`).join("")}</ul>`
       : `<div class="ok">${L("لا أخطاء ولا تنبيهات", "No errors or warnings")}</div>`);
     box.querySelectorAll("[data-pc-show]").forEach(b => b.onclick = async () => {
       // The elements level by level: each press shows the next level that holds some of them.
@@ -2534,7 +2537,7 @@ function anWire() {
   $("an-regen").onclick = () => busy(async () => {
     const res = await call("regenerate");
     state.alts = res.alternatives; state.sel = -1; state.qto = null; state.sched = null; state.rooms_out = null; state.notes = null;
-    renderAlts(); $("viewer").innerHTML = `<div class="empty">${t("alts_empty")}</div>`; setPlanButtons(false); await choose(0); anBuild();
+    renderAlts(); $("viewer").innerHTML = `<div class="empty" data-i="alts_empty">${t("alts_empty")}</div>`; setPlanButtons(false); await choose(0); anBuild();
   });
   const save = async (meta, view) => {
     const r = await call("project_set", { meta }); applyProject(r.settings); toast(t("proj_saved"));
@@ -3241,7 +3244,7 @@ $("openproj").onclick = () => busy(async () => {
   if (!r.opened) return;
   applySettings(r.settings || {});
   state.alts = []; state.sel = -1; state.qto = null; state.sched = null;
-  $("alts").innerHTML = `<div class="empty">${t("alts_empty")}</div>`;
+  if (r.svg) $("alts").innerHTML = ""; else altsEmpty();
   showPlan(r.svg); state.notes = r.warnings; state.notes_ar = r.warnings_ar; state.notes_en = r.warnings_en_only; state.rooms_out = r.rooms; applyProject(r.settings || {}); renderSbc(r.sbc); refreshBim();
   renderNotes(); setPlanButtons(true); refreshStatus(); loadQto(); toast(t("opened") + ": " + r.opened);
 });
@@ -4425,7 +4428,7 @@ $("newblank").onclick = () => busy(async () => {
   if (DR.on) await drToggle(false);
   drResetSession();
   const r = await call("project_blank", { title: "" });
-  applySettings(r.settings || {}); state.alts = []; state.sel = -1; state.qto = null; state.sched = null; state.notes = null; state.notes_ar = null; state.notes_en = null; $("alts").innerHTML = `<div class="empty">${t("alts_empty")}</div>`;
+  applySettings(r.settings || {}); state.alts = []; state.sel = -1; state.qto = null; state.sched = null; state.notes = null; state.notes_ar = null; state.notes_en = null; $("alts").innerHTML = "";
   showPlan(r.svg); setLevels(r.levels); state.rooms_out = r.rooms; applyProject(r.settings || {}); renderSbc(r.sbc); refreshBim(); renderNotes(); setPlanButtons(true); refreshStatus();
   await drToggle(true); toast(L("مشروع فارغ بمستوى LVL-1: ارسم الجدران (W) ثم الأبواب (D) والنوافذ (N)؛ تُكتشف الغرف تلقائياً", "Blank project with level LVL-1: draw walls (W), then doors (D) and windows (N); rooms are found automatically"));
 });
@@ -4488,7 +4491,7 @@ async function piRun() {
   if (DR.on) await drToggle(false);
   drResetSession();
   const r = await call("plan_import", { spec, drawings: PI.drawings.map(d => ({ name: d.file, level: d.level.trim(), width: d.w, height: d.h, rgb_b64: d.rgb_b64, wall_colours: d.walls })) });
-  applySettings(r.settings || {}); state.alts = []; state.sel = -1; state.qto = null; state.sched = null; state.notes = null; state.notes_ar = null; state.notes_en = null; $("alts").innerHTML = `<div class="empty">${t("alts_empty")}</div>`;
+  applySettings(r.settings || {}); state.alts = []; state.sel = -1; state.qto = null; state.sched = null; state.notes = null; state.notes_ar = null; state.notes_en = null; $("alts").innerHTML = "";
   showPlan(r.svg); setLevels(r.levels); state.rooms_out = r.rooms; applyProject(r.settings || {}); renderSbc(r.sbc); refreshBim(); renderNotes(); setPlanButtons(true); refreshStatus();
   PI.report = r.report; piBuild(); await drToggle(true);
   toast(L(`بُني المشروع: ${r.report.levels.length} أدوار`, `Project built: ${r.report.levels.length} level(s)`));

@@ -272,7 +272,19 @@ impl App {
         let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
         let findings = r["findings"].as_array().cloned().unwrap_or_default();
         let skipped = r["skipped"].as_array().cloned().unwrap_or_default();
-        let layers = r["layers"].as_array().map(|l| l.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("; ")).unwrap_or_default();
+        // The pack the program carries is named in the sheet's language; a pack the user loaded keeps its own name.
+        let named = |l: &str| match l.split_once('@') {
+            Some(("SBC-SOURCED", rest)) if arabic => format!("حزمة الكود السعودي المصدرية (قيم مقروءة من ملفات مجلد الكود)، الإصدار {}", esc(rest.rsplit('/').next().unwrap_or(rest))),
+            _ => format!("<bdi dir=\"ltr\">{}</bdi>", esc(l)),
+        };
+        let layers = r["layers"].as_array().map(|l| l.iter().filter_map(Value::as_str).map(named).collect::<Vec<_>>().join("; ")).unwrap_or_default();
+        // A limit nobody entered for a kind of room the project does not have leaves no room unchecked: such rules are counted, not listed.
+        let (idle, listed): (Vec<Value>, Vec<Value>) = skipped.iter().cloned().partition(|k| k["param"] == "min" && k["message_ar"].is_string() && k["elements"].as_array().is_some_and(Vec::is_empty));
+        let idle = match (idle.len(), arabic) {
+            (0, _) => String::new(),
+            (n, true) => format!("<p>قواعد ينقصها حدّ ولا غرفة من نوعها في المشروع: {n} (لم تُدرج في الجدول).</p>"),
+            (n, false) => format!("<p>Rules lacking a limit with no room of their kind in the project: {n} (not listed).</p>"),
+        };
         let text = |v: &Value, k: &str| esc(v[k].as_str().unwrap_or(""));
         // The sentence in the sheet's language; a rule with no Arabic sentence keeps its own, marked as English.
         let sentence = |v: &Value| match v["message_ar"].as_str() {
@@ -280,7 +292,7 @@ impl App {
             _ => format!("<bdi dir=\"ltr\">{}</bdi>", text(v, "message")),
         };
         let frows: String = findings.iter().map(|f| format!("<tr><td>{}</td><td>{}<br><small><bdi dir=\"ltr\">{}</bdi></small></td><td><bdi dir=\"ltr\">{}</bdi></td></tr>", text(f, "room"), sentence(f), text(f, "rule"), text(f, "clause"))).collect();
-        let srows: String = skipped
+        let srows: String = listed
             .iter()
             .map(|k| {
                 let why = match k["param"].as_str() {
@@ -299,11 +311,11 @@ impl App {
             (n, false) => format!("<p><b>Rooms with no stated use: {n}. No area, width or daylight rule applies to them, so they are not checked.</b></p>"),
         };
         let frag = format!(
-            "<section class=\"sheet\" style=\"padding:8mm\"><h1>{}</h1><p>{}</p><p>{}: <bdi dir=\"ltr\">{}</bdi></p><p>{}: {} · {}: {} · {}: {}</p>{unstated}<h2>{}</h2><table><tr><th>{}</th><th>{}</th><th>{}</th></tr>{}</table><h2>{}</h2><table><tr><th>{}</th><th>{}</th><th>{}</th></tr>{}</table></section>",
+            "<section class=\"sheet\" style=\"padding:8mm\"><h1>{}</h1><p>{}</p><p>{}: {}</p><p>{}: {} · {}: {} · {}: {}</p>{unstated}<h2>{}</h2><table><tr><th>{}</th><th>{}</th><th>{}</th></tr>{}</table><h2>{}</h2><table><tr><th>{}</th><th>{}</th><th>{}</th></tr>{}</table>{idle}</section>",
             t("بيان فحص الكود", "Code-check statement"),
             t("فحص أولي لا يغني عن مهندس مرخّص ولا عن الجهة المعتمدة. «لم تُفحص» تعني أن القاعدة لم تعمل لنقص قيمة، ولا تعني الامتثال.", "A preliminary check; it does not replace a licensed engineer or the approving authority. \"Not run\" means the rule did not execute for a missing value; it does not mean compliance."),
             t("الحزم المستعملة", "Rule layers used"),
-            esc(&layers),
+            layers,
             t("عدد الفحوص", "Checks run"),
             r["checked"],
             t("المخالفات", "Findings"),
@@ -319,7 +331,7 @@ impl App {
             t("القاعدة", "Rule"),
             t("سبب عدم الفحص", "Why not run"),
             t("الغرف غير المفحوصة", "Rooms unchecked"),
-            if srows.is_empty() { format!("<tr><td colspan=\"3\">{}</td></tr>", t("لا شيء", "None")) } else { srows },
+            if srows.is_empty() { format!("<tr><td colspan=\"3\">{}</td></tr>", if idle.is_empty() { t("لا شيء", "None") } else { t("لا قاعدة منها تمس غرفة في المشروع", "None of them concerns a room of the project") }) } else { srows },
         );
         match html.rfind("</body>") {
             Some(i) => format!("{}{}{}", &html[..i], frag, &html[i..]),
@@ -342,7 +354,11 @@ impl App {
         let ch = p.meta.baseline.as_ref().map(|b| nnx_core::revisions::changes(&doc.model, b)).unwrap_or_default();
         let frag = nnx_core::revisions::history_html(&p, &ch, arabic);
         match html.rfind("</body>") {
-            Some(i) => format!("{}{}{}", &html[..i], frag, &html[i..]),
+            // Inside the last sheet when there is one: after it, a short log would take a page of its own.
+            Some(i) => match html[..i].trim_end().strip_suffix("</section>") {
+                Some(sheet) => format!("{sheet}{frag}</section>{}", &html[i..]),
+                None => format!("{}{}{}", &html[..i], frag, &html[i..]),
+            },
             None => format!("{html}{frag}"),
         }
     }
@@ -784,7 +800,7 @@ impl App {
         let mut thumbs = Vec::new();
         for (i, alt) in alts.iter().enumerate() {
             let (doc, _) = levels::assemble(alt, &plan, &so, None)?;
-            let opts = DrawOpts { title: String::new(), labels: plan.labels.clone(), px_per_m: 16.0, margin_px: 14.0, show_dims: false, show_structure: false, show_mep: false, blank_canvas: false };
+            let opts = DrawOpts { title: String::new(), labels: plan.labels.clone(), px_per_m: 16.0, margin_px: 14.0, show_dims: false, show_structure: false, show_mep: false, blank_canvas: false, arabic: false };
             let ground = building::levels(&doc.model).first().map(|(_, id)| *id);
             let svg = plan_svg(&doc.model, ground, &opts).map_err(|e| e.to_string())?;
             let ground_layout = &alt.levels[0];
@@ -11101,5 +11117,22 @@ COL-1,10,10
         assert!(!html.contains("area is below") && !html.contains("could not be evaluated"));
         let en = app.handle("pdf_html", &json!({ "lang": "en" })).unwrap()["html"].as_str().unwrap().to_string();
         assert!(en.contains("bedroom: net floor area is below the minimum of 6.5 m2") && en.contains("Rooms with no stated use: 1."));
+    }
+
+    #[test]
+    fn the_arabic_sheet_names_the_pack_in_arabic_and_keeps_the_revision_log_with_the_statement() {
+        let mut app = blank_app();
+        app.handle("project_blank", &json!({})).unwrap();
+        for (a, b) in [([0, 0], [4000, 0]), ([4000, 0], [4000, 4000]), ([4000, 4000], [0, 4000]), ([0, 4000], [0, 0])] {
+            app.handle("draft_wall", &json!({ "a": a, "b": b, "thickness": 200, "height": 3000 })).unwrap();
+        }
+        let html = app.handle("pdf_html", &json!({})).unwrap()["html"].as_str().unwrap().to_string();
+        assert!(!html.contains("SBC-SOURCED") && !html.contains("Preliminary schematic"), "no English left on the Arabic sheet");
+        assert!(html.contains("حزمة الكود السعودي المصدرية") && html.contains("مخطط أولي غير صالح للتنفيذ"));
+        assert!(html.contains("لم تُدرج في الجدول") && !html.contains("sbc.daylight.stair"), "a rule with no room of its kind is counted, not listed");
+        let log = html.find("class=\"revhist\"").unwrap();
+        assert!(!html[..log].trim_end().trim_end_matches("<section ").trim_end().ends_with("</section>"), "the log is inside the last sheet");
+        let en = app.handle("pdf_html", &json!({ "lang": "en" })).unwrap()["html"].as_str().unwrap().to_string();
+        assert!(en.contains("SBC-SOURCED@") && en.contains("Preliminary schematic"));
     }
 }
