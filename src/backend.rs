@@ -749,7 +749,7 @@ impl App {
             }
             "report_xlsx" => self.report(args).map(|(_, b64)| json!({ "xlsx_b64": b64, "name": "engineering-report.xlsx" })),
             "pdf_html" => self.gate(args).and_then(|_| self.pdf_html(args.get("lang").and_then(Value::as_str) != Some("en"))),
-            "template_keys" => Ok(json!(schedule::template_keys().iter().map(|(k, fixed)| json!({ "key": k, "fixed": fixed })).collect::<Vec<_>>())),
+            "template_keys" => Ok(json!(schedule::template_keys().iter().zip(schedule::template_names()).map(|(&(k, fixed), (_, name, _))| json!({ "key": k, "fixed": fixed, "name": name, "name_ar": schedule::name_ar(k) })).collect::<Vec<_>>())),
             "schedule" => self.schedule(args),
             "check_rules" => self.check_rules(args),
             other => Err(format!("unknown command '{other}'")),
@@ -1390,7 +1390,7 @@ impl App {
                     .iter()
                     .map(|t| {
                         json!({
-                            "id": t.id, "key": t.key, "name": t.name, "wbs": t.wbs, "phase": t.phase, "duration": t.duration, "es": t.es, "ef": t.ef,
+                            "id": t.id, "key": t.key, "name": t.name, "name_ar": t.display_ar(), "wbs": t.wbs, "phase": t.phase, "phase_ar": schedule::phase_ar(t.phase), "duration": t.duration, "es": t.es, "ef": t.ef,
                             "start": t.start.iso(), "finish": t.finish.iso(), "float": t.float, "critical": t.critical,
                             "quantity": t.quantity, "unit": t.unit.map(|u| u.label()),
                             "also": t.also.iter().map(|m| json!({ "label": m.label, "quantity": m.quantity, "unit": m.unit.label() })).collect::<Vec<_>>(),
@@ -1404,7 +1404,8 @@ impl App {
                 }
                 let out = json!({
                     "ok": true, "phase": phase, "project_days": s.project_days, "finish": s.finish.iso(), "tasks": tasks, "warnings": warnings,
-                    "svg": s.gantt_svg(&cal, &self.title()), "csv": s.to_csv(),
+                    "svg": s.gantt_svg(&cal, &self.title()), "svg_ar": s.gantt_svg_in(&cal, &self.title(), true), "csv": s.to_csv(),
+                    "warnings_ar": nnx_core::msgs::localize_all(&warnings), "warnings_en_only": nnx_core::msgs::untranslated(&warnings),
                     "calendar": (0..=s.project_days).map(|d| cal.nth_workday(d).iso()).collect::<Vec<_>>()
                 });
                 if self.project().is_some() && phase.is_none() {
@@ -5370,6 +5371,13 @@ mod tests {
         let ok = app.handle("schedule", &json!({ "rates": rates, "start": "2026-11-15", "workdays": [true, true, true, true, false, false, true], "zones": 2 })).unwrap();
         assert_eq!(ok["ok"], true);
         assert!(ok["svg"].as_str().unwrap().starts_with("<svg"));
+        // The Arabic screen has the same schedule by its Arabic names; the exported CSV keeps one language.
+        let first = &ok["tasks"][0];
+        assert_eq!((first["name"].as_str(), first["name_ar"].as_str(), first["phase_ar"].as_str()), (Some("Site mobilisation"), Some("تجهيز الموقع"), Some("الأساسات")));
+        let ar = ok["svg_ar"].as_str().unwrap();
+        assert!(ar.contains("تجهيز الموقع") && ar.contains("المسار الحرج") && !ar.contains("Site mobilisation"));
+        assert!(ok["csv"].as_str().unwrap().contains("Site mobilisation"));
+        assert!(keys.as_array().unwrap().iter().all(|k| k["name_ar"].is_string()));
         assert!(ok["project_days"].as_i64().unwrap() > 0);
         assert!(app.handle("schedule", &json!({ "rates": rates, "start": "nope", "workdays": [true, true, true, true, true, true, true], "zones": 1 })).is_err());
     }

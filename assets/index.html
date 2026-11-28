@@ -116,7 +116,7 @@ td.num{font-variant-numeric:tabular-nums lining-nums}
 .badge.skip{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h14'/%3E%3C/svg%3E")}
 .sugg{background:color-mix(in srgb,var(--warning) 18%,var(--surface))!important}
 .missing{background:color-mix(in srgb,var(--danger) 14%,var(--surface))}
-.gantt{overflow:auto;border:1px solid var(--border);border-radius:var(--r);background:var(--paper);color:var(--paper-ink);margin-top:8px}
+.gantt{direction:ltr;overflow:auto;border:1px solid var(--border);border-radius:var(--r);background:var(--paper);color:var(--paper-ink);margin-top:8px}
 .chk{display:flex;gap:6px 14px;flex-wrap:wrap}
 .chk label{display:flex;gap:6px;align-items:center;margin:0;color:var(--text);font-weight:400}
 .kpi{border:1px solid var(--border);border-radius:var(--r);background:var(--surface);padding:8px 12px;min-width:130px}
@@ -1411,6 +1411,9 @@ function renderQto() {
 }
 
 // ---------------------------------------------------------------- schedule
+// An activity (a rate row or a scheduled task) by its name in the page language; the key is what is stored and exported.
+const schedName = x => (lang === "ar" && x.name_ar) || x.name;
+const SCHED_MEASURE_AR = { steel: "حديد", concrete: "خرسانة" };
 function renderWorkdays() {
   const wd = $("wd"), keep = [...wd.querySelectorAll("input")].map(i => i.checked);
   wd.innerHTML = t("days7").map((d, i) => `<label><input type="checkbox" data-d="${i}" ${keep[i] ? "checked" : ""}>${d}</label>`).join("");
@@ -1422,7 +1425,7 @@ async function loadKeys() { if (!state.keys.length) { state.keys = await call("t
 function renderRates() {
   const tb = $("rates"); if (!tb) return;
   tb.innerHTML = state.keys.map(k => { const r = state.rates[k.key] || {};
-    return `<tr data-k="${k.key}"><td>${esc(k.key)}</td><td><input type="number" step="any" min="0" data-f="v" value="${r.v ?? ""}" placeholder="${k.fixed ? "days" : "qty/crew/day"}" style="width:90px"></td><td><input type="number" min="1" data-f="crews" value="${r.crews ?? 1}" style="width:50px"></td><td><input data-f="source" value="${esc(r.source ?? "")}"></td></tr>`; }).join("");
+    return `<tr data-k="${k.key}"><td title="${esc(k.key)}">${esc(schedName(k))}</td><td><input type="number" step="any" min="0" data-f="v" value="${r.v ?? ""}" placeholder="${k.fixed ? L("أيام", "days") : L("كمية/طاقم/يوم", "qty/crew/day")}" style="width:90px"></td><td><input type="number" min="1" data-f="crews" value="${r.crews ?? 1}" style="width:50px"></td><td><input data-f="source" value="${esc(r.source ?? "")}"></td></tr>`; }).join("");
   tb.querySelectorAll("tr").forEach(tr => tr.querySelectorAll("input").forEach(inp => inp.onchange = () => {
     const k = tr.dataset.k, o = state.rates[k] ||= {}; o[inp.dataset.f] = inp.dataset.f === "source" ? inp.value : inp.value === "" ? null : Number(inp.value); }));
 }
@@ -1443,10 +1446,10 @@ function renderSched() {
   document.querySelectorAll("#rates tr").forEach(tr => tr.classList.toggle("missing", !!(r && !r.ok && r.missing.includes(tr.dataset.k))));
   if (V3.fourD && V3.fourD.on) { if (load4d()) redraw4d(); else { V3.fourD.on = false; $("v-4d").checked = false; stop4d(); redraw4d(); } }
   if (!r) { out.innerHTML = ""; return; }
-  if (!r.ok) { out.innerHTML = `<h2 class="bad">${t("missing")} (${r.missing.length})</h2><div class="bad">${r.missing.map(esc).join("، ")}</div>`; return; }
-  const q = (v, d = 2) => (v == null ? "" : Number(v).toFixed(d)), ph = p => (t("phase")[p] || p);
-  const table = `<table><thead><tr><th>${t("s_wbs")}</th><th>${t("activity")}</th><th>${t("s_phase")}</th><th>${t("qty")}</th><th>${t("days")}</th><th>${t("start")}</th><th>${t("finish")}</th></tr></thead><tbody>${r.tasks.map(x => `<tr class="${x.critical ? "missing" : ""}"><td>${esc(x.wbs)}</td><td>${esc(x.name)}</td><td>${esc(ph(x.phase))}</td><td class="num" dir="ltr">${x.quantity == null ? "" : q(x.quantity) + " " + esc(x.unit || "")}${(x.also || []).map(m => ` · ${q(m.quantity)} ${esc(m.unit)} ${esc(m.label)}`).join("")}</td><td class="num">${x.duration}</td><td>${x.start}</td><td>${x.finish}</td></tr>`).join("")}</tbody></table>`;
-  out.innerHTML = `<h2>${r.project_days} ${t("days")} · ${t("finish")} ${r.finish}</h2><div class="gantt">${r.svg}</div>${table}${r.warnings.length ? `<h2>${t("warnings")}</h2><ul class="clean">${r.warnings.map(x => `<li class="warn" dir="auto">${esc(x)}</li>`).join("")}</ul>` : ""}`;
+  if (!r.ok) { out.innerHTML = `<h2 class="bad">${t("missing")} (${r.missing.length})</h2><div class="bad">${r.missing.map(k => esc(schedName(state.keys.find(x => x.key === k) || { name: k }))).join(lang === "ar" ? "، " : ", ")}</div>`; return; }
+  const q = (v, d = 2) => (v == null ? "" : Number(v).toFixed(d)), ph = x => (lang === "ar" && x.phase_ar) || x.phase, ml = m => (lang === "ar" && SCHED_MEASURE_AR[m]) || m;
+  const table = `<table><thead><tr><th>${t("s_wbs")}</th><th>${t("activity")}</th><th>${t("s_phase")}</th><th>${t("qty")}</th><th>${t("days")}</th><th>${t("start")}</th><th>${t("finish")}</th></tr></thead><tbody>${r.tasks.map(x => `<tr class="${x.critical ? "missing" : ""}"><td>${esc(x.wbs)}</td><td>${esc(schedName(x))}</td><td>${esc(ph(x))}</td><td class="num" dir="ltr">${x.quantity == null ? "" : q(x.quantity) + " " + esc(x.unit || "")}${(x.also || []).map(m => ` · ${q(m.quantity)} ${esc(m.unit)} ${esc(ml(m.label))}`).join("")}</td><td class="num">${x.duration}</td><td dir="ltr" style="white-space:nowrap">${x.start}</td><td dir="ltr" style="white-space:nowrap">${x.finish}</td></tr>`).join("")}</tbody></table>`;
+  out.innerHTML = `<h2>${r.project_days} ${t("days")} · ${t("finish")} <bdi dir="ltr">${r.finish}</bdi></h2><div class="gantt">${lang === "ar" ? r.svg_ar : r.svg}</div>${table}${r.warnings.length ? `<h2>${t("warnings")}</h2><ul class="clean">${r.warnings.map((x, i) => `<li class="warn" dir="auto">${lang !== "ar" ? esc(x) : (r.warnings_en_only[i] ? "<bdi>EN</bdi> " : "") + esc(r.warnings_ar[i])}</li>`).join("")}</ul>` : ""}`;
 }
 $("exportsched").onclick = () => busy(async () => { const r = await call("export", { name: "schedule.csv", data: state.sched.csv }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
 document.querySelector('[data-tab="sched"]').addEventListener("click", loadKeys);
@@ -1724,10 +1727,11 @@ function draw3() {
   const P5 = V5_PRE[V3.light] || V5_PRE.day; gl.clearColor(P5.sky[0], P5.sky[1], P5.sky[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   const cam = v5Cam(), mvp = m4.mul(m4.persp(cam.fov, w / h, 0.05, 600), m4.look(cam.eye, cam.tg, [0, 0, 1]));
   gl.useProgram(V3.prog); gl.uniformMatrix4fv(V3.u.m, false, new Float32Array(mvp)); gl.uniform3f(V3.u.l, P5.l[0], P5.l[1], P5.l[2]); gl.uniform1f(V3.u.amb, P5.amb); gl.uniform3f(V3.u.tint, P5.tint[0], P5.tint[1], P5.tint[2]);
+  // The canvas stays opaque where it was cleared: a see-through solid mixes its colour and leaves the canvas alpha alone, or the page would show through and whiten it.
   const bind = buf => { gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.vertexAttribPointer(V3.a.p, 3, gl.FLOAT, false, 40, 0); gl.vertexAttribPointer(V3.a.n, 3, gl.FLOAT, false, 40, 12); gl.vertexAttribPointer(V3.a.c, 4, gl.FLOAT, false, 40, 24); };
   gl.enable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.depthMask(true);
   if (V3.buf.nOp) { bind(V3.buf.op); gl.drawArrays(gl.TRIANGLES, 0, V3.buf.nOp); }
-  if (V3.buf.nTr) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false); bind(V3.buf.tr); gl.drawArrays(gl.TRIANGLES, 0, V3.buf.nTr); gl.depthMask(true); }
+  if (V3.buf.nTr) { gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false); bind(V3.buf.tr); gl.drawArrays(gl.TRIANGLES, 0, V3.buf.nTr); gl.depthMask(true); }
 }
 function init3() {
   if (V3.gl) return true;
@@ -1838,7 +1842,7 @@ function status4d(id) {
 }
 function info4d() {
   const f = V3.fourD; if (!f.on) { $("v-day-info").textContent = ""; return; }
-  const active = f.tasks.filter(x => x.es <= f.day && f.day < x.ef).map(x => x.name);
+  const active = f.tasks.filter(x => x.es <= f.day && f.day < x.ef).map(schedName);
   $("v-day-info").textContent = `${t("v_day")} ${f.day}/${f.days}${f.cal[f.day] ? " · " + f.cal[f.day] : ""}${active.length ? " · " + t("s_active") + ": " + active.slice(0, 3).join("، ") + (active.length > 3 ? "…" : "") : ""}`;
 }
 function redraw4d() { info4d(); if (V3.on) { build3(); draw3(); } }
@@ -2977,7 +2981,7 @@ function v5Tint(b, c) {
   const dv = V3.dev && V3.dev[b.id];
   if (dv) c = dv[1] === "over" ? [0.85, 0.1, 0.1, 1] : dv[1] === "ok" ? [0.18, 0.62, 0.25, 1] : [0.55, 0.55, 0.55, 1];
   if (V3.xray) {
-    if (V5_ARCH.includes(b.kind)) c = [c[0], c[1], c[2], Math.min(c[3], 0.14)];
+    if (V5_ARCH.includes(b.kind)) c = [c[0] * 0.5, c[1] * 0.55, c[2] * 0.65, Math.min(c[3], 0.18)];
     else if (b.kind === "Slab") c = [c[0], c[1], c[2], 0.45];
   }
   if (V3.light === "night" && (b.kind === "Window" || b.kind === "MepPoint")) c = [1, 0.82, 0.45, 0.9];

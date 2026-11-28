@@ -277,6 +277,55 @@ fn templates() -> impl Iterator<Item = &'static Tpl> {
     TEMPLATES.iter()
 }
 
+/// The Arabic name of an activity, by its template key. The screen shows it; exported files and stored records keep the English one.
+pub fn name_ar(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "mobilise" => "تجهيز الموقع",
+        "set_out" => "التخطيط المساحي (التوقيع)",
+        "demolish" => "هدم الجدران القائمة",
+        "demolish_features" => "هدم الجدران المزالة المرسومة عناصرَ",
+        "excavate" => "حفر القواعد",
+        "footing_form" => "شدات القواعد",
+        "footing_steel" => "تسليح القواعد",
+        "footing_pour" => "صب خرسانة القواعد",
+        "footing_cure" => "معالجة خرسانة القواعد",
+        "tie_beam" => "الميدات",
+        "backfill" => "الردم حول القواعد",
+        "drain_runs" => "الصرف تحت البلاطة",
+        "column_form" => "شدات الأعمدة",
+        "column_steel" => "تسليح الأعمدة",
+        "column_pour" => "صب خرسانة الأعمدة",
+        "slab_form" => "شدات البلاطات والكمرات",
+        "slab_steel" => "تسليح البلاطات والكمرات",
+        "mep_embed" => "التمديدات المدفونة للكهرباء والسباكة",
+        "slab_pour" => "صب خرسانة البلاطات والكمرات",
+        "slab_cure" => "معالجة خرسانة البلاطات",
+        "strip_form" => "فك الشدات",
+        "blockwork" => "أعمال البلوك",
+        "insulation" => "العزل الحراري والمائي",
+        "mep_first_fix" => "التأسيس الأول للكهرباء والسباكة",
+        "duct_runs" => "مجاري التكييف",
+        "supply_runs" => "أنابيب تغذية المياه",
+        "cable_runs" => "حوامل الكابلات",
+        "plaster" => "اللياسة",
+        "doors_windows" => "الأبواب والنوافذ",
+        "ceiling" => "الأسقف",
+        "paint" => "الدهان",
+        "floor_finish" => "تشطيبات الأرضيات",
+        "mep_second_fix" => "التركيبات النهائية والأدوات",
+        "mep_points" => "تركيب الأجهزة وفتحات الهواء والأدوات",
+        "testing" => "الاختبار والتشغيل",
+        "handover" => "معالجة الملاحظات والتسليم",
+        _ => return None,
+    })
+}
+
+/// The Arabic name of a phase of the work breakdown (`PHASES`).
+pub fn phase_ar(phase: &str) -> Option<&'static str> {
+    const AR: [&str; PHASES.len()] = ["الأساسات", "الهيكل", "العزل", "تأسيس الكهروميكانيك", "التشطيبات", "التشغيل والتسليم"];
+    PHASES.iter().position(|p| *p == phase).map(|i| AR[i])
+}
+
 /// Every rate key the schedule can need, and whether it is a fixed duration (`true`) or a production rate. Optional tasks
 /// are included: their rate is required only when the take-off has something for them (see `optional_keys`).
 pub fn template_keys() -> Vec<(&'static str, bool)> {
@@ -575,6 +624,17 @@ fn build_inner(qto: &Qto, lib: &RateLib, cal: &Calendar, zones: usize, zone_map:
     let finish = cal.nth_workday((c.finish - 1).max(0));
     Ok(Schedule { tasks, project_days: c.finish, finish, critical, warnings })
 }
+impl Task {
+    /// The name shown on an Arabic screen, with the pour zone when the task is one of several.
+    pub fn display_ar(&self) -> String {
+        let base = name_ar(self.key).map_or_else(|| self.name.clone(), str::to_string);
+        match self.zone {
+            Some(z) => format!("{base} (المنطقة {z})"),
+            None => base,
+        }
+    }
+}
+
 impl Schedule {
     pub fn to_csv(&self) -> String {
         fn cell(s: &str) -> String {
@@ -610,24 +670,34 @@ impl Schedule {
 
     /// Gantt chart as SVG. Bars sit on a working-day axis; critical tasks are red.
     pub fn gantt_svg(&self, cal: &Calendar, title: &str) -> String {
+        self.gantt_svg_in(cal, title, false)
+    }
+
+    /// The same chart in the page language: with `arabic`, the activity names and the notice are Arabic. The time axis runs left to
+    /// right in both, so the drawing declares its direction and does not take the page's.
+    pub fn gantt_svg_in(&self, cal: &Calendar, title: &str, arabic: bool) -> String {
         use std::fmt::Write;
         let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
         let (label_w, row_h, top, px) = (270.0, 20.0, 70.0, 6.0);
         let width = label_w + self.project_days.max(1) as f64 * px + 40.0;
         let height = top + self.tasks.len() as f64 * row_h + 30.0;
         let mut o = String::new();
+        let rtl = if arabic { r#" direction="rtl" style="text-anchor:end""# } else { "" };
         let _ = write!(
             o,
-            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width:.0} {height:.0}" width="{width:.0}" height="{height:.0}" font-family="Segoe UI, Tahoma, Arial, sans-serif">
+            r##"<svg xmlns="http://www.w3.org/2000/svg" direction="ltr" viewBox="0 0 {width:.0} {height:.0}" width="{width:.0}" height="{height:.0}" font-family="Segoe UI, Tahoma, Arial, sans-serif">
 <style>.bg{{fill:#fff}} .t{{font-size:11px;fill:#222}} .h{{font-size:15px;font-weight:700;fill:#111}} .s{{font-size:11px;fill:#555}}
 .bar{{fill:#3a6ea5}} .bar.critical{{fill:#c0392b}} .ms{{fill:#555}} .ms.critical{{fill:#c0392b}} .grid{{stroke:#e2e2e2;stroke-width:1}} .tick{{font-size:9px;fill:#666}}</style>
 <rect class="bg" width="{width:.0}" height="{height:.0}"/>
-<text class="h" x="12" y="22">{}</text>
-<text class="s" x="12" y="40">{} working days, finish {}. Red = critical path.</text>
+<text class="h" x="12" y="22"{rtl}>{}</text>
+<text class="s" x="12" y="40"{rtl}>{}</text>
 "##,
             esc(title),
-            self.project_days,
-            self.finish.iso()
+            if arabic {
+                format!("{} يوم عمل، الانتهاء \u{2066}{}\u{2069}. الأحمر = المسار الحرج.", self.project_days, self.finish.iso())
+            } else {
+                format!("{} working days, finish {}. Red = critical path.", self.project_days, self.finish.iso())
+            }
         );
         let mut d = 0;
         while d <= self.project_days {
@@ -638,7 +708,11 @@ impl Schedule {
         }
         for (i, t) in self.tasks.iter().enumerate() {
             let y = top + i as f64 * row_h;
-            let _ = writeln!(o, r#"<text class="t" x="12" y="{:.1}">{} {}</text>"#, y + 13.0, t.id, esc(&t.name));
+            if arabic {
+                let _ = writeln!(o, r#"<text class="t" x="12" y="{0:.1}">{1}</text><text class="t" x="44" y="{0:.1}"{rtl}>{2}</text>"#, y + 13.0, t.id, esc(&t.display_ar()));
+            } else {
+                let _ = writeln!(o, r#"<text class="t" x="12" y="{:.1}">{} {}</text>"#, y + 13.0, t.id, esc(&t.name));
+            }
             let x = label_w + t.es as f64 * px;
             let class = if t.critical { " critical" } else { "" };
             if t.duration > 0 {

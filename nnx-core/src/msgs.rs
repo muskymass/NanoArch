@@ -28,6 +28,9 @@ pub const TABLE: &[(&str, &str)] = &[
     ("room areas are starting targets of this application, each above the SBC minimum for its type: review them", "مساحات الفراغات أهداف ابتدائية من التطبيق، كل منها فوق حد SBC الأدنى لنوعه: راجعها"),
     ("the Ministry villa guideline (clause 4-1) is applied because the guidelines give no separate rule for a palace: confirm with the municipality", "طُبّق دليل الوزارة للفلل (البند 4-1) لأن الدليل لا يضع قاعدة مستقلة للقصور: تأكد من البلدية"),
     ("one apartment per floor", "شقة واحدة في كل دور"),
+    ("'{}' has no quantity in the take-off: scheduled with zero duration", "النشاط '{}' بلا كمية في جدول الكميات: جُدول بمدة صفر"),
+    ("zone {} has no elements for '{}'", "المنطقة {} بلا عناصر للنشاط '{}'"),
+    ("schedule of the {} work only: the concrete and steel of the structural schedules are not split by phase (they are computed from the whole model), so they are not in it", "جدول أعمال المرحلة {} وحدها: خرسانة الجداول الإنشائية وحديدها لا يُقسّمان على المراحل (يُحسبان من النموذج كله)، فليسا فيه"),
     ("one dwelling per floor; the Ministry villa guideline (clause 4-1) is applied because the guidelines give no separate rule for a duplex: confirm with the municipality", "وحدة سكنية واحدة في كل دور؛ طُبّق دليل الوزارة للفلل (البند 4-1) لأن الدليل لا يضع قاعدة مستقلة للدوبلكس: تأكد من البلدية"),
     ("a stand-alone annex on its own plot; for an annex inside the main plot the setbacks of the whole plot govern: the Ministry villa guideline (clause 4-1) is applied, confirm with the municipality", "ملحق مستقل على أرضه؛ أما الملحق داخل الأرض الرئيسية فتحكمه ارتدادات الأرض كلها: طُبّق دليل الوزارة للفلل (البند 4-1)، تأكد من البلدية"),
     ("no finish chosen yet", "لم يُختر تشطيب بعد"),
@@ -160,6 +163,14 @@ fn captures<'a>(pat: &str, msg: &'a str) -> Option<Vec<&'a str>> {
     rest.is_empty().then_some(out)
 }
 
+/// A value that is itself a name the engine wrote (a schedule activity, in the two schedule messages) in Arabic; any other as written.
+fn value_ar<'a>(pattern: &str, value: &'a str) -> &'a str {
+    if !pattern.ends_with("scheduled with zero duration") && !pattern.starts_with("zone {} has no elements") {
+        return value;
+    }
+    crate::schedule::template_names().iter().find(|(_, en, _)| *en == value).and_then(|(key, _, _)| crate::schedule::name_ar(key)).unwrap_or(value)
+}
+
 /// The Arabic text of an English engine message, and whether the table knew it.
 pub fn localize(msg: &str) -> (String, bool) {
     for (en, ar) in TABLE {
@@ -168,7 +179,7 @@ pub fn localize(msg: &str) -> (String, bool) {
             for (i, lit) in split(ar).iter().enumerate() {
                 out.push_str(lit);
                 if let Some(v) = vals.get(i) {
-                    out.push_str(v);
+                    out.push_str(value_ar(en, v));
                 }
             }
             return (out, true);
