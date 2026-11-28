@@ -374,7 +374,7 @@ pub fn boq_workbook(r: &BoqReport, arabic: bool) -> Workbook {
         let n = rows.len() + 1;
         let f = format!("IF(E{n}=\"\",\"\",ROUND(C{n}*E{n},2))");
         rows.push(vec![
-            text(&m.material, style::TEXT),
+            text(&m.shown_name(arabic), style::TEXT),
             text(&m.unit, style::TEXT),
             (Cell::Num(m.quantity), style::QTY),
             text(m.spec.as_deref().unwrap_or(""), style::TEXT),

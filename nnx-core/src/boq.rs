@@ -120,6 +120,19 @@ pub struct MaterialRow {
     pub rate_date: Option<String>,
     pub cost: Option<f64>,
     pub used_in: Vec<String>,
+    /// Some of this quantity comes from an item that rests on values declared as an estimate.
+    pub estimate: bool,
+}
+
+impl MaterialRow {
+    /// The name as a printed or exported list shows it: an estimated quantity says so.
+    pub fn shown_name(&self, arabic: bool) -> String {
+        match (self.estimate, arabic) {
+            (false, _) => self.material.clone(),
+            (true, true) => format!("{} (تقديري)", self.material),
+            (true, false) => format!("{} (estimate)", self.material),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -383,6 +396,7 @@ pub fn compute(items: &[QtoItem], lib: &BoqLib) -> BoqReport {
             _ => miss.no_material_factors.push(r.code.clone()),
         }
     }
+    let estimated: Vec<&str> = rows.iter().filter(|r| r.description.contains(crate::substruct::ESTIMATE_MARK)).map(|r| r.code.as_str()).collect();
     let mut undated_materials: Vec<String> = Vec::new();
     let materials: Vec<MaterialRow> = mats
         .into_iter()
@@ -393,7 +407,8 @@ pub fn compute(items: &[QtoItem], lib: &BoqLib) -> BoqReport {
             if rate.is_some() && rate_date.is_none() {
                 undated_materials.push(format!("rate of material {material}"));
             }
-            MaterialRow { spec: d.and_then(|d| d.spec.clone()), rate, rate_date, cost: rate.map(|r| round(r * q, 2)), quantity: round(q, 3), material, unit, used_in }
+            let estimate = used_in.iter().any(|c| estimated.contains(&c.as_str()));
+            MaterialRow { estimate, spec: d.and_then(|d| d.spec.clone()), rate, rate_date, cost: rate.map(|r| round(r * q, 2)), quantity: round(q, 3), material, unit, used_in }
         })
         .collect();
     let material_cost = if !materials.is_empty() && materials.iter().all(|m| m.cost.is_some()) { Some(round(materials.iter().filter_map(|m| m.cost).sum(), 2)) } else { None };
@@ -408,7 +423,6 @@ pub fn compute(items: &[QtoItem], lib: &BoqLib) -> BoqReport {
         warnings.push(format!("{} rates carry no date, so their age cannot be judged: {}", miss.no_date.len(), miss.no_date.join(", ")));
     }
 
-    let estimated: Vec<&str> = rows.iter().filter(|r| r.description.contains(crate::substruct::ESTIMATE_MARK)).map(|r| r.code.as_str()).collect();
     if !estimated.is_empty() {
         warnings.push(format!("these quantities rest on values declared as an estimate, so they and their materials are not for ordering: {}", estimated.join(", ")));
     }
@@ -484,9 +498,9 @@ impl BoqReport {
     }
 
     pub fn materials_csv(&self) -> String {
-        let mut o = String::from("\u{feff}material,unit,quantity,specification,rate,rate_date,cost,used_in\n");
+        let mut o = String::from("\u{feff}material,unit,quantity,specification,rate,rate_date,cost,used_in,status\n");
         for m in &self.materials {
-            o.push_str(&format!("{},{},{:.3},{},{},{},{},{}\n", cell(&m.material), cell(&m.unit), m.quantity, cell(m.spec.as_deref().unwrap_or("")), opt(m.rate, 2), cell(m.rate_date.as_deref().unwrap_or("")), opt(m.cost, 2), cell(&m.used_in.join(";"))));
+            o.push_str(&format!("{},{},{:.3},{},{},{},{},{},{}\n", cell(&m.material), cell(&m.unit), m.quantity, cell(m.spec.as_deref().unwrap_or("")), opt(m.rate, 2), cell(m.rate_date.as_deref().unwrap_or("")), opt(m.cost, 2), cell(&m.used_in.join(";")), if m.estimate { "estimate" } else { "preliminary" }));
         }
         o
     }
@@ -571,7 +585,7 @@ impl BoqReport {
             t("تُستعمل في", "Used in")
         ));
         for m in &self.materials {
-            h.push_str(&format!("<tr><td>{}</td><td>{}</td><td class=\"n\">{:.2}</td><td>{}</td><td><small>{}</small></td></tr>", esc(&m.material), esc(&m.unit), m.quantity, esc(m.spec.as_deref().unwrap_or("—")), esc(&m.used_in.join(", "))));
+            h.push_str(&format!("<tr><td>{}</td><td>{}</td><td class=\"n\">{:.2}</td><td>{}</td><td><small>{}</small></td></tr>", esc(&m.shown_name(arabic)), esc(&m.unit), m.quantity, esc(m.spec.as_deref().unwrap_or("—")), esc(&m.used_in.join(", "))));
         }
         h.push_str(&format!(
             "</tbody></table><h2>3. {}</h2><table><thead><tr><th>{}</th><th>{}</th><th>{}</th><th>{}</th><th>{}</th></tr></thead><tbody>",

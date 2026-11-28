@@ -191,3 +191,29 @@ fn the_source_of_the_declared_values_and_an_estimate_follow_the_quantities_into_
     assert!(q.warnings.iter().any(|w| w.contains("is not stated")));
     assert!(nnx_core::boq::compute(&q.items, &Default::default()).warnings.iter().all(|w| !w.contains("estimate")));
 }
+
+#[test]
+fn a_material_that_comes_from_an_estimated_quantity_is_marked_in_every_material_output() {
+    let hourdi = HourdiIn { total_mm: Some(300.0), topping_mm: Some(70.0), rib_width_mm: Some(150.0), rib_spacing_mm: Some(550.0), block_length_mm: Some(200.0) };
+    // SYNTHETIC factors: one material from an estimated item, one from a measured wall.
+    let lib: nnx_core::boq::BoqLib = serde_json::from_value(serde_json::json!({ "materials": {
+        "SLAB.VOL": [{ "material": "cement", "unit": "kg", "per_unit": 300.0, "source": "test" }],
+        "WALL.EXT.AREA": [{ "material": "mortar", "unit": "m3", "per_unit": 0.02, "source": "test" }] } }))
+    .unwrap();
+    for estimate in [true, false] {
+        let doc = boxed(Declared { hourdi: Some(hourdi.clone()), estimate, ..Default::default() });
+        let r = nnx_core::boq::compute(&qto::compute(&doc.model, &QtoOpts::default()).items, &lib);
+        let flag = |name: &str| r.materials.iter().find(|m| m.material == name).unwrap().estimate;
+        assert_eq!((flag("cement"), flag("mortar")), (estimate, false));
+        let csv = r.materials_csv();
+        let line = |name: &str| csv.lines().find(|l| l.starts_with(name)).unwrap().to_string();
+        assert!(line("cement").ends_with(if estimate { ",estimate" } else { ",preliminary" }), "{csv}");
+        assert!(line("mortar").ends_with(",preliminary"));
+        for arabic in [true, false] {
+            let mark = if arabic { "cement (تقديري)" } else { "cement (estimate)" };
+            assert_eq!(r.html(arabic).contains(mark), estimate);
+            let book = nnx_core::xlsx::boq_workbook(&r, arabic);
+            assert_eq!(format!("{:?}", book.sheets[1].rows).contains(mark), estimate);
+        }
+    }
+}

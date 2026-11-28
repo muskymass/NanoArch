@@ -44,6 +44,7 @@ pub struct Request {
     pub quantity: f64,
     pub spec: Option<String>,
     pub used_in: Vec<String>,
+    pub estimate: bool,
     pub lead_days: Option<u32>,
     pub lead_source: Option<String>,
     pub order_by: Option<String>,
@@ -149,6 +150,7 @@ pub fn build(items: &[QtoItem], lib: &BoqLib, sched: &Schedule, inp: &MatReqInpu
                     quantity: m.quantity,
                     spec: m.spec.clone(),
                     used_in: m.used_in.clone(),
+                    estimate: m.estimate,
                     lead_days: lead.map(|l| l.days),
                     lead_source: lead.map(|l| l.source.clone()),
                     order_by: order.map(Date::iso),
@@ -197,11 +199,11 @@ fn cell(s: &str) -> String {
 
 impl MatReqReport {
     pub fn csv(&self) -> String {
-        let mut o = String::from("\u{feff}stage,stage_start,material,unit,quantity,specification,lead_days,lead_source,order_by,days_left,overdue,used_in\n");
+        let mut o = String::from("\u{feff}stage,stage_start,material,unit,quantity,specification,lead_days,lead_source,order_by,days_left,overdue,used_in,status\n");
         for s in &self.stages {
             for r in &s.requests {
                 o.push_str(&format!(
-                    "{},{},{},{},{:.3},{},{},{},{},{},{},{}\n",
+                    "{},{},{},{},{:.3},{},{},{},{},{},{},{},{}\n",
                     cell(&s.stage),
                     s.start,
                     cell(&r.material),
@@ -213,12 +215,13 @@ impl MatReqReport {
                     r.order_by.clone().unwrap_or_default(),
                     r.days_left.map(|d| d.to_string()).unwrap_or_default(),
                     r.overdue,
-                    cell(&r.used_in.join(";"))
+                    cell(&r.used_in.join(";")),
+                    if r.estimate { "estimate" } else { "preliminary" }
                 ));
             }
         }
         for m in &self.unassigned {
-            o.push_str(&format!("unassigned,,{},{},{:.3},{},,,,,,{}\n", cell(&m.material), cell(&m.unit), m.quantity, cell(m.spec.as_deref().unwrap_or("")), cell(&m.used_in.join(";"))));
+            o.push_str(&format!("unassigned,,{},{},{:.3},{},,,,,,{},{}\n", cell(&m.material), cell(&m.unit), m.quantity, cell(m.spec.as_deref().unwrap_or("")), cell(&m.used_in.join(";")), if m.estimate { "estimate" } else { "preliminary" }));
         }
         o
     }
