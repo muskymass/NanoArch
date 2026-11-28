@@ -70,9 +70,28 @@ pub struct Declared {
     pub existing_roof_m2: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub founding: Option<FoundingIn>,
+    /// Where the declared dimensions come from, in the owner's words.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub source: String,
+    /// The dimensions are for a first estimate only, not an approved design.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub estimate: bool,
 }
 
+/// Starts the label of a quantity that rests on values declared as an estimate.
+pub const ESTIMATE_MARK: &str = "[ESTIMATE";
+
 impl Declared {
+    /// What every quantity taken from the declared values says about them, in the exports too.
+    pub fn label(&self) -> String {
+        match (self.estimate, self.source.trim()) {
+            (true, "") => format!("{ESTIMATE_MARK}, not for ordering or construction; source not stated]"),
+            (true, s) => format!("{ESTIMATE_MARK}, not for ordering or construction; source: {s}]"),
+            (false, "") => "[source of the declared values not stated]".into(),
+            (false, s) => format!("[source: {s}]"),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.raft.is_none() && self.hourdi.is_none() && self.existing_roof_m2.is_none() && self.founding.is_none()
     }
@@ -351,6 +370,15 @@ pub fn compute(model: &Model, d: &Declared) -> Report {
     rep.outside_ground_m2 = ids.get(1).map(|(_, above)| r2(union(&ground, &footprint(model, *above)).area_m2() - ground.area_m2()));
     // An area on an existing roof must lie within what the floor above covers outside the new ground floor.
     let on_roof = d.existing_roof_m2.filter(|a| *a <= rep.outside_ground_m2.unwrap_or(0.0) + 0.01);
+    if d.raft.is_some() || d.hourdi.is_some() {
+        if d.estimate {
+            rep.notes.push("the declared structural values are an estimate: nothing is to be ordered or built from their quantities before your engineer approves the design".into());
+        }
+        rep.notes.push(match d.source.trim() {
+            "" => "the source of the declared structural values is not stated".into(),
+            s => format!("source of the declared structural values: {s}"),
+        });
+    }
     if let Some(a) = d.existing_roof_m2 {
         if on_roof.is_some() {
             rep.notes.push(format!("{a:.2} m2 of the floor above rests on the roof of an existing building: no new slab or raft is counted under it, and a structural engineer must assess that building's foundations, columns and roof, and the joint between the two, before construction"));

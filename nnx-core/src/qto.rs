@@ -446,6 +446,7 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
         } else {
             let rep = crate::substruct::compute(model, &declared);
             let src = || vec![project];
+            let first = acc.items.len();
             if let Some(r) = &rep.raft {
                 for (code, text, unit, q) in [("RAFT.AREA", "Raft foundation, plan area", Unit::M2, r.area_m2), ("RAFT.CONC", "Raft concrete", Unit::M3, r.concrete_m3), ("RAFT.FORM", "Raft side formwork", Unit::M2, r.side_formwork_m2), ("RAFT.EXCAV", "Excavation under the raft", Unit::M3, r.excavation_m3)] {
                     if let Some(q) = q.filter(|q| *q > 0.0) {
@@ -461,6 +462,10 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
                 if let Some(v) = rep.slabs.iter().map(|s| s.blocks).collect::<Option<Vec<u64>>>() {
                     acc.add("SLAB.BLOCKS", "Hourdi blocks", Unit::Nr, v.iter().sum::<u64>() as f64, src());
                 }
+            }
+            let label = declared.label();
+            for item in &mut acc.items[first..] {
+                item.description = format!("{} {label}", item.description);
             }
             warnings.extend(rep.missing.iter().map(|m| format!("declared structure: the {m} is not given, so what depends on it is not quantified")));
             warnings.extend(rep.notes);

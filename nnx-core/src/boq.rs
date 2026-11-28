@@ -408,6 +408,11 @@ pub fn compute(items: &[QtoItem], lib: &BoqLib) -> BoqReport {
         warnings.push(format!("{} rates carry no date, so their age cannot be judged: {}", miss.no_date.len(), miss.no_date.join(", ")));
     }
 
+    let estimated: Vec<&str> = rows.iter().filter(|r| r.description.contains(crate::substruct::ESTIMATE_MARK)).map(|r| r.code.as_str()).collect();
+    if !estimated.is_empty() {
+        warnings.push(format!("these quantities rest on values declared as an estimate, so they and their materials are not for ordering: {}", estimated.join(", ")));
+    }
+
     let specs = rows
         .iter()
         .filter(|r| !r.reference_only)

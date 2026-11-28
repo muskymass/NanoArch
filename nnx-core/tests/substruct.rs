@@ -158,3 +158,36 @@ fn the_neighbouring_footing_is_checked_against_the_30_degree_line() {
     assert!(c(with(None, Some(1_200.0), Some(2_000.0))).contains("not checked"));
     assert!(Declared { founding: Some(with(None, Some(-1.0), None)), ..Default::default() }.check().is_err());
 }
+
+#[test]
+fn the_source_of_the_declared_values_and_an_estimate_follow_the_quantities_into_the_exports() {
+    let hourdi = HourdiIn { total_mm: Some(300.0), topping_mm: Some(70.0), rib_width_mm: Some(150.0), rib_spacing_mm: Some(550.0), block_length_mm: Some(200.0) };
+    let with = |estimate: bool, source: &str| boxed(Declared { hourdi: Some(hourdi.clone()), estimate, source: source.into(), ..Default::default() });
+    let of = |doc: &Document| qto::compute(&doc.model, &QtoOpts::default());
+    let check = |q: &qto::Qto, label: &str| {
+        for code in ["SLAB.FORM", "SLAB.VOL", "SLAB.BLOCKS"] {
+            let d = &q.get(code).unwrap().description;
+            assert!(d.ends_with(label), "{code}: {d}");
+        }
+        // Wall quantities are measured from the drawing and carry no label.
+        assert!(q.items.iter().filter(|i| i.code.starts_with("WALL.")).all(|i| !i.description.contains('[')));
+        for n in &q.warnings {
+            if n.contains("declared structural values") {
+                assert!(nnx_core::msgs::localize(n).1, "no Arabic for: {n}");
+            }
+        }
+    };
+    let q = of(&with(true, "guide example, page 153"));
+    check(&q, " [ESTIMATE, not for ordering or construction; source: guide example, page 153]");
+    assert!(q.to_csv().contains("ESTIMATE"));
+    assert!(q.warnings.iter().any(|w| w.contains("are an estimate")) && q.warnings.iter().any(|w| w.ends_with("guide example, page 153")), "{:?}", q.warnings);
+    let boq = nnx_core::boq::compute(&q.items, &Default::default());
+    assert!(boq.rows.iter().any(|r| r.description.contains("ESTIMATE")));
+    assert!(boq.warnings.iter().any(|w| w.contains("estimate") && nnx_core::msgs::localize(w).1), "{:?}", boq.warnings);
+    check(&of(&with(true, "  ")), " [ESTIMATE, not for ordering or construction; source not stated]");
+    check(&of(&with(false, "structural drawing S-02")), " [source: structural drawing S-02]");
+    let q = of(&with(false, ""));
+    check(&q, " [source of the declared values not stated]");
+    assert!(q.warnings.iter().any(|w| w.contains("is not stated")));
+    assert!(nnx_core::boq::compute(&q.items, &Default::default()).warnings.iter().all(|w| !w.contains("estimate")));
+}

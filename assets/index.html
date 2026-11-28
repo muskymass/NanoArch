@@ -1406,7 +1406,7 @@ function renderQto() {
   const q = state.qto;
   const phaseSel = `<select id="qto-phase" title="${t("qto_phase")}"><option value="">${t("phase_all")}</option>${["UNSET", ...PHASES].map(p => `<option value="${p}" ${p === state.qtoPhase ? "selected" : ""}>${p === "UNSET" ? t("phase_unset") : t("phase")[p]}</option>`).join("")}</select>`;
   $("p-qto").innerHTML = `${declForm()}<div class="bar flat"><button id="expqto">${t("export_csv")}</button> ${phaseSel}</div>
-    <table><thead><tr><th>${t("code")}</th><th>${t("qty")}</th><th>${t("unit")}</th><th>${t("el")}</th></tr></thead><tbody>${q.items.map(i => `<tr title="${esc(i.description)}"><td>${esc(i.code)}</td><td class="num">${i.quantity.toFixed(2)}</td><td>${i.unit}</td><td class="num">${i.sources}</td></tr>`).join("")}</tbody></table>
+    <table><thead><tr><th>${t("code")}</th><th>${t("qty")}</th><th>${t("unit")}</th><th>${t("el")}</th></tr></thead><tbody>${q.items.map(i => `<tr title="${esc(i.description)}"><td>${esc(i.code)}${i.description.includes("[ESTIMATE") ? ` <span class="badge warn">${L("تقديري", "Estimate")}</span>` : ""}</td><td class="num">${i.quantity.toFixed(2)}</td><td>${i.unit}</td><td class="num">${i.sources}</td></tr>`).join("")}</tbody></table>
     <h2>${t("warnings")}</h2><ul class="clean">${q.warnings.map((x, i) => `<li class="warn" dir="auto">${lang !== "ar" ? esc(x) : (q.warnings_en_only[i] ? "<bdi>EN</bdi> " : "") + esc(q.warnings_ar[i])}</li>`).join("")}</ul>`;
   $("qto-phase").onchange = () => { state.qtoPhase = $("qto-phase").value; loadQto(); };
   declWire();
@@ -1429,6 +1429,8 @@ function declForm() {
     ${part("raft", L("الأساس لبشة", "Raft foundation"))}${part("hourdi", L("البلاطات هردي", "Hourdi slabs"))}
     <div><label>${L("مساحة من الدور الأول على سقف مبنى قائم (م²)، دون بلاطة جديدة تحتها", "Area of the first floor on an existing roof (m²), with no new slab under it")}</label><input type="number" step="0.01" min="0" id="decl-roof" value="${d.declared.existingRoofM2 ?? ""}">
       <div class="note">${r.outside_ground_m2 == null ? "" : L("الدور الأول يغطي خارج مسقط الأرضي", "The first floor covers outside the ground footprint") + ": " + r.outside_ground_m2 + " m²"}</div></div>
+    <div><label class="chkl"><input type="checkbox" id="decl-estimate" ${d.declared.estimate ? "checked" : ""}> <b>${L("هذه القيم للتقدير الأولي فقط (غير معتمدة)", "These values are for a first estimate only (not approved)")}</b></label>
+      <label>${L("مصدر القيم", "Source of the values")}</label><input type="text" id="decl-source" dir="auto" value="${esc(d.declared.source ?? "")}"></div>
     <div><b>${L("فحص عمق التأسيس للّبشة (SBC 303)", "Founding depth check for the raft (SBC 303)")}</b>
       <div class="row3"><div><label>${L("تربة التأسيس حسب تقرير التربة", "Founding soil per the soil report")}</label><select id="decl-soil">${[["", "—", "—"], ["cohesionless", "غير متماسكة (رملية)", "Cohesionless"], ["silty_clay", "طميية أو طينية", "Silty or clay"], ["rock", "صخر", "Rock"]].map(([v, ar, en]) => `<option value="${v}" ${(d.declared.founding?.soil ?? "") === v ? "selected" : ""}>${L(ar, en)}</option>`).join("")}</select></div>
       ${DECL_FOUNDING.map(([k, ar, en]) => `<div><label>${L(ar, en)} (${L("سم", "cm")})</label><input type="number" step="any" min="0" data-founding="${k}" value="${d.declared.founding?.[k] != null ? d.declared.founding[k] / 10 : ""}"></div>`).join("")}</div></div><div class="bar flat"><button id="decl-save" class="primary">${L("احفظ واحسب", "Save and measure")}</button></div>${raft}${slabs}${r.notes.map((n, i) => `<div class="note" dir="auto">${esc(lang === "ar" ? d.notes_ar[i] : n)}</div>`).join("")}</details>`;
@@ -1447,6 +1449,8 @@ function declWire() {
     const founding = {}; if ($("decl-soil").value) founding.soil = $("decl-soil").value;
     for (const [k] of DECL_FOUNDING) { const v = box.querySelector(`[data-founding="${k}"]`).value.trim(); if (v !== "") founding[k] = Math.round(Number(v) * 100) / 10; }
     if (Object.keys(founding).length) declared.founding = founding;
+    if ($("decl-estimate").checked) declared.estimate = true;
+    const source = $("decl-source").value.trim(); if (source !== "") declared.source = source;
     await call("declared_structure_set", { declared }); state.sched = null; $("schedout").innerHTML = ""; refreshStatus(); await loadQto();
   });
 }
