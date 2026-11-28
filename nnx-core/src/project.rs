@@ -121,6 +121,9 @@ pub struct ProjectMeta {
     /// The structure is not derived from the rooms on every edit: the project was read from drawings, its columns stand on the
     /// drawings' axes, and nothing else structural appears unless a design gives it.
     pub structure_from_drawings: bool,
+    /// A raft foundation and hourdi slabs the owner declares while there is no structural design (quantities only).
+    #[serde(skip_serializing_if = "crate::substruct::Declared::is_empty")]
+    pub declared: crate::substruct::Declared,
     pub building_type: Option<BuildingType>,
     /// Architectural style, free text chosen by the user.
     pub style: Option<String>,

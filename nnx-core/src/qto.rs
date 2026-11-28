@@ -439,6 +439,34 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
         warnings.push("reinforcement is not quantified: it needs a structural design".into());
     }
 
+    // ---- a raft and hourdi slabs the owner declares (see `substruct`): the whole building, not one level or one phase ----
+    if let Some((project, declared)) = crate::project::find(model).and_then(|e| Some((e.id, e.typed::<crate::project::NanoArchProject>().ok()?.meta.declared))).filter(|(_, d)| !d.is_empty()) {
+        if opts.level.is_some() || opts.phase.is_some() {
+            warnings.push("the declared raft and hourdi slabs are quantified for the whole building only, not for one level or phase".into());
+        } else {
+            let rep = crate::substruct::compute(model, &declared);
+            let src = || vec![project];
+            if let Some(r) = &rep.raft {
+                for (code, text, unit, q) in [("RAFT.AREA", "Raft foundation, plan area", Unit::M2, r.area_m2), ("RAFT.CONC", "Raft concrete", Unit::M3, r.concrete_m3), ("RAFT.FORM", "Raft side formwork", Unit::M2, r.side_formwork_m2), ("RAFT.EXCAV", "Excavation under the raft", Unit::M3, r.excavation_m3)] {
+                    if let Some(q) = q.filter(|q| *q > 0.0) {
+                        acc.add(code, text, unit, q, src());
+                    }
+                }
+            }
+            if !rep.slabs.is_empty() {
+                acc.add("SLAB.FORM", "Hourdi slab soffit formwork (whole floor footprints)", Unit::M2, rep.slabs.iter().map(|s| s.area_m2).sum(), src());
+                if let Some(v) = rep.slabs.iter().map(|s| s.concrete_m3).collect::<Option<Vec<f64>>>() {
+                    acc.add("SLAB.VOL", "Hourdi slab concrete (ribs and topping)", Unit::M3, v.iter().sum(), src());
+                }
+                if let Some(v) = rep.slabs.iter().map(|s| s.blocks).collect::<Option<Vec<u64>>>() {
+                    acc.add("SLAB.BLOCKS", "Hourdi blocks", Unit::Nr, v.iter().sum::<u64>() as f64, src());
+                }
+            }
+            warnings.extend(rep.missing.iter().map(|m| format!("declared structure: the {m} is not given, so what depends on it is not quantified")));
+            warnings.extend(rep.notes);
+        }
+    }
+
     // ---- finishes by room function ----
     let mut floor: BTreeMap<String, (f64, Vec<Id>)> = BTreeMap::new();
     let mut skirting: BTreeMap<String, (f64, Vec<Id>)> = BTreeMap::new();

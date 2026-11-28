@@ -751,6 +751,8 @@ impl App {
             "pdf_html" => self.gate(args).and_then(|_| self.pdf_html(args.get("lang").and_then(Value::as_str) != Some("en"))),
             "template_keys" => Ok(json!(schedule::template_keys().iter().zip(schedule::template_names()).map(|(&(k, fixed), (_, name, _))| json!({ "key": k, "fixed": fixed, "name": name, "name_ar": schedule::name_ar(k) })).collect::<Vec<_>>())),
             "schedule" => self.schedule(args),
+            "declared_structure" => self.declared_structure(),
+            "declared_structure_set" => self.declared_structure_set(args).map_err(|e| if self.ui_arabic { nnx_core::msgs::localize(&e).0 } else { e }),
             "check_rules" => self.check_rules(args),
             other => Err(format!("unknown command '{other}'")),
         }
@@ -1277,7 +1279,7 @@ impl App {
             .iter()
             .map(|i| json!({ "code": i.code, "description": i.description, "unit": i.unit.label(), "quantity": i.quantity, "sources": i.sources.len() }))
             .collect();
-        Ok(json!({ "items": items, "warnings": q.warnings, "csv": q.to_csv() }))
+        Ok(json!({ "items": items, "warnings": q.warnings, "warnings_ar": nnx_core::msgs::localize_all(&q.warnings), "warnings_en_only": nnx_core::msgs::untranslated(&q.warnings), "csv": q.to_csv() }))
     }
 
     /// The quantities of the model grouped by the element they were measured on: `{ phase?, element? }`. Read-only.
@@ -1419,6 +1421,26 @@ impl App {
             Err(BuildError::MissingRates(keys)) => Ok(json!({ "ok": false, "missing": keys })),
             Err(BuildError::Invalid(why)) => Err(why),
         }
+    }
+
+    /// The raft and hourdi slabs the owner declares, with what can be measured from them now.
+    fn declared_structure(&self) -> Result<Value, String> {
+        let declared = self.project().ok_or("choose a layout first")?.meta.declared;
+        let report = nnx_core::substruct::compute(&self.doc()?.model, &declared);
+        Ok(json!({ "declared": declared, "notes_ar": nnx_core::msgs::localize_all(&report.notes), "report": report }))
+    }
+
+    /// Stores what the owner declares as ONE undoable step (a wrong value changes nothing).
+    fn declared_structure_set(&mut self, args: &Value) -> Result<Value, String> {
+        let declared: nnx_core::substruct::Declared = serde_json::from_value(args.get("declared").cloned().ok_or("declared structure: nothing was sent")?).map_err(|e| format!("declared structure: {e}"))?;
+        declared.check()?;
+        self.project().ok_or("choose a layout first")?;
+        let doc = self.doc.as_mut().ok_or("choose a layout first")?;
+        nnx_core::project::update(doc, "Declared raft and slabs", |p| {
+            p.meta.declared = declared.clone();
+            Ok(())
+        })?;
+        self.declared_structure()
     }
 
     /// The execution inputs of the project, changed as ONE undoable step (nothing happens when the edit changes nothing).
@@ -5432,6 +5454,23 @@ mod tests {
         assert!(app.handle("check_rules", &no_value).unwrap_err().contains("no numeric value"));
         let unknown = json!({ "sourced": true, "limits": [{ "rule": "no.such.rule", "param": "min", "value": 1.0, "source": "x" }] });
         assert!(app.handle("check_rules", &unknown).is_err(), "a limit for a rule that does not exist is refused");
+    }
+
+    #[test]
+    fn the_declared_raft_and_slabs_are_stored_undone_and_refused_in_the_page_language() {
+        let mut app = started();
+        let set = |app: &mut App, d: Value| app.handle("declared_structure_set", &json!({ "declared": d }));
+        set(&mut app, json!({ "raft": { "topAboveGroundMm": 600 } })).unwrap();
+        let full = set(&mut app, json!({ "raft": { "topAboveGroundMm": 600, "thicknessMm": 800, "projectionMm": 500 } })).unwrap();
+        assert!(full["report"]["raft"]["concrete_m3"].as_f64().unwrap() > 0.0);
+        app.handle("ui_lang", &json!({ "lang": "ar" })).unwrap();
+        let refused = set(&mut app, json!({ "hourdi": { "totalMm": 300, "toppingMm": 300 } })).unwrap_err();
+        assert!(refused.contains("طبقة التغطية"), "{refused}");
+        // One undo goes back to what was declared before; the refused values changed nothing.
+        app.handle("undo", &json!({})).unwrap();
+        let before = app.handle("declared_structure", &json!({})).unwrap();
+        assert_eq!(before["declared"]["raft"]["topAboveGroundMm"].as_f64(), Some(600.0));
+        assert!(before["declared"]["raft"]["thicknessMm"].is_null() && before["declared"]["hourdi"].is_null(), "{before}");
     }
 
     #[test]

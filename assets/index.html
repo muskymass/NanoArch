@@ -1319,7 +1319,9 @@ function setLevels(l) {
 }
 const showPlan = svg => { state.viewName = "plan.svg"; $("viewsel").value = "plan"; state.svgText = svg || ""; $("viewer").innerHTML = svg || planStartHtml(); clearSel(); selApply2d(); if (V3.on) refresh3d(false); olStale(); drAfterPlan(); layoutApply(); };
 $("showstruct").onchange = () => busy(async () => { const r = await call("svg", { show_structure: $("showstruct").checked }); showPlan(r.svg); });
-for (const k of ["undo", "redo"]) $(k).onclick = () => busy(async () => { const r = await call(k); showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } if (r.settings) { applyProject(r.settings); applySetbacks(r.settings); } renderSbc(r.sbc); refreshBim(); await refreshStatus(); });
+for (const k of ["undo", "redo"]) $(k).onclick = () => busy(async () => { const r = await call(k); showPlan(r.svg); if (r.rooms) { state.rooms_out = r.rooms; renderNotes(); } if (r.settings) { applyProject(r.settings); applySetbacks(r.settings); } renderSbc(r.sbc); refreshBim(); await refreshStatus();
+  // The quantities and the schedule on screen belong to the model before the step: they are read again.
+  if (state.qto) await loadQto(); state.sched = null; $("schedout").innerHTML = ""; });
 $("sync").onclick = () => busy(async () => { const r = await call("sync"); showPlan(r.svg); refreshStatus(); toast(t("sync_done").replace("{c}", r.created).replace("{r}", r.removed).replace("{u}", r.unchanged)); });
 $("exportsvg").onclick = () => busy(async () => { const plan = (state.viewName || "plan.svg") === "plan.svg"; const svg = plan ? (await call("plan_svg_export")).svg : state.svgText; const r = await call("export", { name: state.viewName || "plan.svg", data: '<?xml version="1.0" encoding="UTF-8"?>\n' + (svg || "") }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
 $("saveproj").onclick = () => busy(async () => { const r = await call("save_project"); refreshStatus(); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
@@ -1399,15 +1401,44 @@ function renderNotes() {
     });
   }).catch(() => {});
 }
-async function loadQto() { try { state.qto = await call("qto", { phase: state.qtoPhase || "" }); renderQto(); } catch (e) { $("p-qto").innerHTML = `<div class="bad">${esc(e.message)}</div>`; } }
+async function loadQto() { try { state.decl = await call("declared_structure"); state.qto = await call("qto", { phase: state.qtoPhase || "" }); renderQto(); } catch (e) { $("p-qto").innerHTML = `<div class="bad">${esc(e.message)}</div>`; } }
 function renderQto() {
   const q = state.qto;
   const phaseSel = `<select id="qto-phase" title="${t("qto_phase")}"><option value="">${t("phase_all")}</option>${["UNSET", ...PHASES].map(p => `<option value="${p}" ${p === state.qtoPhase ? "selected" : ""}>${p === "UNSET" ? t("phase_unset") : t("phase")[p]}</option>`).join("")}</select>`;
-  $("p-qto").innerHTML = `<div class="bar flat"><button id="expqto">${t("export_csv")}</button> ${phaseSel}</div>
+  $("p-qto").innerHTML = `${declForm()}<div class="bar flat"><button id="expqto">${t("export_csv")}</button> ${phaseSel}</div>
     <table><thead><tr><th>${t("code")}</th><th>${t("qty")}</th><th>${t("unit")}</th><th>${t("el")}</th></tr></thead><tbody>${q.items.map(i => `<tr title="${esc(i.description)}"><td>${esc(i.code)}</td><td class="num">${i.quantity.toFixed(2)}</td><td>${i.unit}</td><td class="num">${i.sources}</td></tr>`).join("")}</tbody></table>
-    <h2>${t("warnings")}</h2><ul class="clean">${q.warnings.map(x => `<li class="warn" dir="auto">${esc(x)}</li>`).join("")}</ul>`;
+    <h2>${t("warnings")}</h2><ul class="clean">${q.warnings.map((x, i) => `<li class="warn" dir="auto">${lang !== "ar" ? esc(x) : (q.warnings_en_only[i] ? "<bdi>EN</bdi> " : "") + esc(q.warnings_ar[i])}</li>`).join("")}</ul>`;
   $("qto-phase").onchange = () => { state.qtoPhase = $("qto-phase").value; loadQto(); };
+  declWire();
   $("expqto").onclick = () => busy(async () => { const r = await call("export", { name: "quantities.csv", data: q.csv }); toast(r.saved ? t("saved") + ": " + r.saved : t("cancelled")); });
+}
+
+// ---------------------------------------------------------------- the raft and hourdi slabs the owner declares
+// Typed in centimetres, stored in millimetres. The page measures nothing: the shell returns what can be measured and names the rest.
+const DECL = { raft: [["topAboveGroundMm", "منسوب سطح اللبشة فوق الأرض", "Raft top above ground"], ["thicknessMm", "سماكة اللبشة", "Raft thickness"], ["projectionMm", "بروزها خارج الجدران", "Projection beyond the walls"]],
+  hourdi: [["totalMm", "السماكة الكلية", "Whole depth"], ["toppingMm", "طبقة التغطية", "Topping"], ["ribWidthMm", "عرض العصب", "Rib width"], ["ribSpacingMm", "بين محاور الأعصاب", "Rib spacing (centres)"], ["blockLengthMm", "طول البلكة", "Block length"]] };
+function declForm() {
+  const d = state.decl; if (!d) return "";
+  const part = (sys, title) => { const v = d.declared[sys]; return `<div><label class="chkl"><input type="checkbox" data-sys="${sys}" ${v ? "checked" : ""}> <b>${title}</b></label>
+    <div class="row3">${DECL[sys].map(([k, ar, en]) => `<div><label>${L(ar, en)} (${L("سم", "cm")})</label><input type="number" step="any" data-decl="${sys}.${k}" value="${v && v[k] != null ? v[k] / 10 : ""}"></div>`).join("")}</div></div>`; };
+  const r = d.report, f = v => v == null ? "—" : v;
+  const raft = r.raft ? `<div class="note">${L("اللبشة: المساحة", "Raft: area")} ${f(r.raft.area_m2)} m² · ${L("الخرسانة", "concrete")} ${f(r.raft.concrete_m3)} m³ · ${L("شدات الجوانب", "side formwork")} ${f(r.raft.side_formwork_m2)} m² · ${L("الحفر", "excavation")} ${f(r.raft.excavation_m3)} m³ · ${L("مسقط الأرضي", "ground footprint")} ${r.raft.footprint_m2} m²</div>` : "";
+  const slabs = r.slabs.map(s => `<div class="note">${L("بلاطة", "Slab over")} ${levelLabel(s.level)}: ${s.area_m2} m² · ${L("الخرسانة", "concrete")} ${f(s.concrete_m3)} m³ · ${L("البلك", "blocks")} ${f(s.blocks)}</div>`).join("");
+  return `<details id="decl" ${state.declOpen ? "open" : ""}><summary>${L("الأساس لبشة والبلاطات هردي (تحدده أنت)", "Raft foundation and hourdi slabs (your declaration)")}</summary>
+    ${part("raft", L("الأساس لبشة", "Raft foundation"))}${part("hourdi", L("البلاطات هردي", "Hourdi slabs"))}<div class="bar flat"><button id="decl-save" class="primary">${L("احفظ واحسب", "Save and measure")}</button></div>${raft}${slabs}${r.notes.map((n, i) => `<div class="note" dir="auto">${esc(lang === "ar" ? d.notes_ar[i] : n)}</div>`).join("")}</details>`;
+}
+function declWire() {
+  const box = $("decl"); if (!box) return;
+  box.ontoggle = () => { state.declOpen = box.open; };
+  $("decl-save").onclick = () => busy(async () => {
+    const declared = {};
+    for (const sys of Object.keys(DECL)) {
+      if (!box.querySelector(`[data-sys="${sys}"]`).checked) continue;
+      declared[sys] = {};
+      for (const [k] of DECL[sys]) { const v = box.querySelector(`[data-decl="${sys}.${k}"]`).value.trim(); if (v !== "") declared[sys][k] = Math.round(Number(v) * 100) / 10; }
+    }
+    await call("declared_structure_set", { declared }); state.sched = null; $("schedout").innerHTML = ""; refreshStatus(); await loadQto();
+  });
 }
 
 // ---------------------------------------------------------------- schedule

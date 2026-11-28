@@ -153,6 +153,7 @@ pub mod geotech;
 pub mod contract;
 pub mod schedule;
 pub mod structural;
+pub mod substruct;
 pub mod typed;
 pub mod xlsx;
 pub mod walls;
