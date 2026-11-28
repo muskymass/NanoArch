@@ -45,11 +45,14 @@ pub struct HourdiIn {
 pub struct Declared {
     pub raft: Option<RaftIn>,
     pub hourdi: Option<HourdiIn>,
+    /// Area of the first floor that rests on the roof of a building already standing, m2: no new slab is cast under it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub existing_roof_m2: Option<f64>,
 }
 
 impl Declared {
     pub fn is_empty(&self) -> bool {
-        self.raft.is_none() && self.hourdi.is_none()
+        self.raft.is_none() && self.hourdi.is_none() && self.existing_roof_m2.is_none()
     }
 
     pub fn check(&self) -> Result<(), String> {
@@ -57,6 +60,7 @@ impl Declared {
             Some(x) if !x.is_finite() || x <= 0.0 => Err(format!("{name} must be a positive number")),
             _ => Ok(()),
         };
+        pos("the area on the existing roof", self.existing_roof_m2)?;
         if let Some(r) = &self.raft {
             if r.top_above_ground_mm.is_some_and(|x| !x.is_finite()) {
                 return Err("the raft top level must be a number".into());
@@ -252,6 +256,8 @@ pub struct SlabOut {
 pub struct Report {
     pub raft: Option<RaftOut>,
     pub slabs: Vec<SlabOut>,
+    /// What the first floor covers outside the ground footprint, m2 (None for a building of one floor).
+    pub outside_ground_m2: Option<f64>,
     /// Inputs a quantity lacks, by name.
     pub missing: Vec<String>,
     pub notes: Vec<String>,
@@ -268,10 +274,21 @@ pub fn compute(model: &Model, d: &Declared) -> Report {
     }
     let levels = building::levels(model);
     let ids: Vec<(i64, Option<Id>)> = if levels.is_empty() { vec![(0, None)] } else { levels.iter().map(|(i, id)| (*i, Some(*id))).collect() };
+    let ground = footprint(model, ids[0].1);
+    rep.outside_ground_m2 = ids.get(1).map(|(_, above)| r2(union(&ground, &footprint(model, *above)).area_m2() - ground.area_m2()));
+    // An area on an existing roof must lie within what the floor above covers outside the new ground floor.
+    let on_roof = d.existing_roof_m2.filter(|a| *a <= rep.outside_ground_m2.unwrap_or(0.0) + 0.01);
+    if let Some(a) = d.existing_roof_m2 {
+        if on_roof.is_some() {
+            rep.notes.push(format!("{a:.2} m2 of the floor above rests on the roof of an existing building: no new slab or raft is counted under it, and a structural engineer must assess that building's foundations, columns and roof, and the joint between the two, before construction"));
+        } else {
+            rep.notes.push(format!("the area declared on the existing roof ({a:.2} m2) is more than the floor above covers outside the ground footprint ({:.2} m2): the slabs are not quantified until it is corrected", rep.outside_ground_m2.unwrap_or(0.0)));
+        }
+    }
     if d.raft.is_some() && model.elements.values().any(|e| e.kind == crate::typed::Footing::KIND) {
         rep.notes.push("the model has its own footings: their quantities are used, and the declared raft is not added to them".into());
     } else if let Some(r) = &d.raft {
-        let cells = footprint(model, ids[0].1);
+        let cells = &ground;
         let mut out = RaftOut { footprint_m2: r2(cells.area_m2()), ..Default::default() };
         if out.footprint_m2 <= 0.0 {
             rep.notes.push("the ground floor has no walls or rooms: there is no footprint for the raft".into());
@@ -298,8 +315,8 @@ pub fn compute(model: &Model, d: &Declared) -> Report {
                     }
                 }
             }
-            if let Some((_, above)) = ids.get(1) {
-                let outside = union(&cells, &footprint(model, *above)).area_m2() - cells.area_m2();
+            if let Some(all) = rep.outside_ground_m2 {
+                let outside = all - on_roof.unwrap_or(0.0);
                 if outside >= 0.01 {
                     rep.notes.push(format!("the floor above covers {outside:.2} m2 outside the ground footprint: the raft does not reach under it (check the ground floor drawing)"));
                 }
@@ -311,7 +328,7 @@ pub fn compute(model: &Model, d: &Declared) -> Report {
     if let Some(h) = &d.hourdi {
         if model.elements.values().any(|e| e.kind == crate::typed::Slab::KIND) {
             rep.notes.push("the model has its own slabs: their quantities are used, and the declared hourdi slabs are not added to them".into());
-        } else {
+        } else if d.existing_roof_m2.is_none() || on_roof.is_some() {
             for (name, v) in [("slab depth", h.total_mm), ("slab topping", h.topping_mm), ("rib width", h.rib_width_mm), ("rib spacing", h.rib_spacing_mm), ("block length", h.block_length_mm)] {
                 if v.is_none() {
                     rep.missing.push(name.to_string());
@@ -323,6 +340,8 @@ pub fn compute(model: &Model, d: &Declared) -> Report {
                     Some((_, above)) => union(&own, &footprint(model, *above)).area_m2(),
                     None => own.area_m2(),
                 };
+                // The roof already standing serves as this much of the first floor.
+                let area = if n == 0 { area - on_roof.unwrap_or(0.0) } else { area };
                 if area <= 0.0 {
                     continue;
                 }
