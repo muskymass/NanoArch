@@ -981,6 +981,7 @@ function applyLang() {
   try { mbBuild(); } catch (e) { /* not loaded yet */ }
   uiBuild();
   piBuild();
+  try { v3Texts(); } catch (e) { /* not loaded yet */ }
   if (state.alts.length) renderAlts();
   if (state.sbc) renderSbc(state.sbc);
   if (state.rooms_out) renderNotes(); if (state.qto) renderQto(); if (state.sched) renderSched(); if (state.mep) renderMep(); if (state.boq) renderBoq(); if (state.str) renderStr(); if (state.presets) renderPresets();
@@ -1745,19 +1746,41 @@ function fit3(sc) {
   const lo = sc.min, hi = sc.max; V3.target = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
   V3.dist = 1.4 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / (2 * Math.tan(0.4)) + 2;
 }
+// What the 3D view writes in words (the solid count, the level list, the picked element) is rebuilt from its state, so a change of
+// language or of selection rewrites all of it.
+const V3_KIND = { Wall: ["جدار", "Wall"], Slab: ["بلاطة", "Slab"], Column: ["عمود", "Column"], Beam: ["كمرة", "Beam"], TieBeam: ["ميدة", "Tie beam"], Footing: ["قاعدة", "Footing"], Door: ["باب", "Door"], Window: ["نافذة", "Window"], Space: ["فراغ", "Room"], MepPoint: ["نقطة MEP", "MEP point"], MepRun: ["مسار MEP", "MEP run"], Site: ["عنصر موقع", "Site item"], Vertical: ["عنصر رأسي", "Vertical element"], Furniture: ["أثاث", "Furniture"], Coverage: ["تغطية", "Coverage"], Facade: ["واجهة", "Facade"] };
+const V3_CLASS = { ext: ["خارجي", "exterior"], int: ["داخلي", "interior"], light: ["إنارة", "light"], socket: ["مقبس", "socket"], panel: ["لوحة كهربائية", "panel"], fixture: ["أداة صحية", "fixture"], ac_indoor: ["وحدة تكييف داخلية", "indoor AC unit"], diffuser: ["ناشر هواء", "diffuser"], grille: ["شبكة هواء", "grille"], duct: ["مجرى هواء", "duct"], pipe: ["أنبوب", "pipe"], drain: ["صرف", "drain"], cable: ["كابل", "cable"] };
+// Classes that only repeat the kind.
+const V3_CLASS_SAME = new Set(["slab", "column", "beam", "footing", "tiebeam", "leaf", "glass"]);
+function v3Describe(b) {
+  const k = V3_KIND[b.kind], parts = [k ? L(k[0], k[1]) : b.kind];
+  if (b.class && !V3_CLASS_SAME.has(b.class)) { const c = V3_CLASS[b.class]; const word = b.kind === "Space" ? t("func")[b.class] : c ? L(c[0], c[1]) : b.class; if (word) parts.push(word); }
+  const asm = V3.scene && V3.scene.assemblies && V3.scene.assemblies[b.id]; if (asm) parts.push(asm[1]);
+  if (b.level != null && V3.scene && (V3.scene.levels || []).length > 1) parts.push(levelLabel(b.level));
+  return parts.join(" · ") + (b.visual ? " (" + t("v_visual") + ")" : "");
+}
+function v3Texts() {
+  const pick = $("v3-pick"); if (!pick) return;
+  const b = V3.sel ? V3.boxes.find(x => x.id === V3.sel) : null;
+  pick.textContent = V3.selSet ? `${V3.selSet.size} ${L("عنصراً", "elements")}` : b ? v3Describe(b) : "";
+  if (!V3.scene) return;
+  $("v3-info").textContent = V3.boxes.length ? `${V3.boxes.length} ${t("v_solids")}` : t("viewer_empty");
+  const sel = $("v-level"), ls = V3.scene.levels || [];
+  sel.innerHTML = `<option value="all">${t("lv_all")}</option>` + ls.map(l => `<option value="${l.index}">${levelLabel(l.index)}</option>`).join("");
+  sel.value = V3.maxLevel == null ? "all" : String(V3.maxLevel);
+}
 async function refresh3d(refit) {
   if (!V3.on || !init3()) return;
   try { const sc = await call("model3d"); V3.boxes = sc.boxes; V3.scene = sc; V3.fin = sc.finishes || null; V3.dev = sc.deviations || null;
-    { const w = $("v-level-wrap"), sel = $("v-level"), ls = sc.levels || []; w.style.display = ls.length > 1 ? "" : "none";
-      sel.innerHTML = `<option value="all">${t("lv_all")}</option>` + ls.map(l => `<option value="${l.index}">${levelLabel(l.index)}</option>`).join("");
-      if (ls.length < 2 || (V3.maxLevel != null && V3.maxLevel >= ls.length)) V3.maxLevel = null;
-      sel.value = V3.maxLevel == null ? "all" : String(V3.maxLevel); } if (refit) fit3(sc); build3(); draw3(); $("v3-info").textContent = `${V3.boxes.length} ${t("v_solids")}`; }
-  catch (e) { V3.boxes = []; V3.buf.nOp = V3.buf.nTr = 0; draw3(); $("v3-info").textContent = t("viewer_empty"); }
+    { const ls = sc.levels || []; $("v-level-wrap").style.display = ls.length > 1 ? "" : "none";
+      if (ls.length < 2 || (V3.maxLevel != null && V3.maxLevel >= ls.length)) V3.maxLevel = null; }
+    if (refit) fit3(sc); build3(); draw3(); v3Texts(); }
+  catch (e) { V3.boxes = []; V3.scene = null; V3.buf.nOp = V3.buf.nTr = 0; draw3(); $("v3-pick").textContent = ""; $("v3-info").textContent = t("viewer_empty"); }
 }
 
 for (const [id, key] of [["v-slab", "slab"], ["v-struct", "struct"], ["v-floor", "floor"], ["v-glass", "glass"], ["v-mep", "mep"]]) { $(id).checked = V3.show[key]; $(id).onchange = () => { V3.show[key] = $(id).checked; build3(); draw3(); }; }
 $("v-level").onchange = () => { const v = $("v-level").value; V3.maxLevel = v === "all" ? null : Number(v); build3(); draw3(); };
-$("v-reset").onclick = () => { V3.yaw = -0.8; V3.pitch = 0.55; if (V3.scene) fit3(V3.scene); V3.sel = null; build3(); draw3(); $("v3-pick").textContent = ""; };
+$("v-reset").onclick = () => { V3.yaw = -0.8; V3.pitch = 0.55; if (V3.scene) fit3(V3.scene); V3.sel = null; V3.selSet = null; build3(); draw3(); v3Texts(); };
 $("v-top").onclick = () => { V3.yaw = -Math.PI / 2; V3.pitch = 1.5; draw3(); };
 function ray3(ev) {
   const cv = $("gl"), r = cv.getBoundingClientRect(), nx = ((ev.clientX - r.left) / r.width) * 2 - 1, ny = 1 - ((ev.clientY - r.top) / r.height) * 2, e = eye3();
@@ -1781,9 +1804,7 @@ gl3.addEventListener("mousedown", e => { V3.drag = { x: e.clientX, y: e.clientY,
 window.addEventListener("mouseup", async e => {
   const d = V3.drag; V3.drag = null; if (!d || !V3.on || V3.walk || d.moved > 4 || e.target !== gl3) return;
   const b = pick3(e); V3.sel = b ? b.id : null; build3(); draw3(); selectIds(b ? [b.id] : [], { src: "3d", level: b ? b.level : null });
-  if (!b) { $("v3-pick").textContent = ""; return; }
-  const asmName = V3.scene && V3.scene.assemblies && V3.scene.assemblies[b.id];
-  $("v3-pick").textContent = `${b.kind}${b.class ? " / " + b.class : ""}${asmName ? " / " + asmName[1] : ""}${b.visual ? " (" + t("v_visual") + ")" : ""} · ${b.id}`;
+  v3Texts();
 });
 window.addEventListener("mousemove", e => {
   const d = V3.drag; if (!d) return; const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY; d.moved += Math.abs(dx) + Math.abs(dy);
@@ -3208,7 +3229,7 @@ function renderClashes(c) {
   $("clash-out").innerHTML = list.length
     ? `<ul class="clean">${list.map(k => `<li class="bad" data-run="${esc(k.run_id)}" data-st="${esc(k.struct_id)}" style="cursor:pointer">${t("sys_" + k.run_system)} <code dir="ltr">${esc(k.run_id)}</code> × ${esc(k.struct_kind)} <code dir="ltr">${esc(k.struct_id)}</code> · ${k.volume_m3.toFixed(4)} m³</li>`).join("")}</ul>`
     : `<ul class="clean"><li class="ok">${t("clash_none")}</li></ul>`;
-  $("clash-out").querySelectorAll("li[data-run]").forEach(li => li.onclick = () => { if (!V3.on) setView3(true); V3.sel = li.dataset.st; build3(); draw3(); $("v3-pick").textContent = li.dataset.st; });
+  $("clash-out").querySelectorAll("li[data-run]").forEach(li => li.onclick = () => { if (!V3.on) setView3(true); V3.sel = li.dataset.st; V3.selSet = null; build3(); draw3(); v3Texts(); });
   if (V3.on) { build3(); draw3(); }
 }
 async function refreshBim() { try { renderRuns(await call("runs")); renderClashes(await call("clashes")); } catch (e) { /* no document yet */ } }
@@ -3738,7 +3759,7 @@ function selApply2d() {
   if (!SEL.ids.size) return;
   document.querySelectorAll("#viewer [data-id]").forEach(e => { if (SEL.ids.has(e.dataset.id)) e.classList.add("osel"); });
 }
-function selApply3d() { V3.selSet = SEL.ids.size > 1 ? SEL.ids : null; V3.sel = SEL.ids.size === 1 ? [...SEL.ids][0] : null; if (V3.on && V3.gl) { build3(); draw3(); } const p = $("v3-pick"); if (p && !SEL.ids.size) p.textContent = ""; }
+function selApply3d() { V3.selSet = SEL.ids.size > 1 ? SEL.ids : null; V3.sel = SEL.ids.size === 1 ? [...SEL.ids][0] : null; if (V3.on && V3.gl) { build3(); draw3(); } v3Texts(); }
 function selApplyRows() {
   document.querySelectorAll("[data-eid]").forEach(e => e.classList.toggle("osel-row", SEL.ids.has(e.dataset.eid)));
   document.querySelectorAll("#p-ol .olr").forEach(r => r.classList.toggle("on", r.dataset.key === SEL.key || (SEL.ids.size === 1 && r.dataset.el === [...SEL.ids][0])));
@@ -3752,7 +3773,6 @@ async function selectIds(ids, o = {}) {
   selApply2d(); selApply3d(); selApplyRows();
   if (o.src !== "outline") olReveal();
   if (typeof drOnSelect === "function") drOnSelect();
-  const lbl = $("v3-pick"); if (lbl && ids.length > 1) lbl.textContent = `${ids.length} ${L("عنصراً", "elements")}`;
 }
 
 // ---- Feature 47: the outliner
