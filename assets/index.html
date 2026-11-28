@@ -1417,6 +1417,7 @@ function renderQto() {
 // Typed in centimetres, stored in millimetres. The page measures nothing: the shell returns what can be measured and names the rest.
 const DECL = { raft: [["topAboveGroundMm", "منسوب سطح اللبشة فوق الأرض", "Raft top above ground"], ["thicknessMm", "سماكة اللبشة", "Raft thickness"], ["projectionMm", "بروزها خارج الجدران", "Projection beyond the walls"]],
   hourdi: [["totalMm", "السماكة الكلية", "Whole depth"], ["toppingMm", "طبقة التغطية", "Topping"], ["ribWidthMm", "عرض العصب", "Rib width"], ["ribSpacingMm", "بين محاور الأعصاب", "Rib spacing (centres)"], ["blockLengthMm", "طول البلكة", "Block length"]] };
+const DECL_FOUNDING = [["existingDepthMm", "عمق أسفل القاعدة القائمة تحت الأرض", "Existing footing underside below ground"], ["existingGapMm", "المسافة الأفقية بين الحافتين السفليتين", "Horizontal distance between the lower edges"]];
 function declForm() {
   const d = state.decl; if (!d) return "";
   const part = (sys, title) => { const v = d.declared[sys]; return `<div><label class="chkl"><input type="checkbox" data-sys="${sys}" ${v ? "checked" : ""}> <b>${title}</b></label>
@@ -1427,7 +1428,10 @@ function declForm() {
   return `<details id="decl" ${state.declOpen ? "open" : ""}><summary>${L("الأساس لبشة والبلاطات هردي (تحدده أنت)", "Raft foundation and hourdi slabs (your declaration)")}</summary>
     ${part("raft", L("الأساس لبشة", "Raft foundation"))}${part("hourdi", L("البلاطات هردي", "Hourdi slabs"))}
     <div><label>${L("مساحة من الدور الأول على سقف مبنى قائم (م²)، دون بلاطة جديدة تحتها", "Area of the first floor on an existing roof (m²), with no new slab under it")}</label><input type="number" step="0.01" min="0" id="decl-roof" value="${d.declared.existingRoofM2 ?? ""}">
-      <div class="note">${r.outside_ground_m2 == null ? "" : L("الدور الأول يغطي خارج مسقط الأرضي", "The first floor covers outside the ground footprint") + ": " + r.outside_ground_m2 + " m²"}</div></div><div class="bar flat"><button id="decl-save" class="primary">${L("احفظ واحسب", "Save and measure")}</button></div>${raft}${slabs}${r.notes.map((n, i) => `<div class="note" dir="auto">${esc(lang === "ar" ? d.notes_ar[i] : n)}</div>`).join("")}</details>`;
+      <div class="note">${r.outside_ground_m2 == null ? "" : L("الدور الأول يغطي خارج مسقط الأرضي", "The first floor covers outside the ground footprint") + ": " + r.outside_ground_m2 + " m²"}</div></div>
+    <div><b>${L("فحص عمق التأسيس للّبشة (SBC 303)", "Founding depth check for the raft (SBC 303)")}</b>
+      <div class="row3"><div><label>${L("تربة التأسيس حسب تقرير التربة", "Founding soil per the soil report")}</label><select id="decl-soil">${[["", "—", "—"], ["cohesionless", "غير متماسكة (رملية)", "Cohesionless"], ["silty_clay", "طميية أو طينية", "Silty or clay"], ["rock", "صخر", "Rock"]].map(([v, ar, en]) => `<option value="${v}" ${(d.declared.founding?.soil ?? "") === v ? "selected" : ""}>${L(ar, en)}</option>`).join("")}</select></div>
+      ${DECL_FOUNDING.map(([k, ar, en]) => `<div><label>${L(ar, en)} (${L("سم", "cm")})</label><input type="number" step="any" min="0" data-founding="${k}" value="${d.declared.founding?.[k] != null ? d.declared.founding[k] / 10 : ""}"></div>`).join("")}</div></div><div class="bar flat"><button id="decl-save" class="primary">${L("احفظ واحسب", "Save and measure")}</button></div>${raft}${slabs}${r.notes.map((n, i) => `<div class="note" dir="auto">${esc(lang === "ar" ? d.notes_ar[i] : n)}</div>`).join("")}</details>`;
 }
 function declWire() {
   const box = $("decl"); if (!box) return;
@@ -1440,6 +1444,9 @@ function declWire() {
       for (const [k] of DECL[sys]) { const v = box.querySelector(`[data-decl="${sys}.${k}"]`).value.trim(); if (v !== "") declared[sys][k] = Math.round(Number(v) * 100) / 10; }
     }
     const roof = $("decl-roof").value.trim(); if (roof !== "") declared.existingRoofM2 = Number(roof);
+    const founding = {}; if ($("decl-soil").value) founding.soil = $("decl-soil").value;
+    for (const [k] of DECL_FOUNDING) { const v = box.querySelector(`[data-founding="${k}"]`).value.trim(); if (v !== "") founding[k] = Math.round(Number(v) * 100) / 10; }
+    if (Object.keys(founding).length) declared.founding = founding;
     await call("declared_structure_set", { declared }); state.sched = null; $("schedout").innerHTML = ""; refreshStatus(); await loadQto();
   });
 }

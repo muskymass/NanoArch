@@ -2,7 +2,7 @@
 
 use nnx_core::project::NanoArchProject;
 use nnx_core::qto::{self, QtoOpts};
-use nnx_core::substruct::{Declared, HourdiIn, RaftIn};
+use nnx_core::substruct::{Declared, FoundingIn, HourdiIn, RaftIn, Soil};
 use nnx_core::typed::{Wall, element_of};
 use nnx_core::*;
 
@@ -104,4 +104,57 @@ fn nothing_declared_adds_nothing_and_a_raft_wholly_above_ground_needs_no_excavat
     let raft = RaftIn { top_above_ground_mm: Some(600.0), thickness_mm: Some(500.0), projection_mm: Some(0.0) };
     let doc = boxed(Declared { raft: Some(raft), hourdi: None, ..Default::default() });
     assert_eq!((quantity(&doc, "RAFT.AREA"), quantity(&doc, "RAFT.EXCAV")), (Some(80.0), None));
+}
+
+/// The notes about one clause, each of which must have its Arabic.
+fn clause(raft: RaftIn, founding: FoundingIn, clause: &str) -> String {
+    let declared = Declared { raft: Some(raft), founding: Some(founding), ..Default::default() };
+    let rep = nnx_core::substruct::compute(&boxed(declared.clone()).model, &declared);
+    for n in &rep.notes {
+        assert!(nnx_core::msgs::localize(n).1, "no Arabic for: {n}");
+    }
+    let found: Vec<&String> = rep.notes.iter().filter(|n| n.starts_with(&format!("SBC 303 (2007) {clause} "))).collect();
+    assert_eq!(found.len(), 1, "{clause}: {:?}", rep.notes);
+    found[0].clone()
+}
+
+fn raft_of(thickness: Option<f64>) -> RaftIn {
+    RaftIn { top_above_ground_mm: Some(600.0), thickness_mm: thickness, projection_mm: Some(500.0) }
+}
+
+#[test]
+fn the_founding_depth_is_checked_against_sbc_303_for_the_declared_soil() {
+    let on = |soil| FoundingIn { soil, ..Default::default() };
+    let c = |t, soil| clause(raft_of(t), on(soil), "5.2.0");
+    // Top 0.60 m above ground, 0.80 m thick: the underside is 0.20 m below ground.
+    let fail = c(Some(800.0), Some(Soil::Cohesionless));
+    assert!(fail.contains("not met") && fail.contains("0.20 m below") && fail.contains("1.20 m minimum") && fail.contains("1.80 m thick"), "{fail}");
+    assert!(c(Some(2_000.0), Some(Soil::Cohesionless)).contains(" met:"));
+    // 1.40 m below ground passes cohesionless soil but not silty or clay soil (1.50 m).
+    assert!(c(Some(2_000.0), Some(Soil::SiltyClay)).contains("not met"));
+    // Wholly above the ground.
+    let above = c(Some(400.0), Some(Soil::Rock));
+    assert!(above.contains("not met") && above.contains("0.20 m above ground"), "{above}");
+    // Rock between 0.60 and 1.20 m is the engineer's call; from 1.20 m it passes.
+    assert!(c(Some(1_300.0), Some(Soil::Rock)).contains("needs your engineer"));
+    assert!(c(Some(1_800.0), Some(Soil::Rock)).contains(" met:"));
+    // What is missing is named, and nothing passes without it.
+    let thin = c(None, Some(Soil::SiltyClay));
+    assert!(thin.contains("not checked") && thin.contains("at least 2.10 m"), "{thin}");
+    assert!(c(Some(800.0), None).contains("not checked: choose the founding soil"));
+}
+
+#[test]
+fn the_neighbouring_footing_is_checked_against_the_30_degree_line() {
+    let with = |soil, depth, gap| FoundingIn { soil, existing_depth_mm: depth, existing_gap_mm: gap };
+    let c = |f| clause(raft_of(Some(800.0)), f, "5.2.1");
+    // Raft underside 0.20 m, existing 1.20 m: 1.00 m of difference needs 1.73 m of distance.
+    let steep = c(with(Some(Soil::Cohesionless), Some(1_200.0), Some(1_000.0)));
+    assert!(steep.contains("not met") && steep.contains("45.0 degrees") && steep.contains("at least 1.73 m"), "{steep}");
+    assert!(c(with(Some(Soil::Cohesionless), Some(1_200.0), Some(2_000.0))).contains(" met:"));
+    assert!(c(with(Some(Soil::Cohesionless), Some(1_200.0), Some(0.0))).contains("not met"));
+    assert!(c(with(Some(Soil::Rock), Some(1_200.0), Some(2_000.0))).contains("not applied"));
+    assert!(c(with(Some(Soil::Cohesionless), None, Some(2_000.0))).contains("not checked"));
+    assert!(c(with(None, Some(1_200.0), Some(2_000.0))).contains("not checked"));
+    assert!(Declared { founding: Some(with(None, Some(-1.0), None)), ..Default::default() }.check().is_err());
 }

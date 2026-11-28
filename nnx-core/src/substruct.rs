@@ -39,6 +39,26 @@ pub struct HourdiIn {
     pub block_length_mm: Option<f64>,
 }
 
+/// The founding soil as the soil report classes it, in the terms of SBC 303 5.2.0.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Soil {
+    Cohesionless,
+    SiltyClay,
+    Rock,
+}
+
+/// What the two foundation-depth clauses of SBC 303 need beyond the raft itself.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FoundingIn {
+    pub soil: Option<Soil>,
+    /// Depth of the neighbouring existing footing's underside below the natural ground, mm.
+    pub existing_depth_mm: Option<f64>,
+    /// Horizontal distance between the lower edges of the raft and of that footing, mm.
+    pub existing_gap_mm: Option<f64>,
+}
+
 /// What the owner declares. A system that is not declared (`None`) adds nothing.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -48,11 +68,13 @@ pub struct Declared {
     /// Area of the first floor that rests on the roof of a building already standing, m2: no new slab is cast under it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub existing_roof_m2: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub founding: Option<FoundingIn>,
 }
 
 impl Declared {
     pub fn is_empty(&self) -> bool {
-        self.raft.is_none() && self.hourdi.is_none() && self.existing_roof_m2.is_none()
+        self.raft.is_none() && self.hourdi.is_none() && self.existing_roof_m2.is_none() && self.founding.is_none()
     }
 
     pub fn check(&self) -> Result<(), String> {
@@ -61,6 +83,12 @@ impl Declared {
             _ => Ok(()),
         };
         pos("the area on the existing roof", self.existing_roof_m2)?;
+        if let Some(f) = &self.founding {
+            pos("the depth of the existing footing", f.existing_depth_mm)?;
+            if f.existing_gap_mm.is_some_and(|x| !x.is_finite() || x < 0.0) {
+                return Err("the distance to the existing footing must be zero or more".into());
+            }
+        }
         if let Some(r) = &self.raft {
             if r.top_above_ground_mm.is_some_and(|x| !x.is_finite()) {
                 return Err("the raft top level must be a number".into());
@@ -267,6 +295,51 @@ fn r2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }
 
+/// SBC 303 (2007) 5.2.0 and 5.2.1 (chapter 5, PDF page 43): the minimum depth below the natural ground by soil, and on
+/// granular soil a line between the lower edges of neighbouring foundations no steeper than 30 degrees. Nothing passes
+/// without all of its inputs. The ground the raft level is measured from is taken as the natural ground.
+fn founding_depth(r: &RaftIn, f: Option<&FoundingIn>, notes: &mut Vec<String>) {
+    let soil = f.and_then(|f| f.soil);
+    // Signed: negative when the underside is above the ground.
+    let depth = r.thickness_mm.zip(r.top_above_ground_mm).map(|(t, top)| (t - top) / 1000.0);
+    // (the least depth the clause allows at all, the depth from which it is met without judgement), metres.
+    let limits = soil.map(|s| match s {
+        Soil::Cohesionless => (1.2, 1.2),
+        Soil::SiltyClay => (1.5, 1.5),
+        Soil::Rock => (0.6, 1.2),
+    });
+    notes.push(match (limits, depth, r.top_above_ground_mm) {
+        (None, ..) => "SBC 303 (2007) 5.2.0 not checked: choose the founding soil from the soil report".into(),
+        (Some((least, _)), None, Some(top)) => format!("SBC 303 (2007) 5.2.0 not checked: the raft thickness is not entered; to put its underside {least:.2} m below ground at this top level it must be at least {:.2} m thick", (least + top / 1000.0).max(0.0)),
+        (Some(_), None, None) | (Some(_), Some(_), None) => "SBC 303 (2007) 5.2.0 not checked: the raft top level and thickness are needed".into(),
+        (Some((_, met)), Some(d), Some(_)) if d >= met - 1e-9 => format!("SBC 303 (2007) 5.2.0 met: the raft underside is {d:.2} m below ground, not less than the {met:.2} m minimum for the declared soil"),
+        (Some((least, _)), Some(d), Some(_)) if d >= least - 1e-9 => format!("SBC 303 (2007) 5.2.0 needs your engineer: on rock the minimum is 0.60 to 1.20 m by the rock's strength and integrity, and the raft underside is {d:.2} m below ground"),
+        (Some((least, _)), Some(d), Some(top)) => {
+            let thick = (least + top / 1000.0).max(0.0);
+            if d < 0.0 {
+                format!("SBC 303 (2007) 5.2.0 not met: the raft underside is {:.2} m above ground, and the minimum for the declared soil is {least:.2} m below it: at this top level the raft would need to be {thick:.2} m thick, or to be set lower", -d)
+            } else {
+                format!("SBC 303 (2007) 5.2.0 not met: the raft underside is {d:.2} m below ground, less than the {least:.2} m minimum for the declared soil: at this top level the raft would need to be {thick:.2} m thick, or to be set lower")
+            }
+        }
+    });
+    let existing = f.and_then(|f| f.existing_depth_mm.zip(f.existing_gap_mm));
+    notes.push(match (soil, existing, depth) {
+        (Some(Soil::SiltyClay | Soil::Rock), ..) => "SBC 303 (2007) 5.2.1 not applied: it covers footings on granular soil, and the declared soil is not cohesionless; your engineer must still check the neighbouring foundations".into(),
+        (Some(Soil::Cohesionless), Some((e, gap)), Some(d)) => {
+            let (rise, run) = ((e / 1000.0 - d).abs(), gap / 1000.0);
+            let angle = rise.atan2(run).to_degrees();
+            if angle <= 30.0 + 1e-9 {
+                format!("SBC 303 (2007) 5.2.1 met: the line between the two lower edges slopes {angle:.1} degrees, not more than 30")
+            } else {
+                format!("SBC 303 (2007) 5.2.1 not met: the line between the two lower edges slopes {angle:.1} degrees, more than 30: it needs lateral support or an engineering analysis accepted by the building official, or a distance of at least {:.2} m", rise / 30f64.to_radians().tan())
+            }
+        }
+        _ => "SBC 303 (2007) 5.2.1 not checked: it needs the founding soil, the depth of the existing footing underside, the horizontal distance between the two lower edges, and the raft thickness and top level".into(),
+    });
+    notes.push("SBC 303 (2007) clauses 5.2.0 and 5.2.1 are in the spread footings chapter: your engineer confirms how they apply to a raft; depths are measured from the natural ground level".into());
+}
+
 pub fn compute(model: &Model, d: &Declared) -> Report {
     let mut rep = Report::default();
     if d.is_empty() {
@@ -324,6 +397,7 @@ pub fn compute(model: &Model, d: &Declared) -> Report {
             rep.notes.push("the excavation is the raft's own plan area down to its underside: working space, blinding and soil replacement are not in it".into());
         }
         rep.raft = Some(out);
+        founding_depth(r, d.founding.as_ref(), &mut rep.notes);
     }
     if let Some(h) = &d.hourdi {
         if model.elements.values().any(|e| e.kind == crate::typed::Slab::KIND) {
