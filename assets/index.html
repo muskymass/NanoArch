@@ -1424,7 +1424,7 @@ function declForm() {
     <div class="row3">${DECL[sys].map(([k, ar, en]) => `<div><label>${L(ar, en)} (${L("سم", "cm")})</label><input type="number" step="any" data-decl="${sys}.${k}" value="${v && v[k] != null ? v[k] / 10 : ""}"></div>`).join("")}</div></div>`; };
   const r = d.report, f = v => v == null ? "—" : v;
   const raft = r.raft ? `<div class="note">${L("اللبشة: المساحة", "Raft: area")} ${f(r.raft.area_m2)} m² · ${L("الخرسانة", "concrete")} ${f(r.raft.concrete_m3)} m³ · ${L("شدات الجوانب", "side formwork")} ${f(r.raft.side_formwork_m2)} m² · ${L("الحفر", "excavation")} ${f(r.raft.excavation_m3)} m³ · ${L("مسقط الأرضي", "ground footprint")} ${r.raft.footprint_m2} m²</div>` : "";
-  const slabs = r.slabs.map(s => `<div class="note">${L("بلاطة", "Slab over")} ${levelLabel(s.level)}: ${s.area_m2} m² · ${L("الخرسانة", "concrete")} ${f(s.concrete_m3)} m³ · ${L("البلك", "blocks")} ${f(s.blocks)}</div>`).join("");
+  const slabs = r.slabs.map(s => `<div class="note">${L("بلاطة", "Slab over")} ${levelLabel(s.level)}: ${s.area_m2} m² · ${L("الخرسانة", "concrete")} ${f(s.concrete_m3)} m³ · ${L("البلك", "blocks")} ${f(s.blocks)}${s.openings_m2 ? " · " + L("فتحات مخصومة", "openings taken out") + " " + s.openings_m2 + " m²" : ""}<label>${L("فتحة الدرج وغيرها مما لم يُرسم عنصراً (م²)", "Stair and other openings not drawn as elements (m²)")}</label><input type="number" step="0.01" min="0" data-open="${s.level}" value="${d.declared.openingsM2?.[s.level] ?? ""}"></div>`).join("");
   return `<details id="decl" ${state.declOpen ? "open" : ""}><summary>${L("الأساس لبشة والبلاطات هردي (تحدده أنت)", "Raft foundation and hourdi slabs (your declaration)")}</summary>
     ${part("raft", L("الأساس لبشة", "Raft foundation"))}${part("hourdi", L("البلاطات هردي", "Hourdi slabs"))}
     <div><label>${L("مساحة من الدور الأول على سقف مبنى قائم (م²)، دون بلاطة جديدة تحتها", "Area of the first floor on an existing roof (m²), with no new slab under it")}</label><input type="number" step="0.01" min="0" id="decl-roof" value="${d.declared.existingRoofM2 ?? ""}">
@@ -1445,6 +1445,9 @@ function declWire() {
       declared[sys] = {};
       for (const [k] of DECL[sys]) { const v = box.querySelector(`[data-decl="${sys}.${k}"]`).value.trim(); if (v !== "") declared[sys][k] = Math.round(Number(v) * 100) / 10; }
     }
+    const openings = { ...(state.decl.declared.openingsM2 || {}) };
+    for (const i of box.querySelectorAll("[data-open]")) { const v = i.value.trim(); if (v === "") delete openings[i.dataset.open]; else openings[i.dataset.open] = Number(v); }
+    if (Object.keys(openings).length) declared.openingsM2 = openings;
     const roof = $("decl-roof").value.trim(); if (roof !== "") declared.existingRoofM2 = Number(roof);
     const founding = {}; if ($("decl-soil").value) founding.soil = $("decl-soil").value;
     for (const [k] of DECL_FOUNDING) { const v = box.querySelector(`[data-founding="${k}"]`).value.trim(); if (v !== "") founding[k] = Math.round(Number(v) * 100) / 10; }

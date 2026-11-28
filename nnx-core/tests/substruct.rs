@@ -217,3 +217,62 @@ fn a_material_that_comes_from_an_estimated_quantity_is_marked_in_every_material_
         }
     }
 }
+
+#[test]
+fn drawn_and_declared_openings_are_taken_out_of_the_slab_they_pierce() {
+    use nnx_core::typed::Feature;
+    let hourdi = HourdiIn { total_mm: Some(300.0), topping_mm: Some(70.0), rib_width_mm: Some(150.0), rib_spacing_mm: Some(550.0), block_length_mm: Some(200.0) };
+    let declare = |open: &[(&str, f64)]| Declared { hourdi: Some(hourdi.clone()), openings_m2: open.iter().map(|(k, v)| ((*k).to_string(), *v)).collect(), ..Default::default() };
+    // Two floors of the 80 m2 box. A 2 x 2 m lightwell and an overlapping 2 x 2 m shaft on the upper floor: 6 m2 together.
+    let mut doc = boxed(declare(&[]));
+    let levels: Vec<Id> = (0..2)
+        .map(|i| {
+            let level = nnx_core::typed::Level { name: format!("L{i}"), index: i, extra: Default::default() };
+            let e = element_of(&level, Source::User);
+            let id = e.id;
+            doc.commit("level", Origin::User, vec![Command::Create(e)]).unwrap();
+            id
+        })
+        .collect();
+    let walls: Vec<_> = doc.model.elements.values().filter(|e| e.kind == "Wall").cloned().collect();
+    let mut cmds = Vec::new();
+    for w in walls {
+        let mut upper = element_of(&w.typed::<Wall>().unwrap(), Source::User);
+        upper.level_id = Some(levels[1]);
+        let mut lower = w.clone();
+        lower.level_id = Some(levels[0]);
+        cmds.push(Command::Create(upper));
+        cmds.push(Command::Delete(w.id));
+        let mut lower_new = element_of(&lower.typed::<Wall>().unwrap(), Source::User);
+        lower_new.level_id = Some(levels[0]);
+        cmds.push(Command::Create(lower_new));
+    }
+    for (role, x) in [("LIGHTWELL", 2_000), ("SHAFT", 3_000)] {
+        let f: Feature = serde_json::from_value(serde_json::json!({ "role": role, "shape": "rect", "x1": x, "y1": 2000, "x2": x + 2000, "y2": 4000 })).unwrap();
+        let mut e = element_of(&f, Source::User);
+        e.level_id = Some(levels[1]);
+        cmds.push(Command::Create(e));
+    }
+    doc.commit("two floors", Origin::User, cmds).unwrap();
+    let rep = nnx_core::substruct::compute(&doc.model, &declare(&[]));
+    assert_eq!(rep.slabs.iter().map(|s| (s.area_m2, s.openings_m2)).collect::<Vec<_>>(), [(74.0, 6.0), (80.0, 0.0)]);
+    // A declared stair opening adds to what is drawn, on its own slab only; blocks follow the net area.
+    let rep = nnx_core::substruct::compute(&doc.model, &declare(&[("0", 10.0)]));
+    assert_eq!(rep.slabs.iter().map(|s| (s.area_m2, s.openings_m2)).collect::<Vec<_>>(), [(64.0, 16.0), (80.0, 0.0)]);
+    assert_eq!(rep.slabs[0].blocks, Some((64.0_f64 / 0.11).ceil() as u64));
+    // An opening as large as the slab is refused by name and that slab is not quantified.
+    let rep = nnx_core::substruct::compute(&doc.model, &declare(&[("1", 80.0)]));
+    assert_eq!(rep.slabs.iter().map(|s| (s.refused, s.blocks.is_some())).collect::<Vec<_>>(), [(false, true), (true, false)]);
+    let mut with_refused = doc.model.clone();
+    nnx_core::project::find(&with_refused).map(|e| e.id).into_iter().for_each(|id| {
+        let mut p = with_refused.elements[&id].typed::<nnx_core::project::NanoArchProject>().unwrap();
+        p.meta.declared = declare(&[("1", 80.0)]);
+        with_refused.elements.insert(id, { let mut e = element_of(&p, Source::User); e.id = id; e });
+    });
+    assert!(qto::compute(&with_refused, &QtoOpts::default()).items.iter().all(|i| !i.code.starts_with("SLAB.")));
+    for n in &rep.notes {
+        assert!(nnx_core::msgs::localize(n).1, "no Arabic for: {n}");
+    }
+    assert!(rep.notes.iter().any(|n| n.contains("is not less than that slab")), "{:?}", rep.notes);
+    assert!(declare(&[("0", -1.0)]).check().is_err());
+}

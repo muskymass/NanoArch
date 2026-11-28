@@ -13,7 +13,7 @@
 
 use crate::building;
 use crate::model::{Id, Model};
-use crate::typed::{Space, Typed, Wall};
+use crate::typed::{Feature, Space, Typed, Wall};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -70,6 +70,9 @@ pub struct Declared {
     pub existing_roof_m2: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub founding: Option<FoundingIn>,
+    /// Openings of each slab that the drawing does not show as an element (a stair well), m2, by the level the slab roofs.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub openings_m2: std::collections::BTreeMap<String, f64>,
     /// Where the declared dimensions come from, in the owner's words.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub source: String,
@@ -102,6 +105,9 @@ impl Declared {
             _ => Ok(()),
         };
         pos("the area on the existing roof", self.existing_roof_m2)?;
+        for v in self.openings_m2.values() {
+            pos("the slab opening area", Some(*v))?;
+        }
         if let Some(f) = &self.founding {
             pos("the depth of the existing footing", f.existing_depth_mm)?;
             if f.existing_gap_mm.is_some_and(|x| !x.is_finite() || x < 0.0) {
@@ -259,6 +265,19 @@ fn wall_rects(walls: &[Wall]) -> Vec<Rect> {
         .collect()
 }
 
+/// The drawn lightwells, shafts and lifts of one level, as far as they lie inside the slab, m2 (overlaps counted once).
+fn drawn_openings(model: &Model, level: Option<Id>, slab: &Cells) -> f64 {
+    let features = model.elements.values().filter(|e| e.kind == Feature::KIND && e.level_id == level).filter_map(|e| e.typed::<Feature>().ok());
+    let inside: Vec<Rect> = features
+        .filter(|f| f.shape == "rect" && matches!(f.role.as_str(), "LIGHTWELL" | "SHAFT" | "LIFT"))
+        .flat_map(|f| {
+            let r = [f.x1.min(f.x2), f.y1.min(f.y2), f.x1.max(f.x2), f.y1.max(f.y2)];
+            slab.rects().into_iter().map(move |c| [r[0].max(c[0]), r[1].max(c[1]), r[2].min(c[2]), r[3].min(c[3])]).filter(|c| c[0] < c[2] && c[1] < c[3])
+        })
+        .collect();
+    Cells::of(&inside).area_m2()
+}
+
 /// The footprint of one level.
 fn footprint(model: &Model, level: Option<Id>) -> Cells {
     let walls: Vec<Wall> = model.elements.values().filter(|e| e.kind == Wall::KIND && e.level_id == level).filter_map(|e| e.typed::<Wall>().ok()).collect();
@@ -294,7 +313,11 @@ pub struct RaftOut {
 pub struct SlabOut {
     /// 0 is the ground floor: the slab that roofs it.
     pub level: i64,
+    /// Net of the openings.
     pub area_m2: f64,
+    pub openings_m2: f64,
+    /// Its openings are not smaller than the slab: nothing is quantified from it, and no total is given for the slabs.
+    pub refused: bool,
     pub concrete_m3: Option<f64>,
     pub blocks: Option<u64>,
 }
@@ -438,15 +461,25 @@ pub fn compute(model: &Model, d: &Declared) -> Report {
             }
             for (n, (level, id)) in ids.iter().enumerate() {
                 let own = footprint(model, *id);
-                let area = match ids.get(n + 1) {
-                    Some((_, above)) => union(&own, &footprint(model, *above)).area_m2(),
-                    None => own.area_m2(),
+                let (slab, above) = match ids.get(n + 1) {
+                    Some((_, above)) => (union(&own, &footprint(model, *above)), Some(*above)),
+                    None => (footprint(model, *id), None),
                 };
+                let area = slab.area_m2();
                 // The roof already standing serves as this much of the first floor.
                 let area = if n == 0 { area - on_roof.unwrap_or(0.0) } else { area };
                 if area <= 0.0 {
                     continue;
                 }
+                let drawn = above.map_or(0.0, |a| drawn_openings(model, a, &slab));
+                let openings = drawn + d.openings_m2.get(&level.to_string()).copied().unwrap_or(0.0);
+                if openings >= area {
+                    rep.notes.push(format!("the opening area of the slab over level {level} ({openings:.2} m2) is not less than that slab ({area:.2} m2): the slab totals are not given until it is corrected"));
+                    // Still listed, so the wrong value can be seen and changed.
+                    rep.slabs.push(SlabOut { level: *level, area_m2: r2(area), openings_m2: r2(openings), refused: true, concrete_m3: None, blocks: None });
+                    continue;
+                }
+                let area = area - openings;
                 let concrete = match (h.total_mm, h.topping_mm, h.rib_width_mm, h.rib_spacing_mm) {
                     (Some(d), Some(t), Some(w), Some(s)) => Some(r2(area * (t + (d - t) * w / s) / 1000.0)),
                     _ => None,
@@ -455,9 +488,9 @@ pub fn compute(model: &Model, d: &Declared) -> Report {
                     (Some(s), Some(l)) => Some((area / (s / 1000.0 * l / 1000.0)).ceil() as u64),
                     _ => None,
                 };
-                rep.slabs.push(SlabOut { level: *level, area_m2: r2(area), concrete_m3: concrete, blocks });
+                rep.slabs.push(SlabOut { level: *level, area_m2: r2(area), openings_m2: r2(openings), refused: false, concrete_m3: concrete, blocks });
             }
-            rep.notes.push("the hourdi quantities take each slab's whole area (the floor it roofs together with the floor above it) as ribs and blocks: stair and shaft openings are not taken out, and beams and solid parts are not added".into());
+            rep.notes.push("the hourdi quantities take each slab's area (the floor it roofs together with the floor above it) as ribs and blocks: only the lightwells, shafts and lifts drawn on the floor above and the opening areas you declare are taken out (stairs are not read from the drawing), and beams and solid parts are not added".into());
         }
     }
     rep.notes.push("reinforcement is not computed: it needs a structural design".into());

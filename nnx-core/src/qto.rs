@@ -454,7 +454,7 @@ pub fn compute(model: &Model, opts: &QtoOpts) -> Qto {
                     }
                 }
             }
-            if !rep.slabs.is_empty() {
+            if !rep.slabs.is_empty() && rep.slabs.iter().all(|s| !s.refused) {
                 acc.add("SLAB.FORM", "Hourdi slab soffit formwork (whole floor footprints)", Unit::M2, rep.slabs.iter().map(|s| s.area_m2).sum(), src());
                 if let Some(v) = rep.slabs.iter().map(|s| s.concrete_m3).collect::<Option<Vec<f64>>>() {
                     acc.add("SLAB.VOL", "Hourdi slab concrete (ribs and topping)", Unit::M3, v.iter().sum(), src());
